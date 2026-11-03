@@ -1,7 +1,7 @@
 import { createInterface } from "node:readline/promises";
 import { stripVTControlCharacters } from "node:util";
 
-export const VERSION = "0.2.0";
+export const VERSION = "0.2.1";
 export const DOG = String.raw`
   ▗██▄▄                      ▄▄██▖
   ██▀▜██▙▄  ▙▄            ▄▟██▛▀██
