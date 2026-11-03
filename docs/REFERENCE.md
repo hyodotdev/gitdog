@@ -2,6 +2,11 @@
 
 Detailed commands, credentials and development setup for [Gitdog CLI](../README.md).
 
+Every command below works without global installation: replace `gitdog` with
+`npx gitdog@latest` (add `--yes` before the package name in non-interactive scripts).
+For example: `npx gitdog@latest login`. An optional global installation with
+`npm install --global gitdog` provides the shorter `gitdog` command.
+
 ## Sign in
 
 `gitdog login` opens GitHub in your browser. Use a browser on the same computer,
