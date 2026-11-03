@@ -267,7 +267,7 @@
   {
     "path": "repositories/mutation:updateSettings",
     "kind": "mutation",
-    "args": "{\n    repositoryId: v.id(\"repositories\"),\n    settings: v.object({\n      issueAssistantEnabled: v.boolean(),\n      autoFormatIssue: v.boolean(),\n      autoAnswerQuestions: v.boolean(),\n      tagMaintainersForCodeChanges: v.boolean(),\n      issueResponseStyle: v.optional(v.string()),\n      requireApproval: v.boolean(),\n      discussionAssistantEnabled: v.boolean(),\n      autoFormatDiscussion: v.boolean(),\n      autoAnswerDiscussionQuestions: v.boolean(),\n      tagMaintainersForDiscussionCodeChanges: v.boolean(),\n      discussionResponseStyle: v.optional(v.string()),\n      requireApprovalForDiscussions: v.boolean(),\n    }),\n  }"
+    "args": "{\n    repositoryId: v.id(\"repositories\"),\n    settings: v.object({\n      issueAssistantEnabled: v.boolean(),\n      autoFormatIssue: v.boolean(),\n      autoAnswerQuestions: v.boolean(),\n      tagMaintainersForCodeChanges: v.boolean(),\n      issueResponseStyle: v.optional(v.string()),\n      requireApproval: v.boolean(),\n      discussionAssistantEnabled: v.boolean(),\n      autoFormatDiscussion: v.boolean(),\n      autoAnswerDiscussionQuestions: v.boolean(),\n      tagMaintainersForDiscussionCodeChanges: v.boolean(),\n      discussionResponseStyle: v.optional(v.string()),\n      requireApprovalForDiscussions: v.boolean(),\n      pullRequestReviewsEnabled: v.optional(v.boolean()),\n      pullRequestSuggestionsEnabled: v.optional(v.boolean()),\n      requireApprovalForPullRequests: v.optional(v.boolean()),\n    }),\n  }"
   },
   {
     "path": "repositories/query:get",
@@ -387,12 +387,12 @@
   {
     "path": "tickets/query:list",
     "kind": "query",
-    "args": "{\n    githubRepo: v.optional(v.string()),\n    status: v.optional(v.union(v.literal(\"open\"), v.literal(\"closed\"))),\n    ticketType: v.optional(\n      v.union(v.literal(\"issue\"), v.literal(\"discussion\")),\n    ),\n    search: v.optional(v.string()),\n    limit: v.optional(v.number()),\n    offset: v.optional(v.number()),\n  }"
+    "args": "{\n    githubRepo: v.optional(v.string()),\n    status: v.optional(v.union(v.literal(\"open\"), v.literal(\"closed\"))),\n    ticketType: v.optional(\n      v.union(\n        v.literal(\"issue\"),\n        v.literal(\"discussion\"),\n        v.literal(\"pull_request\"),\n      ),\n    ),\n    search: v.optional(v.string()),\n    limit: v.optional(v.number()),\n    offset: v.optional(v.number()),\n  }"
   },
   {
     "path": "tickets/query:listPendingApproval",
     "kind": "query",
-    "args": "{\n    githubRepo: v.optional(v.string()),\n    ticketType: v.optional(\n      v.union(v.literal(\"issue\"), v.literal(\"discussion\")),\n    ),\n    search: v.optional(v.string()),\n    limit: v.optional(v.number()),\n    offset: v.optional(v.number()),\n  }"
+    "args": "{\n    githubRepo: v.optional(v.string()),\n    ticketType: v.optional(\n      v.union(\n        v.literal(\"issue\"),\n        v.literal(\"discussion\"),\n        v.literal(\"pull_request\"),\n      ),\n    ),\n    search: v.optional(v.string()),\n    limit: v.optional(v.number()),\n    offset: v.optional(v.number()),\n  }"
   },
   {
     "path": "tokenUsage/query:getCurrentMonthUsage",

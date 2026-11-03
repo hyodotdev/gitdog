@@ -338,3 +338,23 @@ The npm trusted publisher is restricted to `hyodotdev/gitdog-cli`, `release.yml`
 and the `npm` GitHub environment. The workflow verifies the registry archive and
 signed provenance against the release tag and commit. A rerun verifies an already
 published matching archive instead of republishing it.
+
+### Pull request reviews
+
+```sh
+npx gitdog@latest config set pullRequestReviewsEnabled true
+npx gitdog@latest config set pullRequestSuggestionsEnabled true
+npx gitdog@latest config set requireApprovalForPullRequests true
+npx gitdog@latest config push --dry-run
+npx gitdog@latest config push
+npx gitdog@latest tickets pending --type pull_request
+```
+
+Reviews are opt-in and require GitHub App pull-request write permission.
+Proposals appear in Tickets; approval posts inline comments on the reviewed
+commit. GitHub commit suggestions can be applied individually or as a batch by authors
+or reviewers with write access. Disable them with
+`config set pullRequestSuggestionsEnabled false`. Gitdog does not approve merges,
+commit changes automatically or execute PR code. Incomplete coverage
+and failed reviews remain visible. New settings require the corresponding
+Gitdog server release.

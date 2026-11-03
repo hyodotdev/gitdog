@@ -1,6 +1,6 @@
 {
   "name": "gitdog",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Manage Gitdog projects, GitHub automation and API keys from your terminal",
   "type": "module",
   "bin": {

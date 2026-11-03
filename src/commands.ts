@@ -737,14 +737,16 @@ export function createProgram(
 
   const tickets = program
     .command("tickets")
-    .description("Browse issues, discussions and pending approvals");
+    .description(
+      "Browse issues, discussions, PR reviews and pending approvals",
+    );
   for (const pending of [false, true]) {
     command(
       tickets,
       pending ? "pending" : "list",
       pending
         ? "List tickets awaiting approval"
-        : "List issues and discussions",
+        : "List issues, discussions and PR reviews",
       async ({ api, project, ui }, _args, opts) => {
         const githubRepo = flag(opts.all)
           ? undefined
@@ -776,6 +778,7 @@ export function createProgram(
         new Option("--type <type>", "Ticket type").choices([
           "issue",
           "discussion",
+          "pull_request",
         ]),
       )
       .option("--search <text>", "Search title, repository or GitHub number")
