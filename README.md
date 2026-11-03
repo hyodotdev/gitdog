@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/hyodotdev/gitdog-cli/main/.github/assets/terminal.svg?v=0.2.0" alt="Gitdog terminal: connect a project, configure automation and review pending actions" width="800">
+  <img src="https://raw.githubusercontent.com/hyodotdev/gitdog-cli/main/.github/assets/terminal.svg?v=0.2.1" alt="Gitdog terminal: connect a project, configure automation and review pending actions" width="800">
 </p>
 
 Connect repositories, configure issue, discussion and PR automation, review
@@ -64,7 +64,7 @@ Use `npx gitdog@latest --help` to explore commands. Add `--json` for scripts.
 
 ```sh
 npx gitdog@latest keys create --name ci
-npx --yes gitdog@0.2.0 --key-file /path/to/key.json projects list --json
+npx --yes gitdog@0.2.1 --key-file /path/to/key.json projects list --json
 npx gitdog@latest keys revoke KEY_ID --yes
 ```
 
