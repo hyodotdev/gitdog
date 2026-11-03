@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rmdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   createLoginListener,
@@ -426,4 +426,61 @@ test("HTTP call deadlines abort requests instead of waiting for the default time
     api.call("query", "users/query:getCurrentUser", {}, { timeoutMs: 10 }),
     /timed out|timeout/i,
   );
+});
+
+test("a lock left by a dead process is recovered; a live owner is respected", async (t) => {
+  const directory = await fixture(t);
+  const store = new SessionStore();
+  Object.defineProperty(store, "path", {
+    value: join(directory, "session.json"),
+  });
+  const lock = `${store.path}.lock`;
+  const { spawn } = await import("node:child_process");
+  const child = spawn(process.execPath, ["-e", ""]);
+  await new Promise((resolve) => child.once("exit", resolve));
+  await writeFile(lock, String(child.pid));
+  assert.equal(await store.locked(async () => "ran"), "ran");
+  await assert.rejects(stat(lock), { code: "ENOENT" });
+  await writeFile(lock, String(process.ppid));
+  await assert.rejects(
+    store.locked(async () => "ran", Date.now() + 300),
+    /another Gitdog process|lock timed out/i,
+  );
+  assert.equal(await readFile(lock, "utf8"), String(process.ppid));
+});
+
+test("stale recovery respects another cleaner and keeps waiting callbacks exclusive", async (t) => {
+  const directory = await fixture(t);
+  const store = new SessionStore();
+  Object.defineProperty(store, "path", {
+    value: join(directory, "session.json"),
+  });
+  const { spawn } = await import("node:child_process");
+  const child = spawn(process.execPath, ["-e", ""]);
+  await new Promise((resolve) => child.once("exit", resolve));
+  const lock = `${store.path}.lock`;
+  await writeFile(lock, String(child.pid));
+  await mkdir(`${lock}.recovery`);
+  await assert.rejects(
+    store.locked(
+      async () => assert.fail("another cleaner owns recovery"),
+      Date.now() + 150,
+    ),
+    /lock timed out/i,
+  );
+  assert.equal(await readFile(lock, "utf8"), String(child.pid));
+  await rmdir(`${lock}.recovery`);
+  let active = 0;
+  let maximum = 0;
+  await Promise.all(
+    Array.from({ length: 8 }, () =>
+      store.locked(async () => {
+        maximum = Math.max(maximum, ++active);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        active--;
+      }),
+    ),
+  );
+  assert.equal(maximum, 1);
+  await assert.rejects(stat(lock), { code: "ENOENT" });
 });

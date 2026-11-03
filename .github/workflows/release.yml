@@ -1,0 +1,80 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-release
+  cancel-in-progress: false
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.14.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.3.13
+      - run: node scripts/release.mjs check
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun run lint
+      - run: bun run test
+        env:
+          GITDOG_TEST_DIR: ${{ runner.temp }}/gitdog-tests
+      - run: bun audit --production
+      - run: npm pack
+      - name: Smoke-test the exact npm archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="gitdog-$(node -p "require('./package.json').version").tgz"
+          npm install --prefix "$RUNNER_TEMP/gitdog-smoke" --ignore-scripts "./$archive"
+          "$RUNNER_TEMP/gitdog-smoke/node_modules/.bin/gitdog" --version
+          "$RUNNER_TEMP/gitdog-smoke/node_modules/.bin/gitdog" --json api list > "$RUNNER_TEMP/catalog.json"
+          node --input-type=module -e "import fs from 'node:fs'; import assert from 'node:assert/strict'; assert.ok(JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP+'/catalog.json')).length >= 86)"
+          sha512sum "$archive" > release.sha512
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: npm-package
+          path: |
+            gitdog-*.tgz
+            release.sha512
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+      - run: npm install --global npm@11.19.0 --ignore-scripts
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: npm-package
+      - run: sha512sum --check release.sha512
+      - run: node scripts/release.mjs publish

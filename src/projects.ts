@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { exists, readJson, writeJson } from "./storage.js";
 import { asRecord, integer, type Ui } from "./ui.js";
@@ -121,12 +122,20 @@ export async function findConfig(
   cwd = process.cwd(),
 ): Promise<string | undefined> {
   if (explicit) return resolve(cwd, explicit);
+  // Stop at the repository root or home so a file planted in a shared parent
+  // directory cannot choose the project.
   let directory = resolve(cwd);
+  const home = resolve(homedir());
   while (true) {
     const path = join(directory, "gitdog.json");
     if (await exists(path)) return path;
     const parent = dirname(directory);
-    if (parent === directory) return undefined;
+    if (
+      parent === directory ||
+      directory === home ||
+      (await exists(join(directory, ".git")))
+    )
+      return undefined;
     directory = parent;
   }
 }

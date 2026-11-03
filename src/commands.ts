@@ -20,7 +20,12 @@ import {
   configDirectory,
   exists,
 } from "./storage.js";
-import { readProjectKey, saveProjectKey, projectHttpUrl } from "./api-keys.js";
+import {
+  assertUntrackedKeyPath,
+  readProjectKey,
+  saveProjectKey,
+  projectHttpUrl,
+} from "./api-keys.js";
 import { Ui, VERSION, asRecord, integer } from "./ui.js";
 
 type Options = Record<string, unknown>;
@@ -298,6 +303,7 @@ export function createProgram(
         throw new Error(
           "The output file already exists. Choose a new private path.",
         );
+      if (out) await assertUntrackedKeyPath(resolve(out));
       const name = text(opts.name) ?? "CLI key";
       const scopes = flag(opts.write) ? ["read", "write"] : ["read"];
       const issued = await api.call<{

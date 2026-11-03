@@ -230,3 +230,18 @@ test("explicit project override never depends on cwd or a local alias", async ()
   assert.equal((await project.repository())._id, repository._id);
   assert.deepEqual(api.calls[0].args, { owner: "owner", repo: "repo" });
 });
+
+test("project discovery stops at the repository root", async (t) => {
+  const directory = await fixture(t);
+  const checkout = join(directory, "checkout");
+  const nested = join(checkout, "src");
+  await mkdir(join(checkout, ".git"), { recursive: true });
+  await mkdir(nested, { recursive: true });
+  await writeFile(join(directory, "gitdog.json"), "{}");
+  assert.equal(await findConfig(undefined, nested), undefined);
+  await writeFile(join(checkout, "gitdog.json"), "{}");
+  assert.equal(
+    await findConfig(undefined, nested),
+    join(checkout, "gitdog.json"),
+  );
+});

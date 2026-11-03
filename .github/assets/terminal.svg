@@ -1,30 +1,48 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="960" height="408" viewBox="0 0 960 408" role="img" aria-labelledby="title description">
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="506" viewBox="0 0 960 506" role="img" aria-labelledby="title description">
   <title id="title">Gitdog in your terminal</title>
-  <desc id="description">The Gitdog dog banner beside commands to sign in, connect a GitHub repository, configure automation and review pending tickets.</desc>
+  <desc id="description">The front-facing Gitdog mascot in terminal text beside commands to sign in, connect a GitHub repository, configure automation and review pending tickets.</desc>
   <style>
     text { font-family: "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
     .command { font-size: 17px; fill: #f5f5f5; }
     .prompt { fill: #8b949e; }
     .note { font-size: 12px; fill: #8b949e; }
   </style>
-  <rect width="960" height="408" fill="#0c0e11"/>
-  <rect x=".5" y=".5" width="959" height="407" fill="none" stroke="#30363d"/>
+  <rect width="960" height="506" fill="#0c0e11"/>
+  <rect x=".5" y=".5" width="959" height="505" fill="none" stroke="#30363d"/>
   <path d="M0 44H960" stroke="#30363d"/>
   <rect x="22" y="19" width="7" height="7" fill="#606872"/>
   <rect x="36" y="19" width="7" height="7" fill="#414851"/>
   <rect x="50" y="19" width="7" height="7" fill="#30363d"/>
   <text x="78" y="27" font-size="12" fill="#a9b1ba">gitdog / terminal</text>
   <text x="936" y="27" font-size="11" fill="#606872" text-anchor="end">YOUR GITHUB WORKSPACE</text>
-  <g xml:space="preserve" font-size="27" fill="#f5f5f5">
-    <text x="62" y="109">&#160;&#160;&#160;&#160;/ \__</text>
-    <text x="62" y="141">&#160;&#160;&#160;(&#160;&#160;&#160;&#160;@\___</text>
-    <text x="62" y="173">&#160;&#160;&#160;/&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;O</text>
-    <text x="62" y="205">&#160;&#160;/&#160;&#160;&#160;(_____/</text>
-    <text x="62" y="237">&#160;/_____/&#160;&#160;&#160;U</text>
+  <g font-size="14" fill="#f5f5f5">
+    <text x="60" y="82" textLength="240" lengthAdjust="spacingAndGlyphs">&#160;&#160;▗██▄▄&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;▄▄██▖&#160;&#160;</text>
+    <text x="60" y="95.5" textLength="240" lengthAdjust="spacingAndGlyphs">&#160;&#160;██▀▜██▙▄&#160;&#160;▙▄&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;▄▟██▛▀██&#160;&#160;</text>
+    <text x="60" y="109" textLength="240" lengthAdjust="spacingAndGlyphs">&#160;▐█▌&#160;&#160;&#160;▀███▄▐██▄&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;▄███▀&#160;&#160;&#160;▜█▌&#160;</text>
+    <text x="60" y="122.5" textLength="240" lengthAdjust="spacingAndGlyphs">&#160;▐█▌&#160;&#160;&#160;&#160;&#160;███████▙&#160;&#160;&#160;&#160;&#160;&#160;▝▀▀▀&#160;&#160;&#160;&#160;&#160;▐█▌&#160;</text>
+    <text x="60" y="136" textLength="240" lengthAdjust="spacingAndGlyphs">&#160;██▌&#160;&#160;&#160;▄█████████▌&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;▐█▌&#160;</text>
+    <text x="60" y="149.5" textLength="240" lengthAdjust="spacingAndGlyphs">&#160;▐█▌&#160;▄████████████&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;▐█▌&#160;</text>
+    <text x="60" y="163" textLength="240" lengthAdjust="spacingAndGlyphs">&#160;▐█▙▟████████████▌&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;▜█▘&#160;</text>
+    <text x="60" y="176.5" textLength="240" lengthAdjust="spacingAndGlyphs">&#160;&#160;▀▝▀▘&#160;&#160;&#160;&#160;&#160;▀▀███▛&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
+    <text x="60" y="190" textLength="240" lengthAdjust="spacingAndGlyphs">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
+    <text x="60" y="203.5" textLength="240" lengthAdjust="spacingAndGlyphs">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;▄█▙▖&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;▄█▙▖&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
+    <text x="60" y="217" textLength="240" lengthAdjust="spacingAndGlyphs">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;▜██▌&#160;&#160;&#160;&#160;▄▄&#160;&#160;&#160;&#160;▜██▘&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
+    <text x="60" y="230.5" textLength="240" lengthAdjust="spacingAndGlyphs">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;▄███▛▜███▄&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
+    <text x="60" y="244" textLength="240" lengthAdjust="spacingAndGlyphs">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;▗███▌&#160;&#160;&#160;&#160;▐███▖&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
+    <text x="60" y="257.5" textLength="240" lengthAdjust="spacingAndGlyphs">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;█████▄&#160;&#160;▄█████&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
+    <text x="60" y="271" textLength="240" lengthAdjust="spacingAndGlyphs">&#160;&#160;▗▄&#160;&#160;&#160;&#160;&#160;&#160;&#160;▝▜██▛▀&#160;&#160;▀▜██▛▘&#160;&#160;&#160;&#160;&#160;&#160;&#160;▄▖&#160;&#160;</text>
+    <text x="60" y="284.5" textLength="240" lengthAdjust="spacingAndGlyphs">&#160;&#160;▐██▄▖&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;▗▄██▌&#160;&#160;</text>
+    <text x="60" y="298" textLength="240" lengthAdjust="spacingAndGlyphs">&#160;&#160;▟█████▙▄▖&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;▗▄▄█████▙&#160;&#160;</text>
+    <text x="60" y="311.5" textLength="240" lengthAdjust="spacingAndGlyphs">&#160;▐█▛███████████▄▄▄▄▄▄███████████▜█▌&#160;</text>
+    <text x="60" y="325" textLength="240" lengthAdjust="spacingAndGlyphs">&#160;&#160;▀&#160;▝██████████████████████████▘&#160;▀&#160;&#160;</text>
+    <text x="60" y="338.5" textLength="240" lengthAdjust="spacingAndGlyphs">&#160;&#160;&#160;&#160;&#160;▝▜██████████████████████▛▘&#160;&#160;&#160;&#160;&#160;</text>
+    <text x="60" y="352" textLength="240" lengthAdjust="spacingAndGlyphs">&#160;&#160;&#160;&#160;&#160;&#160;&#160;▝▜██████████████████▀▘&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
+    <text x="60" y="365.5" textLength="240" lengthAdjust="spacingAndGlyphs">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;▀▀▜█▜██████▛█▛▀▘&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
+    <text x="60" y="379" textLength="240" lengthAdjust="spacingAndGlyphs">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;▀▀▀▀&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
   </g>
-  <text x="78" y="288" font-size="22" letter-spacing="5" font-weight="700" fill="#f5f5f5">GITDOG</text>
-  <text x="78" y="313" class="note">A very good CLI.</text>
-  <path d="M343 84V330" stroke="#252a31"/>
+  <text x="78" y="427" font-size="22" letter-spacing="5" font-weight="700" fill="#f5f5f5">GITDOG</text>
+  <text x="78" y="450" class="note">A very good CLI.</text>
+  <path d="M343 72V452" stroke="#252a31"/>
   <text x="385" y="107" class="note">CONNECT</text>
   <text x="385" y="137" class="command"><tspan class="prompt">$ </tspan>gitdog login</text>
   <text x="385" y="169" class="command"><tspan class="prompt">$ </tspan>gitdog init owner/repo</text>
@@ -32,7 +50,7 @@
   <text x="385" y="249" class="command"><tspan class="prompt">$ </tspan>gitdog config push</text>
   <text x="385" y="281" class="command"><tspan class="prompt">$ </tspan>gitdog tickets pending</text>
   <text x="385" y="313" class="command"><tspan class="prompt">$ </tspan>gitdog keys create --name ci</text>
-  <path d="M0 364H960" stroke="#252a31"/>
-  <text x="24" y="390" font-size="11" fill="#8b949e">PROJECTS / AUTOMATION / REVIEWS / CI</text>
-  <text x="936" y="390" font-size="11" fill="#606872" text-anchor="end">gitdog.dev</text>
+  <path d="M0 470H960" stroke="#252a31"/>
+  <text x="24" y="494" font-size="11" fill="#8b949e">PROJECTS / AUTOMATION / REVIEWS / CI</text>
+  <text x="936" y="494" font-size="11" fill="#606872" text-anchor="end">gitdog.dev</text>
 </svg>

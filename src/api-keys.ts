@@ -1,7 +1,9 @@
-import { mkdir, open, readFile, rm } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { mkdir, open, readFile, realpath, rm } from "node:fs/promises";
+import { dirname, join, relative, resolve } from "node:path";
 import { asRecord } from "./ui.js";
-import { validateUrl } from "./storage.js";
+import { exists, validateUrl } from "./storage.js";
 
 export type ProjectKey = {
   version: 1;
@@ -58,6 +60,61 @@ export async function readProjectKey(path: string): Promise<ProjectKey> {
     scopes: key.scopes,
     expiresAt: key.expiresAt,
   };
+}
+
+/** Refuse key paths that Git would track, so secrets are not committed. */
+export async function assertUntrackedKeyPath(path: string): Promise<void> {
+  let directory = dirname(path);
+  while (!(await exists(directory))) {
+    const parent = dirname(directory);
+    if (parent === directory) return;
+    directory = parent;
+  }
+  const canonicalDirectory = await realpath(directory);
+  const canonicalPath = join(canonicalDirectory, relative(directory, path));
+  try {
+    const { stdout } = await promisify(execFile)(
+      "git",
+      ["rev-parse", "--is-inside-work-tree"],
+      {
+        cwd: canonicalDirectory,
+        env: { ...process.env, LC_ALL: "C" },
+        timeout: 5000,
+      },
+    );
+    if (stdout.trim() === "false") return;
+    if (stdout.trim() !== "true")
+      throw new Error("Unexpected Git work tree result");
+  } catch (error) {
+    const gitError = error as { code?: unknown; stderr?: string };
+    if (
+      gitError.code === 128 &&
+      /fatal: not a git repository/i.test(gitError.stderr ?? "")
+    )
+      return;
+    throw new Error(
+      "Could not verify the key path with Git. Fix Git configuration or choose the default private key location.",
+    );
+  }
+  try {
+    await promisify(execFile)(
+      "git",
+      ["check-ignore", "-q", "--", canonicalPath],
+      {
+        cwd: canonicalDirectory,
+        env: { ...process.env, LC_ALL: "C" },
+        timeout: 5000,
+      },
+    );
+  } catch (error) {
+    if ((error as { code?: unknown }).code === 1)
+      throw new Error(
+        "The key file would be inside a Git repository and not ignored. Choose a path outside the repository or add it to .gitignore.",
+      );
+    throw new Error(
+      "Could not verify Git ignore rules for the key path. No key was issued.",
+    );
+  }
 }
 
 export async function saveProjectKey(

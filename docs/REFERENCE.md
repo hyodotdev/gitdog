@@ -298,17 +298,19 @@ Convex administrator access, GitHub CLI access, and a public repository with at
 most 100 files that the development GitHub App can already access:
 
 ```sh
-bun run test:dev --repository owner/test-repo --installation INSTALLATION_ID
+GITDOG_DEV_DEPLOYMENT=<dev-deployment> GITDOG_TEST_REPORT_DIR=<report-dir> \
+  bun run test:dev --repository owner/test-repo --installation INSTALLATION_ID
 ```
 
-It targets only `fortunate-chihuahua-679`, refuses an installation with existing
+It targets only the named Convex development deployment (and verifies it is a
+development deployment before running), refuses an installation with existing
 development data, creates isolated test users, connects the real GitHub project,
 checks concurrent project enable/disable commands, issues read/write keys,
 uses them without owner credentials, verifies cached
 file content against GitHub, checks access denial/revocation/expiry/disconnection,
 and removes its project, keys, sessions, fixture data and unshared file storage.
 It uses server-issued test sessions; browser OAuth is a separate test. Test users
-cannot invoke paid AI work. Reports go to DevLogs; temporary credentials stay in
+cannot invoke paid AI work. Reports go to `GITDOG_TEST_REPORT_DIR`; temporary credentials stay in
 the local private cache and are removed even if remote cleanup fails. Inspect the
 report's cleanup result before retrying a failed run.
 
@@ -317,5 +319,17 @@ report's cleanup result before retrying a failed run.
 `--check` to regenerate the catalog when public functions change. The published
 CLI includes the catalog and does not require the web repository at runtime.
 
-To prepare a package, run `npm pack`; the prepack hook builds `dist`. Publishing
-and deployment are separate release steps.
+To prepare a package, run `npm pack`; the prepack hook builds `dist`.
+
+## Release the CLI
+
+Update both versions in `package.json` and `src/ui.ts`, then merge to `main`.
+Publish a GitHub Release tagged `vVERSION`; the Release workflow validates and
+tests that commit, packs once, smoke-tests the archive on Node.js 22.14, then
+publishes the same archive through npm trusted publishing. Stable releases use
+`latest`; GitHub prereleases use `next`. No npm token is needed in GitHub secrets.
+
+The npm trusted publisher is restricted to `hyodotdev/gitdog-cli`, `release.yml`
+and the `npm` GitHub environment. The workflow verifies the registry archive and
+signed provenance against the release tag and commit. A rerun verifies an already
+published matching archive instead of republishing it.

@@ -4,6 +4,7 @@ import {
   open,
   readFile,
   rename,
+  rmdir,
   rm,
   stat,
 } from "node:fs/promises";
@@ -139,12 +140,21 @@ export class SessionStore {
       signal?.throwIfAborted();
       if (Date.now() >= deadline)
         throw new Error(
-          `Authentication lock timed out. Check that another Gitdog process is not running; stale lock: ${path}.`,
+          `Authentication lock timed out. Check that another Gitdog process is not running; stale lock: ${path} (recovery gate: ${path}.recovery).`,
         );
       try {
-        handle = await open(path, "wx", 0o600);
+        const created = await open(path, "wx", 0o600);
+        try {
+          await created.writeFile(String(process.pid));
+        } catch (error) {
+          await created.close();
+          await rm(path, { force: true });
+          throw error;
+        }
+        handle = created;
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        if (await removeAbandonedLock(path)) continue;
         if (Date.now() >= deadline)
           throw new Error(
             `Another Gitdog process is updating authentication. Retry later; if it crashed, remove ${path}.`,
@@ -164,6 +174,36 @@ export class SessionStore {
       await handle.close();
       await rm(path, { force: true });
     }
+  }
+}
+
+/** Remove a lock whose recorded owner process no longer exists. */
+async function removeAbandonedLock(path: string): Promise<boolean> {
+  const recovery = `${path}.recovery`;
+  try {
+    await mkdir(recovery, { mode: 0o700 });
+  } catch {
+    return false;
+  }
+  try {
+    // Re-read under the recovery mutex: another waiter may have replaced the
+    // dead owner's lock with a live lock before this cleaner acquired the gate.
+    const content = (await readFile(path, "utf8")).trim();
+    if (!/^[1-9]\d*$/.test(content)) return false;
+    const owner = Number(content);
+    if (!Number.isSafeInteger(owner) || owner === process.pid) return false;
+    try {
+      process.kill(owner, 0);
+      return false;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") return false;
+    }
+    await rm(path);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    await rmdir(recovery);
   }
 }
 
