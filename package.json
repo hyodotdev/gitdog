@@ -1,0 +1,45 @@
+{
+  "name": "gitdog",
+  "version": "0.1.0",
+  "description": "The official Gitdog CLI: manage projects, automation, tickets and teams from your terminal",
+  "type": "module",
+  "bin": {
+    "gitdog": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22.14.0"
+  },
+  "packageManager": "bun@1.3.13",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hyodotdev/gitdog-cli.git"
+  },
+  "homepage": "https://gitdog.dev",
+  "bugs": {
+    "url": "https://github.com/hyodotdev/gitdog-cli/issues"
+  },
+  "license": "UNLICENSED",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit",
+    "lint": "prettier --check .",
+    "format": "prettier --write .",
+    "test": "bun run build && node --test test/*.test.mjs",
+    "test:dev": "bun run build && node scripts/test-dev.mjs",
+    "dev": "bun src/cli.ts",
+    "prepack": "bun run build"
+  },
+  "dependencies": {
+    "commander": "^15.0.0",
+    "convex": "^1.43.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.14.0",
+    "prettier": "^3.9.0",
+    "typescript": "~6.0.3"
+  }
+}
