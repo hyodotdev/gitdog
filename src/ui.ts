@@ -1,13 +1,31 @@
 import { createInterface } from "node:readline/promises";
 import { stripVTControlCharacters } from "node:util";
 
-export const VERSION = "0.1.0";
+export const VERSION = "0.1.1";
 export const DOG = String.raw`
-    / \__
-   (    @\___
-   /         O
-  /   (_____/
- /_____/   U
+  ▗██▄▄                      ▄▄██▖
+  ██▀▜██▙▄  ▙▄            ▄▟██▛▀██
+ ▐█▌   ▀███▄▐██▄        ▄███▀   ▜█▌
+ ▐█▌     ███████▙      ▝▀▀▀     ▐█▌
+ ██▌   ▄█████████▌              ▐█▌
+ ▐█▌ ▄████████████              ▐█▌
+ ▐█▙▟████████████▌              ▜█▘
+  ▀▝▀▘     ▀▀███▛
+
+         ▄█▙▖          ▄█▙▖
+         ▜██▌    ▄▄    ▜██▘
+             ▄███▛▜███▄
+           ▗███▌    ▐███▖
+           █████▄  ▄█████
+  ▗▄       ▝▜██▛▀  ▀▜██▛▘       ▄▖
+  ▐██▄▖                      ▗▄██▌
+  ▟█████▙▄▖              ▗▄▄█████▙
+ ▐█▛███████████▄▄▄▄▄▄███████████▜█▌
+  ▀ ▝██████████████████████████▘ ▀
+     ▝▜██████████████████████▛▘
+       ▝▜██████████████████▀▘
+          ▀▀▜█▜██████▛█▛▀▘
+                ▀▀▀▀
 `;
 
 export function redactSecrets(value: string): string {
@@ -35,7 +53,7 @@ export class Ui {
   banner(): void {
     if (this.json || process.env.GITDOG_NO_BANNER === "1") return;
     process.stdout.write(
-      this.color(DOG) + this.color(`  G I T D O G  /  ${VERSION}\n`, 1),
+      this.color(DOG, 1) + this.color(`  G I T D O G  /  ${VERSION}\n`, 1),
     );
     process.stdout.write("  Your repositories. A very good assistant.\n\n");
   }
