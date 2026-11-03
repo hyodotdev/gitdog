@@ -1,10 +1,10 @@
 import {
   chmod,
-  link,
   mkdir,
   open,
   readFile,
   rename,
+  rmdir,
   rm,
   stat,
 } from "node:fs/promises";
@@ -140,7 +140,7 @@ export class SessionStore {
       signal?.throwIfAborted();
       if (Date.now() >= deadline)
         throw new Error(
-          `Authentication lock timed out. Check that another Gitdog process is not running; stale lock: ${path}.`,
+          `Authentication lock timed out. Check that another Gitdog process is not running; stale lock: ${path} (recovery gate: ${path}.recovery).`,
         );
       try {
         const created = await open(path, "wx", 0o600);
@@ -179,36 +179,32 @@ export class SessionStore {
 
 /** Remove a lock whose recorded owner process no longer exists. */
 async function removeAbandonedLock(path: string): Promise<boolean> {
-  let owner: number;
+  const recovery = `${path}.recovery`;
   try {
+    await mkdir(recovery, { mode: 0o700 });
+  } catch {
+    return false;
+  }
+  try {
+    // Re-read under the recovery mutex: another waiter may have replaced the
+    // dead owner's lock with a live lock before this cleaner acquired the gate.
     const content = (await readFile(path, "utf8")).trim();
-    if (!/^\d+$/.test(content)) return false;
-    owner = Number(content);
+    if (!/^[1-9]\d*$/.test(content)) return false;
+    const owner = Number(content);
+    if (!Number.isSafeInteger(owner) || owner === process.pid) return false;
+    try {
+      process.kill(owner, 0);
+      return false;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") return false;
+    }
+    await rm(path);
+    return true;
   } catch {
     return false;
-  }
-  if (owner === process.pid) return false;
-  try {
-    process.kill(owner, 0);
-    return false;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ESRCH") return false;
-  }
-  // Claim the stale lock atomically so two waiters cannot both remove it; if
-  // another process replaced it meanwhile, put that live lock back.
-  const claimed = `${path}.${randomUUID()}.stale`;
-  try {
-    await rename(path, claimed);
-  } catch {
-    return false;
-  }
-  try {
-    if ((await readFile(claimed, "utf8")).trim() !== String(owner))
-      await link(claimed, path).catch(() => {});
   } finally {
-    await rm(claimed, { force: true });
+    await rmdir(recovery);
   }
-  return true;
 }
 
 export function tokenExpiresSoon(token: string): boolean {

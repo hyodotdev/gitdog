@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdir, open, readFile, rm } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { mkdir, open, readFile, realpath, rm } from "node:fs/promises";
+import { dirname, join, relative, resolve } from "node:path";
 import { asRecord } from "./ui.js";
 import { exists, validateUrl } from "./storage.js";
 
@@ -70,18 +70,50 @@ export async function assertUntrackedKeyPath(path: string): Promise<void> {
     if (parent === directory) return;
     directory = parent;
   }
+  const canonicalDirectory = await realpath(directory);
+  const canonicalPath = join(canonicalDirectory, relative(directory, path));
   try {
-    await promisify(execFile)("git", ["check-ignore", "-q", "--", path], {
-      cwd: directory,
-      timeout: 5000,
-    });
+    const { stdout } = await promisify(execFile)(
+      "git",
+      ["rev-parse", "--is-inside-work-tree"],
+      {
+        cwd: canonicalDirectory,
+        env: { ...process.env, LC_ALL: "C" },
+        timeout: 5000,
+      },
+    );
+    if (stdout.trim() === "false") return;
+    if (stdout.trim() !== "true")
+      throw new Error("Unexpected Git work tree result");
   } catch (error) {
-    // Exit 1 means inside a work tree and not ignored; anything else means
-    // no repository or no Git, where the file cannot be committed by mistake.
+    const gitError = error as { code?: unknown; stderr?: string };
+    if (
+      gitError.code === 128 &&
+      /fatal: not a git repository/i.test(gitError.stderr ?? "")
+    )
+      return;
+    throw new Error(
+      "Could not verify the key path with Git. Fix Git configuration or choose the default private key location.",
+    );
+  }
+  try {
+    await promisify(execFile)(
+      "git",
+      ["check-ignore", "-q", "--", canonicalPath],
+      {
+        cwd: canonicalDirectory,
+        env: { ...process.env, LC_ALL: "C" },
+        timeout: 5000,
+      },
+    );
+  } catch (error) {
     if ((error as { code?: unknown }).code === 1)
       throw new Error(
         "The key file would be inside a Git repository and not ignored. Choose a path outside the repository or add it to .gitignore.",
       );
+    throw new Error(
+      "Could not verify Git ignore rules for the key path. No key was issued.",
+    );
   }
 }
 

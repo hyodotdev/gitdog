@@ -1,12 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { readFile, stat, writeFile } from "node:fs/promises";
+import { readFile, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   saveProjectKey,
   readProjectKey,
   callWithProjectKey,
+  assertUntrackedKeyPath,
 } from "../dist/api-keys.js";
 import { GitdogApi } from "../dist/client.js";
 import { createProgram } from "../dist/commands.js";
@@ -387,4 +388,23 @@ test("key files are never written where Git would track them", async (t) => {
     { from: "user" },
   );
   assert.equal(calls.at(-1), "apiKeys/action:create");
+});
+
+test("key path checks follow directory symlinks and fail closed on Git errors", async (t) => {
+  const root = await fixture(t);
+  const directory = join(root, "repo");
+  await run("git", ["init", "-q", directory]);
+  const alias = join(root, "alias");
+  await symlink(directory, alias, "dir");
+  await assert.rejects(
+    assertUntrackedKeyPath(join(alias, "nested", "secret.json")),
+    /inside a Git repository/,
+  );
+  await writeFile(join(directory, ".gitignore"), "private/\n");
+  await assertUntrackedKeyPath(join(alias, "private", "secret.json"));
+  await writeFile(join(directory, ".git", "config"), "[broken\n");
+  await assert.rejects(
+    assertUntrackedKeyPath(join(directory, "secret.json")),
+    /Could not verify/,
+  );
 });
