@@ -1,0 +1,432 @@
+[
+  {
+    "path": "admin/mutation:deleteAiLog",
+    "kind": "mutation",
+    "args": "{\n    logId: v.id(\"aiLogs\"),\n  }"
+  },
+  {
+    "path": "admin/mutation:updateAiLogStatus",
+    "kind": "mutation",
+    "args": "{\n    logId: v.id(\"aiLogs\"),\n    status: v.union(\n      v.literal(\"success\"),\n      v.literal(\"failed\"),\n      v.literal(\"pending_approval\"),\n      v.literal(\"approved\"),\n      v.literal(\"rejected\"),\n      v.literal(\"request_changes\"),\n    ),\n    userFeedback: v.optional(v.string()),\n  }"
+  },
+  {
+    "path": "admin/paymentMutation:addTokens",
+    "kind": "mutation",
+    "args": "{\n    subscriptionId: v.id(\"subscriptions\"),\n    tokensToAdd: v.number(),\n    operationId: v.string(),\n    adminNote: v.optional(v.string()),\n  }"
+  },
+  {
+    "path": "admin/paymentMutation:cancelSubscription",
+    "kind": "mutation",
+    "args": "{\n    subscriptionId: v.id(\"subscriptions\"),\n    operationId: v.string(),\n    adminNote: v.optional(v.string()),\n  }"
+  },
+  {
+    "path": "admin/paymentMutation:reactivateSubscription",
+    "kind": "mutation",
+    "args": "{\n    subscriptionId: v.id(\"subscriptions\"),\n    operationId: v.string(),\n    adminNote: v.optional(v.string()),\n  }"
+  },
+  {
+    "path": "admin/paymentMutation:reconcileGeminiChatUsage",
+    "kind": "mutation",
+    "args": "{\n    reservationKey: v.string(),\n    evidenceSource: v.union(\n  v.literal(\"google_api_response\"),\n  v.literal(\"google_cloud_billing_export\"),\n  v.literal(\"google_support_confirmation\"),\n  v.literal(\"anthropic_api_response\"),\n  v.literal(\"anthropic_usage_report\"),\n  v.literal(\"anthropic_support_confirmation\"),\n  v.literal(\"openai_api_response\"),\n  v.literal(\"openai_usage_report\"),\n  v.literal(\"openai_support_confirmation\"),\n),\n    evidenceReference: v.string(),\n    outcome: v.union(\n      v.object({ kind: v.literal(\"known_not_billed\") }),\n      v.object({\n        kind: v.literal(\"known_billed\"),\n        actualInputTokens: v.number(),\n        actualOutputTokens: v.number(),\n        providerRequestId: v.optional(v.string()),\n      }),\n    ),\n  }"
+  },
+  {
+    "path": "admin/paymentMutation:reconcileGeminiEmbeddingUsage",
+    "kind": "mutation",
+    "args": "{\n    reservationKey: v.string(),\n    evidenceSource: v.union(\n  v.literal(\"google_api_response\"),\n  v.literal(\"google_cloud_billing_export\"),\n  v.literal(\"google_support_confirmation\"),\n  v.literal(\"openai_api_response\"),\n  v.literal(\"openai_billing_export\"),\n  v.literal(\"openai_support_confirmation\"),\n),\n    evidenceReference: v.string(),\n    outcome: v.union(\n      v.object({ kind: v.literal(\"known_not_billed\") }),\n      v.object({\n        kind: v.literal(\"known_billed\"),\n        actualProviderTokens: v.number(),\n      }),\n    ),\n  }"
+  },
+  {
+    "path": "admin/paymentMutation:refundTokens",
+    "kind": "mutation",
+    "args": "{\n    subscriptionId: v.id(\"subscriptions\"),\n    tokensToRefund: v.number(),\n    adminNote: v.optional(v.string()),\n    paymentLogId: v.id(\"paymentLogs\"),\n  }"
+  },
+  {
+    "path": "admin/paymentMutation:requeueSubscriptionInvoiceReview",
+    "kind": "mutation",
+    "args": "{\n    manualReviewId: v.id(\"paymentSettlementManualReviews\"),\n    evidenceReference: v.string(),\n    confirmRetry: v.literal(true),\n  }"
+  },
+  {
+    "path": "admin/paymentMutation:updatePaymentLog",
+    "kind": "mutation",
+    "args": "{\n    paymentLogId: v.id(\"paymentLogs\"),\n    status: v.optional(\n      v.union(\n        v.literal(\"success\"),\n        v.literal(\"failed\"),\n        v.literal(\"pending\"),\n        v.literal(\"refunded\"),\n        v.literal(\"canceled\"),\n      ),\n    ),\n    adminNote: v.optional(v.string()),\n  }"
+  },
+  {
+    "path": "admin/paymentQuery:getPaymentStats",
+    "kind": "query",
+    "args": "{\n    year: v.optional(v.number()),\n    month: v.optional(v.number()), // 0-11 (January = 0)\n  }"
+  },
+  {
+    "path": "admin/paymentQuery:listOpenSettlementReviews",
+    "kind": "query",
+    "args": "{ limit: v.optional(v.number()) }"
+  },
+  {
+    "path": "admin/paymentQuery:listPaymentLogs",
+    "kind": "query",
+    "args": "{\n    limit: v.optional(v.number()),\n    cursor: v.optional(v.string()),\n    statusFilter: v.optional(\n      v.union(\n        v.literal(\"success\"),\n        v.literal(\"failed\"),\n        v.literal(\"pending\"),\n        v.literal(\"refunded\"),\n        v.literal(\"canceled\"),\n      ),\n    ),\n    eventTypeFilter: v.optional(v.string()),\n  }"
+  },
+  {
+    "path": "admin/paymentQuery:listPaymentLogsByUser",
+    "kind": "query",
+    "args": "{\n    year: v.optional(v.number()),\n    month: v.optional(v.number()), // 0-11 (January = 0)\n  }"
+  },
+  {
+    "path": "admin/paymentQuery:listSubscriptions",
+    "kind": "query",
+    "args": "{\n    limit: v.optional(v.number()),\n  }"
+  },
+  {
+    "path": "admin/query:getAiLogById",
+    "kind": "query",
+    "args": "{\n    logId: v.id(\"aiLogs\"),\n  }"
+  },
+  {
+    "path": "admin/query:getAiLogStats",
+    "kind": "query",
+    "args": "{}"
+  },
+  {
+    "path": "admin/query:isAdmin",
+    "kind": "query",
+    "args": "{}"
+  },
+  {
+    "path": "admin/query:listAiLogs",
+    "kind": "query",
+    "args": "{\n    status: v.optional(\n      v.union(\n        v.literal(\"success\"),\n        v.literal(\"failed\"),\n        v.literal(\"pending_approval\"),\n        v.literal(\"approved\"),\n        v.literal(\"rejected\"),\n        v.literal(\"request_changes\"),\n      ),\n    ),\n    workflowType: v.optional(v.string()),\n    limit: v.optional(v.number()),\n    cursor: v.optional(v.string()),\n  }"
+  },
+  {
+    "path": "admin/query:listAiLogsByIndexing",
+    "kind": "query",
+    "args": "{\n    limit: v.optional(v.number()),\n    cursor: v.optional(v.number()),\n  }"
+  },
+  {
+    "path": "admin/query:listAiLogsByTicket",
+    "kind": "query",
+    "args": "{\n    limit: v.optional(v.number()),\n    cursor: v.optional(v.number()), // createdAt timestamp for cursor-based pagination\n  }"
+  },
+  {
+    "path": "apiKeys/action:create",
+    "kind": "action",
+    "args": "{\n    repositoryId: v.id(\"repositories\"),\n    name: v.string(),\n    scopes: v.array(v.union(v.literal(\"read\"), v.literal(\"write\"))),\n    expiresInDays: v.number(),\n  }"
+  },
+  {
+    "path": "apiKeys/mutation:revoke",
+    "kind": "mutation",
+    "args": "{ keyId: v.id(\"projectApiKeys\") }"
+  },
+  {
+    "path": "apiKeys/query:list",
+    "kind": "query",
+    "args": "{\n    repositoryId: v.id(\"repositories\"),\n    paginationOpts: paginationOptsValidator,\n  }"
+  },
+  {
+    "path": "github/action:listUserRepositories",
+    "kind": "action",
+    "args": "{\n    cursor: v.optional(v.string()),\n    reconnectRepositoryId: v.optional(v.string()),\n  }"
+  },
+  {
+    "path": "github/action:recoverOAuthInstallation",
+    "kind": "action",
+    "args": "{}"
+  },
+  {
+    "path": "github/action:retryRepositoryAccessReconciliation",
+    "kind": "action",
+    "args": "{ installationId: v.number() }"
+  },
+  {
+    "path": "github/action:saveInstallation",
+    "kind": "action",
+    "args": "{\n    installationId: v.number(),\n  }"
+  },
+  {
+    "path": "github/query:getInstallation",
+    "kind": "query",
+    "args": "{\n    installationId: v.number(),\n  }"
+  },
+  {
+    "path": "github/query:getUserInstallation",
+    "kind": "query",
+    "args": "{}"
+  },
+  {
+    "path": "github/query:getUserInstallations",
+    "kind": "query",
+    "args": "{}"
+  },
+  {
+    "path": "invitations/action:create",
+    "kind": "action",
+    "args": "{\n    repositoryId: v.id(\"repositories\"),\n    inviteeGithubUsername: v.string(),\n    role: v.literal(\"viewer\"),\n  }"
+  },
+  {
+    "path": "invitations/mutation:accept",
+    "kind": "mutation",
+    "args": "{\n    invitationId: v.id(\"invitations\"),\n  }"
+  },
+  {
+    "path": "invitations/mutation:cancel",
+    "kind": "mutation",
+    "args": "{\n    invitationId: v.id(\"invitations\"),\n  }"
+  },
+  {
+    "path": "invitations/mutation:reject",
+    "kind": "mutation",
+    "args": "{\n    invitationId: v.id(\"invitations\"),\n  }"
+  },
+  {
+    "path": "invitations/query:getPendingForRepository",
+    "kind": "query",
+    "args": "{\n    repositoryId: v.id(\"repositories\"),\n  }"
+  },
+  {
+    "path": "invitations/query:listForRepository",
+    "kind": "query",
+    "args": "{\n    repositoryId: v.id(\"repositories\"),\n  }"
+  },
+  {
+    "path": "invitations/query:listPending",
+    "kind": "query",
+    "args": "{}"
+  },
+  {
+    "path": "notifications/mutation:markAllAsRead",
+    "kind": "mutation",
+    "args": "{}"
+  },
+  {
+    "path": "notifications/mutation:markAsRead",
+    "kind": "mutation",
+    "args": "{\n    notificationId: v.id(\"notifications\"),\n  }"
+  },
+  {
+    "path": "notifications/query:getUnreadCount",
+    "kind": "query",
+    "args": "{}"
+  },
+  {
+    "path": "notifications/query:list",
+    "kind": "query",
+    "args": "{\n    limit: v.optional(v.number()),\n  }"
+  },
+  {
+    "path": "notifications/query:listUnread",
+    "kind": "query",
+    "args": "{}"
+  },
+  {
+    "path": "repoIndexing/mutation:initializeIndexing",
+    "kind": "mutation",
+    "args": "{\n    repositoryId: v.id(\"repositories\"),\n  }"
+  },
+  {
+    "path": "repoIndexing/query:getFileContent",
+    "kind": "query",
+    "args": "{\n    repositoryId: v.id(\"repositories\"),\n    filePath: v.string(),\n  }"
+  },
+  {
+    "path": "repoIndexing/query:getFileList",
+    "kind": "query",
+    "args": "{\n    repositoryId: v.id(\"repositories\"),\n    limit: v.optional(v.number()),\n  }"
+  },
+  {
+    "path": "repoIndexing/query:getIndexingLogs",
+    "kind": "query",
+    "args": "{\n    repositoryId: v.id(\"repositories\"),\n    limit: v.optional(v.number()),\n  }"
+  },
+  {
+    "path": "repoIndexing/query:getIndexingStatus",
+    "kind": "query",
+    "args": "{\n    repositoryId: v.id(\"repositories\"),\n  }"
+  },
+  {
+    "path": "repoLearnings/query:countByRepository",
+    "kind": "query",
+    "args": "{\n    repositoryId: v.id(\"repositories\"),\n  }"
+  },
+  {
+    "path": "repositories/action:createAndIndex",
+    "kind": "action",
+    "args": "{\n    installationId: v.number(),\n    githubRepositoryId: v.number(),\n    reconnectRepositoryId: v.optional(v.string()),\n  }"
+  },
+  {
+    "path": "repositories/action:syncRepository",
+    "kind": "action",
+    "args": "{\n    repositoryId: v.id(\"repositories\"),\n  }"
+  },
+  {
+    "path": "repositories/mutation:remove",
+    "kind": "mutation",
+    "args": "{ repositoryId: v.id(\"repositories\") }"
+  },
+  {
+    "path": "repositories/mutation:toggleActive",
+    "kind": "mutation",
+    "args": "{\n    repositoryId: v.id(\"repositories\"),\n    isActive: v.optional(v.boolean()),\n  }"
+  },
+  {
+    "path": "repositories/mutation:updateSettings",
+    "kind": "mutation",
+    "args": "{\n    repositoryId: v.id(\"repositories\"),\n    settings: v.object({\n      issueAssistantEnabled: v.boolean(),\n      autoFormatIssue: v.boolean(),\n      autoAnswerQuestions: v.boolean(),\n      tagMaintainersForCodeChanges: v.boolean(),\n      issueResponseStyle: v.optional(v.string()),\n      requireApproval: v.boolean(),\n      discussionAssistantEnabled: v.boolean(),\n      autoFormatDiscussion: v.boolean(),\n      autoAnswerDiscussionQuestions: v.boolean(),\n      tagMaintainersForDiscussionCodeChanges: v.boolean(),\n      discussionResponseStyle: v.optional(v.string()),\n      requireApprovalForDiscussions: v.boolean(),\n    }),\n  }"
+  },
+  {
+    "path": "repositories/query:get",
+    "kind": "query",
+    "args": "{\n    owner: v.string(),\n    repo: v.string(),\n  }"
+  },
+  {
+    "path": "repositories/query:getById",
+    "kind": "query",
+    "args": "{\n    repositoryId: v.id(\"repositories\"),\n  }"
+  },
+  {
+    "path": "repositories/query:getConnectedRepos",
+    "kind": "query",
+    "args": "{}"
+  },
+  {
+    "path": "repositories/query:getReconnectTarget",
+    "kind": "query",
+    "args": "{\n    reconnectRepositoryId: v.string(),\n  }"
+  },
+  {
+    "path": "repositories/query:list",
+    "kind": "query",
+    "args": "{}"
+  },
+  {
+    "path": "repositoryMembers/mutation:leave",
+    "kind": "mutation",
+    "args": "{\n    repositoryId: v.id(\"repositories\"),\n  }"
+  },
+  {
+    "path": "repositoryMembers/mutation:remove",
+    "kind": "mutation",
+    "args": "{\n    memberId: v.id(\"repositoryMembers\"),\n  }"
+  },
+  {
+    "path": "repositoryMembers/query:getMyRole",
+    "kind": "query",
+    "args": "{\n    repositoryId: v.id(\"repositories\"),\n  }"
+  },
+  {
+    "path": "repositoryMembers/query:list",
+    "kind": "query",
+    "args": "{\n    repositoryId: v.id(\"repositories\"),\n  }"
+  },
+  {
+    "path": "subscriptions/action:createCheckoutUrl",
+    "kind": "action",
+    "args": "{\n    plan: v.literal(\"pro\"),\n  }"
+  },
+  {
+    "path": "subscriptions/action:createTokenPackCheckoutUrl",
+    "kind": "action",
+    "args": "{\n    packSize: v.union(v.literal(\"small\"), v.literal(\"large\")),\n  }"
+  },
+  {
+    "path": "subscriptions/query:calculateOverage",
+    "kind": "query",
+    "args": "{}"
+  },
+  {
+    "path": "subscriptions/query:canPerformAction",
+    "kind": "query",
+    "args": "{}"
+  },
+  {
+    "path": "subscriptions/query:getCurrent",
+    "kind": "query",
+    "args": "{}"
+  },
+  {
+    "path": "subscriptions/query:getPricingInfo",
+    "kind": "query",
+    "args": "{}"
+  },
+  {
+    "path": "ticketActions/action:approve",
+    "kind": "action",
+    "args": "{\n    actionId: v.id(\"ticketActions\"),\n  }"
+  },
+  {
+    "path": "ticketActions/action:reject",
+    "kind": "action",
+    "args": "{\n    actionId: v.id(\"ticketActions\"),\n  }"
+  },
+  {
+    "path": "ticketActions/action:requestChanges",
+    "kind": "action",
+    "args": "{\n    actionId: v.id(\"ticketActions\"),\n    feedback: v.string(),\n  }"
+  },
+  {
+    "path": "ticketActions/query:getById",
+    "kind": "query",
+    "args": "{\n    id: v.id(\"ticketActions\"),\n  }"
+  },
+  {
+    "path": "ticketActions/query:listByTicket",
+    "kind": "query",
+    "args": "{\n    ticketId: v.id(\"tickets\"),\n  }"
+  },
+  {
+    "path": "tickets/mutation:restore",
+    "kind": "mutation",
+    "args": "{\n    id: v.id(\"tickets\"),\n  }"
+  },
+  {
+    "path": "tickets/mutation:softDelete",
+    "kind": "mutation",
+    "args": "{\n    id: v.id(\"tickets\"),\n  }"
+  },
+  {
+    "path": "tickets/query:getById",
+    "kind": "query",
+    "args": "{\n    id: v.id(\"tickets\"),\n  }"
+  },
+  {
+    "path": "tickets/query:list",
+    "kind": "query",
+    "args": "{\n    githubRepo: v.optional(v.string()),\n    status: v.optional(v.union(v.literal(\"open\"), v.literal(\"closed\"))),\n    ticketType: v.optional(\n      v.union(v.literal(\"issue\"), v.literal(\"discussion\")),\n    ),\n    search: v.optional(v.string()),\n    limit: v.optional(v.number()),\n    offset: v.optional(v.number()),\n  }"
+  },
+  {
+    "path": "tickets/query:listPendingApproval",
+    "kind": "query",
+    "args": "{\n    githubRepo: v.optional(v.string()),\n    ticketType: v.optional(\n      v.union(v.literal(\"issue\"), v.literal(\"discussion\")),\n    ),\n    search: v.optional(v.string()),\n    limit: v.optional(v.number()),\n    offset: v.optional(v.number()),\n  }"
+  },
+  {
+    "path": "tokenUsage/query:getCurrentMonthUsage",
+    "kind": "query",
+    "args": "{}"
+  },
+  {
+    "path": "tokenUsage/query:getUsageByRepository",
+    "kind": "query",
+    "args": "{}"
+  },
+  {
+    "path": "users/action:ensureProfile",
+    "kind": "action",
+    "args": "{}"
+  },
+  {
+    "path": "users/mutation:attestLegalEligibility",
+    "kind": "mutation",
+    "args": "{\n    minimumAgeConfirmed: v.literal(true),\n    professionalUseConfirmed: v.literal(true),\n    termsAccepted: v.literal(true),\n    privacyPolicyAccepted: v.literal(true),\n    displayedTermsVersion: v.string(),\n    displayedPrivacyPolicyVersion: v.string(),\n  }"
+  },
+  {
+    "path": "users/mutation:ensureProfileFromAuth",
+    "kind": "mutation",
+    "args": "{}"
+  },
+  {
+    "path": "users/query:getCurrentUser",
+    "kind": "query",
+    "args": "{}"
+  },
+  {
+    "path": "users/query:getProfile",
+    "kind": "query",
+    "args": "{ userId: v.id(\"users\") }"
+  }
+]
