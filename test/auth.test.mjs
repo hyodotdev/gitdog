@@ -131,6 +131,7 @@ test("real HTTP login exchanges a verifier-bound code and stores private credent
   assert.equal((await stat(directory)).mode & 0o777, 0o700);
   assert.equal(JSON.stringify(ui.values).includes(tokens.refreshToken), false);
   assert.equal(JSON.stringify(ui.values).includes(tokens.token), false);
+  assert.ok(ui.messages.includes("Next: npx gitdog@latest init"));
 });
 
 test("concurrent expired clients rotate a refresh token only once", async (t) => {

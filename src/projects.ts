@@ -74,7 +74,10 @@ export function validateSettings(
       STYLE_SETTINGS.includes(key as (typeof STYLE_SETTINGS)[number])
     ) {
       if (typeof item !== "string") throw new Error(`${key} must be a string.`);
-    } else throw new Error(`Unknown setting: ${key}. Run gitdog config keys.`);
+    } else
+      throw new Error(
+        `Unknown setting: ${key}. Run npx gitdog@latest config keys.`,
+      );
     settings[key] = item;
   }
   if (
@@ -97,7 +100,7 @@ export function validateProjectConfig(value: unknown): ProjectConfig {
     !Object.hasOwn(projects, config.defaultProject)
   )
     throw new Error(
-      "Invalid gitdog.json. Run gitdog init in a new directory, or repair the project configuration.",
+      "Invalid gitdog.json. Run npx gitdog@latest init in a new directory, or repair the project configuration.",
     );
   const result: Record<string, Project> = {};
   for (const [alias, value] of Object.entries(projects)) {
@@ -152,11 +155,13 @@ export class ProjectContext {
     const path = await findConfig(this.configOption);
     if (!path)
       throw new Error(
-        "No gitdog.json found. Run gitdog init, or pass --project owner/repo.",
+        "No gitdog.json found. Run npx gitdog@latest init, or pass --project owner/repo.",
       );
     const value = await readJson(path);
     if (value === undefined)
-      throw new Error(`No project configuration at ${path}. Run gitdog init.`);
+      throw new Error(
+        `No project configuration at ${path}. Run npx gitdog@latest init.`,
+      );
     return { path, value: validateProjectConfig(value) };
   }
 
@@ -175,7 +180,9 @@ export class ProjectContext {
     const { value } = await this.config();
     const alias = selection ?? value.defaultProject;
     if (!Object.hasOwn(value.projects, alias))
-      throw new Error(`Unknown project alias ${alias}. Run gitdog use --list.`);
+      throw new Error(
+        `Unknown project alias ${alias}. Run npx gitdog@latest use --list.`,
+      );
     return value.projects[alias].repository;
   }
 
@@ -194,7 +201,7 @@ export class ProjectContext {
         );
     if (!repository)
       throw new Error(
-        `Project ${target} is not connected or accessible. Run gitdog projects create ${target}.`,
+        `Project ${target} is not connected or accessible. Run npx gitdog@latest projects create ${target}.`,
       );
     return repository;
   }
@@ -245,7 +252,7 @@ export class ProjectContext {
     );
     if (matches.length !== 1)
       throw new Error(
-        `Repository ${name} is unavailable. Run gitdog github install, authorize it, then gitdog github recover. Check projects available.`,
+        `Repository ${name} is unavailable. Run npx gitdog@latest github install, authorize it, then npx gitdog@latest github recover. Check projects available.`,
       );
     const item = matches[0];
     if (typeof item.installationId !== "number" || typeof item.id !== "number")
@@ -277,7 +284,7 @@ export class ProjectContext {
     const previous = await readJson(path);
     if (previous !== undefined && !force)
       throw new Error(
-        `Project configuration already exists at ${path}. Use gitdog use --add, or --force to replace it.`,
+        `Project configuration already exists at ${path}. Use npx gitdog@latest use --add, or --force to replace it.`,
       );
     if (!name) {
       let detected: string | undefined;
@@ -319,7 +326,7 @@ export class ProjectContext {
       config: path,
     });
     this.ui.info(
-      "✓ Ready. Try gitdog status, gitdog config get, or gitdog tickets list.",
+      "✓ Ready. Try npx gitdog@latest status, npx gitdog@latest config get, or npx gitdog@latest tickets list.",
     );
   }
 
@@ -327,7 +334,8 @@ export class ProjectContext {
     const { path, value } = await this.config();
     if (add) {
       aliasName(add);
-      if (!selection) throw new Error("Use gitdog use owner/repo --add alias.");
+      if (!selection)
+        throw new Error("Use npx gitdog@latest use owner/repo --add alias.");
       if (Object.hasOwn(value.projects, add))
         throw new Error(`Alias ${add} already exists. Choose a new alias.`);
       const repo = await this.repository(selection);
@@ -375,7 +383,7 @@ export class ProjectContext {
         );
     if (!match)
       throw new Error(
-        "This project has no local settings. Add it with gitdog use owner/repo --add alias.",
+        "This project has no local settings. Add it with npx gitdog@latest use owner/repo --add alias.",
       );
     return { path, value, alias: match, project: value.projects[match] };
   }
@@ -404,7 +412,7 @@ export class ProjectContext {
     local.project.settings = { ...local.project.settings, ...patch };
     await writeJson(local.path, local.value);
     this.ui.output({ saved: true, settings: patch });
-    this.ui.info("Saved locally. Run gitdog config push to apply.");
+    this.ui.info("Saved locally. Run npx gitdog@latest config push to apply.");
   }
 
   async configPull(force = false): Promise<void> {

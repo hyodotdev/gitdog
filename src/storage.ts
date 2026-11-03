@@ -110,7 +110,7 @@ export class SessionStore {
       typeof item.siteUrl !== "string"
     )
       throw new Error(
-        "Invalid saved session. Run gitdog logout, then gitdog login.",
+        "Invalid saved session. Run npx gitdog@latest logout, then npx gitdog@latest login.",
       );
     return {
       ...value,

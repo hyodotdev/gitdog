@@ -129,7 +129,11 @@ export async function createLoginListener(timeoutMs = 300_000) {
   );
   const timer = setTimeout(
     () =>
-      finish(new Error("Sign-in timed out. Run gitdog login to try again.")),
+      finish(
+        new Error(
+          "Sign-in timed out. Run npx gitdog@latest login to try again.",
+        ),
+      ),
     timeoutMs,
   );
   try {
@@ -232,13 +236,13 @@ export async function login(
     } catch {
       listener.signal.throwIfAborted();
       throw new Error(
-        "Could not finish sign-in. Check that the CLI loopback callback is deployed, then run gitdog login again.",
+        "Could not finish sign-in. Check that the CLI loopback callback is deployed, then run npx gitdog@latest login again.",
       );
     }
     const tokens = asRecord(exchange)?.tokens;
     if (!validTokens(tokens))
       throw new Error(
-        "Sign-in did not return a session. Run gitdog login again.",
+        "Sign-in did not return a session. Run npx gitdog@latest login again.",
       );
     client.setAuth(tokens.token);
     const user = asRecord(
@@ -258,7 +262,7 @@ export async function login(
       ui.info(
         `Complete account consent at ${siteUrl}/legal/consent before running AI workflows.`,
       );
-    ui.info("Next: gitdog init");
+    ui.info("Next: npx gitdog@latest init");
   } finally {
     await listener.close();
   }

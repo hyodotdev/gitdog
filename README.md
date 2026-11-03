@@ -17,29 +17,29 @@
 </p>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/hyodotdev/gitdog-cli/main/.github/assets/terminal.svg?v=0.1.1" alt="Gitdog terminal: connect a project, configure automation and review pending actions" width="800">
+  <img src="https://raw.githubusercontent.com/hyodotdev/gitdog-cli/main/.github/assets/terminal.svg?v=0.1.2" alt="Gitdog terminal: connect a project, configure automation and review pending actions" width="800">
 </p>
 
 Connect repositories, configure Gitdog's issue and discussion assistants, review
 AI actions, and automate project tasks from your terminal or CI.
 
-## Install
+## Run with npx
 
-Requires **Node.js 22.14+**.
+Requires **Node.js 22.14+**. No global installation needed.
 
 ```sh
-npm install --global gitdog
+npx gitdog@latest --help
 ```
 
 ## Quick start
 
 ```sh
-gitdog login
-gitdog github install
-gitdog github recover
-gitdog init owner/repo
-gitdog config set requireApproval true
-gitdog config push
+npx gitdog@latest login
+npx gitdog@latest github install
+npx gitdog@latest github recover
+npx gitdog@latest init owner/repo
+npx gitdog@latest config set requireApproval true
+npx gitdog@latest config push
 ```
 
 GitHub App setup is only needed once. A project connects an existing GitHub
@@ -47,23 +47,23 @@ repository to Gitdog.
 
 ## Everyday commands
 
-| Task                     | Command                      |
-| ------------------------ | ---------------------------- |
-| List projects            | `gitdog projects list`       |
-| Read automation settings | `gitdog config get --remote` |
-| Review pending actions   | `gitdog tickets pending`     |
-| Check code indexing      | `gitdog index status`        |
-| List team members        | `gitdog team members`        |
-| Check usage              | `gitdog usage summary`       |
+| Task                     | Command                                 |
+| ------------------------ | --------------------------------------- |
+| List projects            | `npx gitdog@latest projects list`       |
+| Read automation settings | `npx gitdog@latest config get --remote` |
+| Review pending actions   | `npx gitdog@latest tickets pending`     |
+| Check code indexing      | `npx gitdog@latest index status`        |
+| List team members        | `npx gitdog@latest team members`        |
+| Check usage              | `npx gitdog@latest usage summary`       |
 
-Use `gitdog --help` to explore commands. Add `--json` for scripts.
+Use `npx gitdog@latest --help` to explore commands. Add `--json` for scripts.
 
 ## Use in CI
 
 ```sh
-gitdog keys create --name ci
-gitdog --key-file /path/to/key.json projects list --json
-gitdog keys revoke KEY_ID --yes
+npx gitdog@latest keys create --name ci
+npx --yes gitdog@0.1.2 --key-file /path/to/key.json projects list --json
+npx gitdog@latest keys revoke KEY_ID --yes
 ```
 
 `keys create` prints the private key file's path. Keys are project-scoped and

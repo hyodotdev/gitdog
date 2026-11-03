@@ -46,6 +46,14 @@ jobs:
           "$RUNNER_TEMP/gitdog-smoke/node_modules/.bin/gitdog" --json api list > "$RUNNER_TEMP/catalog.json"
           node --input-type=module -e "import fs from 'node:fs'; import assert from 'node:assert/strict'; assert.ok(JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP+'/catalog.json')).length >= 86)"
           sha512sum "$archive" > release.sha512
+      - name: Run the exact archive through npx without a global install
+        working-directory: ${{ runner.temp }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node -p "require(process.env.GITHUB_WORKSPACE + '/package.json').version")"
+          actual="$(npx --yes --package "$GITHUB_WORKSPACE/gitdog-$version.tgz" gitdog --version)"
+          test "$actual" = "$version"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: npm-package
@@ -58,7 +66,7 @@ jobs:
   publish:
     needs: package
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     environment: npm
     permissions:
       contents: read
