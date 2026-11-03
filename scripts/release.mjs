@@ -207,7 +207,7 @@ async function main() {
           { stdio: "inherit" },
         );
       // Registry propagation is bounded; no repeated publishing.
-      for (let attempt = 0; attempt < 12; attempt++) {
+      for (let attempt = 0; attempt < 60; attempt++) {
         try {
           if (await verifyPublished(release, tarball, false)) return;
         } catch (error) {
@@ -224,13 +224,13 @@ async function main() {
             !transientNetworkFailure
           )
             throw error;
-          if (attempt === 11) throw error;
+          if (attempt === 59) throw error;
           console.log("Waiting for npm provenance propagation");
         }
         await new Promise((resolve) => setTimeout(resolve, 5000));
       }
       throw new Error(
-        "Registry did not expose the release within one minute; rerun to verify",
+        "Registry did not expose the release within five minutes; rerun to verify",
       );
     }
     default:
