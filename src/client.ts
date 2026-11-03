@@ -97,17 +97,20 @@ export class GitdogApi implements Api {
       return;
     }
     const initial = await this.store.read();
-    if (!initial) throw new Error("You are not logged in. Run gitdog login.");
+    if (!initial)
+      throw new Error("You are not logged in. Run npx gitdog@latest login.");
     if (initial.apiUrl !== this.apiUrl)
       throw new Error(
-        "This session belongs to another API URL. Run gitdog login --api-url <url> first.",
+        "This session belongs to another API URL. Run npx gitdog@latest login --api-url <url> first.",
       );
     this.session = initial;
     if (tokenExpiresSoon(initial.token)) {
       this.session = await this.store.locked(async () => {
         const current = await this.store.read();
         if (!current || current.apiUrl !== this.apiUrl)
-          throw new Error("Session changed. Run gitdog login again.");
+          throw new Error(
+            "Session changed. Run npx gitdog@latest login again.",
+          );
         if (!tokenExpiresSoon(current.token)) return current;
         let result: unknown;
         try {
@@ -121,12 +124,14 @@ export class GitdogApi implements Api {
           );
         } catch {
           throw new Error(
-            "Could not refresh your session. Check your connection or run gitdog login again.",
+            "Could not refresh your session. Check your connection or run npx gitdog@latest login again.",
           );
         }
         const tokens = asRecord(result)?.tokens;
         if (!validTokens(tokens))
-          throw new Error("Your session expired. Run gitdog login again.");
+          throw new Error(
+            "Your session expired. Run npx gitdog@latest login again.",
+          );
         const updated = { ...current, ...tokens };
         await this.store.save(updated);
         return updated;

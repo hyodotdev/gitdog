@@ -11,7 +11,7 @@ export function publicOperation(path: string) {
   const operation = API_CATALOG.find((entry) => entry.path === path);
   if (!operation)
     throw new Error(
-      "Unknown public operation. Run gitdog api list. Internal functions cannot be called.",
+      "Unknown public operation. Run npx gitdog@latest api list. Internal functions cannot be called.",
     );
   return operation;
 }

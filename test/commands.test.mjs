@@ -346,7 +346,7 @@ test("mascot onboarding, help, version and machine output run under Node", async
   assert.match(banner.stdout, /G I T D O G/);
   assert.match(banner.stdout, /[█▄▀▙▟]/u);
   assert.doesNotMatch(banner.stdout, /\ufffd/u);
-  assert.match(banner.stdout, /gitdog init/);
+  assert.match(banner.stdout, /npx gitdog@latest init/);
   const json = await run(process.execPath, [entry, "--json"], { env });
   assert.equal(JSON.parse(json.stdout).version, VERSION);
   assert.equal(json.stderr, "");
@@ -356,6 +356,10 @@ test("mascot onboarding, help, version and machine output run under Node", async
     env,
   });
   assert.match(help.stdout, /List owned and shared/);
+  const onboardingHelp = await run(process.execPath, [entry, "--help"], {
+    env,
+  });
+  assert.match(onboardingHelp.stdout, /npx gitdog@latest login/);
 });
 
 test("JSON errors have a nonzero exit status and never print a banner", async (t) => {

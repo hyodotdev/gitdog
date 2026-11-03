@@ -97,7 +97,7 @@ export function createProgram(
     .showSuggestionAfterError()
     .addHelpText(
       "after",
-      `\nGetting started:\n  gitdog login\n  gitdog init\n  gitdog config set requireApproval true\n  gitdog config push --dry-run\n  gitdog config push\n\nFirebase-style aliases also work: projects:list, projects:create, config:push.\nRun gitdog <command> --help for details.`,
+      `\nGetting started:\n  npx gitdog@latest login\n  npx gitdog@latest init\n  npx gitdog@latest config set requireApproval true\n  npx gitdog@latest config push --dry-run\n  npx gitdog@latest config push\n\nFirebase-style aliases also work: projects:list, projects:create, config:push.\nRun npx gitdog@latest <command> --help for details.`,
     );
 
   async function context(command: Command): Promise<Context> {
@@ -186,11 +186,15 @@ export function createProgram(
       ui.output({
         name: "gitdog",
         version: VERSION,
-        next: ["gitdog login", "gitdog init", "gitdog --help"],
+        next: [
+          "npx gitdog@latest login",
+          "npx gitdog@latest init",
+          "npx gitdog@latest --help",
+        ],
       });
     else
       ui.output(
-        "Get started\n  1. gitdog login       Sign in with GitHub\n  2. gitdog init        Connect a project\n  3. gitdog status      Check your assistant\n\nRun gitdog --help to explore all commands.",
+        "Get started\n  1. npx gitdog@latest login       Sign in with GitHub\n  2. npx gitdog@latest init        Connect a project\n  3. npx gitdog@latest status      Check your assistant\n\nRun npx gitdog@latest --help to explore all commands.",
       );
   });
 
@@ -229,7 +233,9 @@ export function createProgram(
         !(await new SessionStore().read())
       ) {
         if (!process.stdin.isTTY || ui.json)
-          throw new Error("Run gitdog login before gitdog init.");
+          throw new Error(
+            "Run npx gitdog@latest login before npx gitdog@latest init.",
+          );
         await login(apiUrl, siteUrl, ui);
       }
       await project.init(
@@ -359,7 +365,7 @@ export function createProgram(
         keyFile,
       });
       ui.info(
-        `Key saved privately. Use: gitdog --key-file ${JSON.stringify(keyFile)} projects list`,
+        `Key saved privately. Use: npx gitdog@latest --key-file ${JSON.stringify(keyFile)} projects list`,
       );
     },
   )
@@ -618,7 +624,7 @@ export function createProgram(
         const remaining = deadline - Date.now();
         if (flag(opts.wait) && remaining <= 0)
           throw new Error(
-            "Timed out waiting for indexing. Indexing continues on the server; check gitdog index status.",
+            "Timed out waiting for indexing. Indexing continues on the server; check npx gitdog@latest index status.",
           );
         const state = await api.call(
           "query",
@@ -641,7 +647,7 @@ export function createProgram(
         }
         if (record.status === "failed" || record.ragStatus === "failed")
           throw new Error(
-            "Indexing failed. Run gitdog index logs for details.",
+            "Indexing failed. Run npx gitdog@latest index logs for details.",
           );
         if (
           record.status === "completed" &&
@@ -652,7 +658,7 @@ export function createProgram(
         }
         if (Date.now() >= deadline)
           throw new Error(
-            "Timed out waiting for indexing. Indexing continues on the server; check gitdog index status.",
+            "Timed out waiting for indexing. Indexing continues on the server; check npx gitdog@latest index status.",
           );
         await new Promise((resolve) =>
           setTimeout(
@@ -1132,7 +1138,7 @@ export function createProgram(
       if (!ui.json && !flag(opts.print)) await openBrowser(url);
       ui.output({
         url,
-        next: "After GitHub authorization, run gitdog github recover, then gitdog projects available.",
+        next: "After GitHub authorization, run npx gitdog@latest github recover, then npx gitdog@latest projects available.",
       });
     },
   )
@@ -1155,7 +1161,7 @@ export function createProgram(
           ui.output({ ...result, recoveredCount: count });
           if (result?.status === "reauth_required")
             throw new Error(
-              "Refresh GitHub authorization with gitdog login, then run github recover again.",
+              "Refresh GitHub authorization with npx gitdog@latest login, then run github recover again.",
             );
           return;
         }
@@ -1256,7 +1262,9 @@ export function createProgram(
           "Use keys create to issue API keys securely into a private file.",
         );
       if (!operation.path.startsWith("admin/"))
-        throw new Error("Use gitdog api call for non-admin operations.");
+        throw new Error(
+          "Use npx gitdog@latest api call for non-admin operations.",
+        );
       const data = await jsonArguments(text(opts.data) ?? "{}");
       if (operation.kind !== "query") {
         if (!ui.json) ui.output({ operation: operation.path, arguments: data });
