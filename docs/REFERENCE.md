@@ -298,17 +298,19 @@ Convex administrator access, GitHub CLI access, and a public repository with at
 most 100 files that the development GitHub App can already access:
 
 ```sh
-bun run test:dev --repository owner/test-repo --installation INSTALLATION_ID
+GITDOG_DEV_DEPLOYMENT=<dev-deployment> GITDOG_TEST_REPORT_DIR=<report-dir> \
+  bun run test:dev --repository owner/test-repo --installation INSTALLATION_ID
 ```
 
-It targets only `fortunate-chihuahua-679`, refuses an installation with existing
+It targets only the named Convex development deployment (and verifies it is a
+development deployment before running), refuses an installation with existing
 development data, creates isolated test users, connects the real GitHub project,
 checks concurrent project enable/disable commands, issues read/write keys,
 uses them without owner credentials, verifies cached
 file content against GitHub, checks access denial/revocation/expiry/disconnection,
 and removes its project, keys, sessions, fixture data and unshared file storage.
 It uses server-issued test sessions; browser OAuth is a separate test. Test users
-cannot invoke paid AI work. Reports go to DevLogs; temporary credentials stay in
+cannot invoke paid AI work. Reports go to `GITDOG_TEST_REPORT_DIR`; temporary credentials stay in
 the local private cache and are removed even if remote cleanup fails. Inspect the
 report's cleanup result before retrying a failed run.
 

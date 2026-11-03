@@ -427,3 +427,24 @@ test("HTTP call deadlines abort requests instead of waiting for the default time
     /timed out|timeout/i,
   );
 });
+
+test("a lock left by a dead process is recovered; a live owner is respected", async (t) => {
+  const directory = await fixture(t);
+  const store = new SessionStore();
+  Object.defineProperty(store, "path", {
+    value: join(directory, "session.json"),
+  });
+  const lock = `${store.path}.lock`;
+  const { spawn } = await import("node:child_process");
+  const child = spawn(process.execPath, ["-e", ""]);
+  await new Promise((resolve) => child.once("exit", resolve));
+  await writeFile(lock, String(child.pid));
+  assert.equal(await store.locked(async () => "ran"), "ran");
+  await assert.rejects(stat(lock), { code: "ENOENT" });
+  await writeFile(lock, String(process.ppid));
+  await assert.rejects(
+    store.locked(async () => "ran", Date.now() + 300),
+    /another Gitdog process|lock timed out/i,
+  );
+  assert.equal(await readFile(lock, "utf8"), String(process.ppid));
+});

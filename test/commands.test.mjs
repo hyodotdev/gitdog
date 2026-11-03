@@ -11,7 +11,7 @@ import {
   jsonArguments,
 } from "../dist/commands.js";
 import { API_CATALOG, publicOperation } from "../dist/catalog.js";
-import { VERSION, clean } from "../dist/ui.js";
+import { VERSION, clean, safeJson } from "../dist/ui.js";
 import { CaptureUi, fixture, repository } from "./helpers.mjs";
 
 const run = promisify(execFile);
@@ -338,13 +338,14 @@ test("terminal output strips control characters from untrusted content", () => {
   );
 });
 
-test("ASCII onboarding, help, version and machine output run under Node", async (t) => {
+test("mascot onboarding, help, version and machine output run under Node", async (t) => {
   const directory = await fixture(t);
   const env = { ...process.env, GITDOG_CONFIG_DIR: directory, NO_COLOR: "1" };
   delete env.GITDOG_TOKEN;
   const banner = await run(process.execPath, [entry], { env });
   assert.match(banner.stdout, /G I T D O G/);
-  assert.match(banner.stdout, /@\\___/);
+  assert.match(banner.stdout, /[█▄▀▙▟]/u);
+  assert.doesNotMatch(banner.stdout, /\ufffd/u);
   assert.match(banner.stdout, /gitdog init/);
   const json = await run(process.execPath, [entry, "--json"], { env });
   assert.equal(JSON.parse(json.stdout).version, VERSION);
@@ -457,4 +458,12 @@ test("index polling passes the remaining deadline into each request", async () =
     ["--project", "owner/repo", "index", "status", "--wait", "--timeout", "1"],
     { from: "user" },
   );
+});
+
+test("C1 controls and bidi overrides never reach the terminal raw", () => {
+  const hostile = "a\u009b31mb\u009d8;;x\u009cc‮d⁦e";
+  assert.equal(clean(hostile), "ab8;;xcde");
+  const json = safeJson({ title: hostile });
+  assert.equal(/[\u0080-\u009f‪-‮⁦-⁩]/.test(json), false);
+  assert.deepEqual(JSON.parse(json), { title: hostile });
 });

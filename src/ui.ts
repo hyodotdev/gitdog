@@ -33,9 +33,22 @@ export function redactSecrets(value: string): string {
     .replace(/\beyJ[\w-]+\.[\w-]+\.[\w-]+\b/g, "[redacted token]")
     .replace(/\bgdk_[a-f0-9]{64}\b/g, "[redacted API key]");
 }
+// C1 controls and bidirectional overrides can drive or spoof terminals.
+const UNSAFE_UNICODE = /[\u0080-\u009f\u202a-\u202e\u2066-\u2069]/g;
+
 export function clean(value: string): string {
   return redactSecrets(
-    stripVTControlCharacters(value).replace(/[\x00-\x08\x0b-\x1f\x7f]/g, ""),
+    stripVTControlCharacters(value)
+      .replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "")
+      .replace(UNSAFE_UNICODE, ""),
+  );
+}
+/** Escape characters JSON.stringify leaves raw; the JSON value is unchanged. */
+export function safeJson(value: unknown): string {
+  return redactSecrets(JSON.stringify(value ?? null, null, 2)).replace(
+    UNSAFE_UNICODE,
+    (character) =>
+      `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`,
   );
 }
 
@@ -64,9 +77,7 @@ export class Ui {
 
   output(value: unknown): void {
     if (this.json) {
-      process.stdout.write(
-        `${redactSecrets(JSON.stringify(value ?? null, null, 2))}\n`,
-      );
+      process.stdout.write(`${safeJson(value)}\n`);
       return;
     }
     if (typeof value === "string") {

@@ -19,7 +19,11 @@ import { SessionStore } from "../dist/storage.js";
 const exec = promisify(execFile);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const web = resolve(root, "../gitdog.dev");
-const deployment = "fortunate-chihuahua-679";
+const deployment = process.env.GITDOG_DEV_DEPLOYMENT;
+assert(
+  /^[a-z]+-[a-z]+-\d+$/.test(deployment ?? ""),
+  "Set GITDOG_DEV_DEPLOYMENT to the Convex development deployment name.",
+);
 const apiUrl = `https://${deployment}.convex.cloud`;
 const httpUrl = `https://${deployment}.convex.site`;
 const value = (flag) => process.argv[process.argv.indexOf(flag) + 1];
@@ -32,13 +36,14 @@ assert(process.argv.includes("--installation"), "Pass --installation ID.");
 const repositoryName = value("--repository");
 const installationId = Number(value("--installation"));
 assert(Number.isSafeInteger(installationId) && installationId > 0);
+const reportRoot = process.env.GITDOG_TEST_REPORT_DIR;
 assert(
-  (await stat("/Volumes/DevLogs")).isDirectory(),
-  "DevLogs must be mounted.",
+  reportRoot && (await stat(reportRoot)).isDirectory(),
+  "Set GITDOG_TEST_REPORT_DIR to an existing directory for run reports.",
 );
 const runId = randomUUID();
 const marker = `gitdog-key-e2e-${runId.slice(0, 8)}`;
-const output = `/Volumes/DevLogs/agent-logs/gitdog-cli/codex/runs/project-keys-${runId}`;
+const output = join(resolve(reportRoot), `project-keys-${runId}`);
 const privateRoot = await mkdtemp(
   join(homedir(), "Library/Caches/gitdog-key-e2e-"),
 );

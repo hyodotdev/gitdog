@@ -341,3 +341,50 @@ test("malformed credential files fail with no secret disclosure", async (t) => {
       !error.message.includes(secret) && /HTTPS origin/.test(error.message),
   );
 });
+
+test("key files are never written where Git would track them", async (t) => {
+  const directory = await fixture(t);
+  await promisify(execFile)("git", ["init", "-q", directory]);
+  await writeFile(join(directory, ".gitignore"), "ignored.json\n");
+  const calls = [];
+  const api = {
+    async call(_kind, path) {
+      calls.push(path);
+      if (path === "repositories/query:get") return repository;
+      return {
+        keyId,
+        key: secret,
+        prefix: secret.slice(0, 12),
+        scopes: ["read"],
+        expiresAt: 123456789,
+      };
+    },
+  };
+  await assert.rejects(
+    createProgram({ api, ui: new CaptureUi() }).parseAsync(
+      [
+        "--project",
+        "owner/repo",
+        "keys",
+        "create",
+        "--out",
+        join(directory, "config", "key.json"),
+      ],
+      { from: "user" },
+    ),
+    /inside a Git repository/,
+  );
+  assert.deepEqual(calls, ["repositories/query:get"]);
+  await createProgram({ api, ui: new CaptureUi() }).parseAsync(
+    [
+      "--project",
+      "owner/repo",
+      "keys",
+      "create",
+      "--out",
+      join(directory, "ignored.json"),
+    ],
+    { from: "user" },
+  );
+  assert.equal(calls.at(-1), "apiKeys/action:create");
+});

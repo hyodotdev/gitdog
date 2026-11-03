@@ -1,5 +1,6 @@
 import {
   chmod,
+  link,
   mkdir,
   open,
   readFile,
@@ -142,9 +143,18 @@ export class SessionStore {
           `Authentication lock timed out. Check that another Gitdog process is not running; stale lock: ${path}.`,
         );
       try {
-        handle = await open(path, "wx", 0o600);
+        const created = await open(path, "wx", 0o600);
+        try {
+          await created.writeFile(String(process.pid));
+        } catch (error) {
+          await created.close();
+          await rm(path, { force: true });
+          throw error;
+        }
+        handle = created;
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        if (await removeAbandonedLock(path)) continue;
         if (Date.now() >= deadline)
           throw new Error(
             `Another Gitdog process is updating authentication. Retry later; if it crashed, remove ${path}.`,
@@ -165,6 +175,40 @@ export class SessionStore {
       await rm(path, { force: true });
     }
   }
+}
+
+/** Remove a lock whose recorded owner process no longer exists. */
+async function removeAbandonedLock(path: string): Promise<boolean> {
+  let owner: number;
+  try {
+    const content = (await readFile(path, "utf8")).trim();
+    if (!/^\d+$/.test(content)) return false;
+    owner = Number(content);
+  } catch {
+    return false;
+  }
+  if (owner === process.pid) return false;
+  try {
+    process.kill(owner, 0);
+    return false;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ESRCH") return false;
+  }
+  // Claim the stale lock atomically so two waiters cannot both remove it; if
+  // another process replaced it meanwhile, put that live lock back.
+  const claimed = `${path}.${randomUUID()}.stale`;
+  try {
+    await rename(path, claimed);
+  } catch {
+    return false;
+  }
+  try {
+    if ((await readFile(claimed, "utf8")).trim() !== String(owner))
+      await link(claimed, path).catch(() => {});
+  } finally {
+    await rm(claimed, { force: true });
+  }
+  return true;
 }
 
 export function tokenExpiresSoon(token: string): boolean {

@@ -1,7 +1,9 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { mkdir, open, readFile, rm } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { asRecord } from "./ui.js";
-import { validateUrl } from "./storage.js";
+import { exists, validateUrl } from "./storage.js";
 
 export type ProjectKey = {
   version: 1;
@@ -58,6 +60,29 @@ export async function readProjectKey(path: string): Promise<ProjectKey> {
     scopes: key.scopes,
     expiresAt: key.expiresAt,
   };
+}
+
+/** Refuse key paths that Git would track, so secrets are not committed. */
+export async function assertUntrackedKeyPath(path: string): Promise<void> {
+  let directory = dirname(path);
+  while (!(await exists(directory))) {
+    const parent = dirname(directory);
+    if (parent === directory) return;
+    directory = parent;
+  }
+  try {
+    await promisify(execFile)("git", ["check-ignore", "-q", "--", path], {
+      cwd: directory,
+      timeout: 5000,
+    });
+  } catch (error) {
+    // Exit 1 means inside a work tree and not ignored; anything else means
+    // no repository or no Git, where the file cannot be committed by mistake.
+    if ((error as { code?: unknown }).code === 1)
+      throw new Error(
+        "The key file would be inside a Git repository and not ignored. Choose a path outside the repository or add it to .gitignore.",
+      );
+  }
 }
 
 export async function saveProjectKey(
