@@ -245,3 +245,31 @@ test("project discovery stops at the repository root", async (t) => {
     join(checkout, "gitdog.json"),
   );
 });
+
+test("PR review settings accept old server defaults and strict booleans", () => {
+  const legacy = Object.fromEntries(
+    Object.entries(settings).filter(
+      ([k]) =>
+        ![
+          "pullRequestReviewsEnabled",
+          "pullRequestSuggestionsEnabled",
+          "requireApprovalForPullRequests",
+        ].includes(k),
+    ),
+  );
+  const current = validateSettings(legacy, true);
+  assert.equal(current.pullRequestReviewsEnabled, false);
+  assert.equal(current.pullRequestSuggestionsEnabled, true);
+  assert.equal(current.requireApprovalForPullRequests, true);
+  assert.deepEqual(
+    validateSettings({
+      pullRequestReviewsEnabled: true,
+      requireApprovalForPullRequests: false,
+    }),
+    { pullRequestReviewsEnabled: true, requireApprovalForPullRequests: false },
+  );
+  assert.throws(
+    () => validateSettings({ pullRequestReviewsEnabled: "true" }),
+    /true or false/,
+  );
+});

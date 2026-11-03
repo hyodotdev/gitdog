@@ -116,6 +116,12 @@ const scenarios = [
     },
   ],
   [
+    "tickets pending --all --type pull_request",
+    "query",
+    "tickets/query:listPendingApproval",
+    { ticketType: "pull_request", limit: 20, offset: 0 },
+  ],
+  [
     "tickets pending --all --type discussion",
     "query",
     "tickets/query:listPendingApproval",

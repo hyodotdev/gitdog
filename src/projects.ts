@@ -7,6 +7,9 @@ import { asRecord, integer, type Ui } from "./ui.js";
 import type { Api } from "./client.js";
 
 export const BOOLEAN_SETTINGS = [
+  "pullRequestReviewsEnabled",
+  "pullRequestSuggestionsEnabled",
+  "requireApprovalForPullRequests",
   "issueAssistantEnabled",
   "autoFormatIssue",
   "autoAnswerQuestions",
@@ -82,11 +85,21 @@ export function validateSettings(
   }
   if (
     complete &&
-    BOOLEAN_SETTINGS.some((key) => typeof settings[key] !== "boolean")
+    BOOLEAN_SETTINGS.filter(
+      (key) =>
+        key !== "pullRequestReviewsEnabled" &&
+        key !== "pullRequestSuggestionsEnabled" &&
+        key !== "requireApprovalForPullRequests",
+    ).some((key) => typeof settings[key] !== "boolean")
   )
     throw new Error(
       "The server returned incomplete project settings. Update Gitdog before applying settings.",
     );
+  if (complete) {
+    settings.pullRequestReviewsEnabled ??= false;
+    settings.pullRequestSuggestionsEnabled ??= true;
+    settings.requireApprovalForPullRequests ??= true;
+  }
   return settings;
 }
 
