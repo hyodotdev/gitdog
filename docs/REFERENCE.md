@@ -11,7 +11,8 @@ For example: `npx gitdog@latest login`. An optional global installation with
 
 `gitdog login` opens GitHub in your browser. Use a browser on the same computer,
 or pass `--no-browser` to open the printed URL yourself. Ctrl+C cancels the entire
-sign-in flow. The browser callback times out after five minutes.
+sign-in flow. The browser callback times out after five minutes. When sign-in
+finishes, your browser shows the result on Gitdog and the tab can be closed.
 
 ## Projects, like Firebase
 

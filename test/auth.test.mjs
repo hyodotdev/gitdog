@@ -27,12 +27,44 @@ test("loopback listener rejects incorrect state, path, method and duplicate code
   const duplicate = new URL(correct);
   duplicate.searchParams.append("code", "second");
   assert.equal((await fetch(duplicate)).status, 400);
-  const response = await fetch(correct);
-  assert.equal(response.status, 200);
-  assert.equal(response.headers.get("cache-control"), "no-store");
-  assert.equal((await response.text()).includes("one-time-code"), false);
+  const pending = fetch(correct, { redirect: "manual" });
   assert.equal(await listener.code, "one-time-code");
   assert.equal((await fetch(correct)).status, 410);
+  await listener.complete("success");
+  const response = await pending;
+  assert.equal(response.status, 302);
+  assert.equal(
+    response.headers.get("location"),
+    "https://gitdog.dev/cli/login?status=success",
+  );
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.equal(response.headers.get("referrer-policy"), "no-referrer");
+});
+
+test("loopback listener reports a failed exchange when it closes", async () => {
+  const listener = await createLoginListener(5000, "http://localhost:5173/");
+  const callback = new URL(listener.redirectTo);
+  callback.searchParams.set("code", "one-time-code");
+  const pending = fetch(callback, { redirect: "manual" });
+  await listener.code;
+  await listener.close();
+  assert.equal(
+    (await pending).headers.get("location"),
+    "http://localhost:5173/cli/login?status=failed",
+  );
+});
+
+test("loopback listener closes after the browser disconnects", async () => {
+  const listener = await createLoginListener(5000);
+  const callback = new URL(listener.redirectTo);
+  callback.searchParams.set("code", "one-time-code");
+  const disconnect = new AbortController();
+  const pending = fetch(callback, { signal: disconnect.signal });
+  await listener.code;
+  disconnect.abort();
+  await assert.rejects(pending);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await listener.close();
 });
 
 test("loopback listener times out and supports cancellation", async () => {
@@ -47,8 +79,12 @@ test("loopback listener times out and supports cancellation", async () => {
 test("Convex OAuth cancellation without a code fails immediately", async (t) => {
   const listener = await createLoginListener(5000);
   t.after(listener.close);
-  const response = await fetch(listener.redirectTo);
-  assert.equal(response.status, 400);
+  const response = await fetch(listener.redirectTo, { redirect: "manual" });
+  assert.equal(response.status, 302);
+  assert.equal(
+    response.headers.get("location"),
+    "https://gitdog.dev/cli/login?status=failed",
+  );
   await assert.rejects(listener.code, /declined or failed/);
 });
 
@@ -58,6 +94,20 @@ test("auth redirects cannot send the browser to a third-party origin", () => {
       "https://my-app.convex.site/api/auth/signin/github?code=x",
       "https://my-app.convex.cloud",
     ),
+  );
+  assert.doesNotThrow(() =>
+    validateAuthRedirect(
+      "https://auth.gitdog.dev/api/auth/signin/github?code=x",
+      "https://calm-hippopotamus-56.convex.cloud",
+    ),
+  );
+  assert.throws(
+    () =>
+      validateAuthRedirect(
+        "https://auth.gitdog.dev/api/auth/signin/github?code=x",
+        "https://my-app.convex.cloud",
+      ),
+    /unexpected/,
   );
   assert.throws(
     () =>
@@ -118,7 +168,8 @@ test("real HTTP login exchanges a verifier-bound code and stores private credent
   ui.banner = () => {};
   ui.info = (message) => {
     ui.messages.push(message);
-    if (message.startsWith("Open this URL")) void fetch(callback);
+    if (message.startsWith("Open this URL"))
+      void fetch(callback, { redirect: "manual" });
   };
   await login(server.url, "https://gitdog.dev", ui, true);
   const store = new SessionStore();
@@ -222,7 +273,8 @@ for (const phase of ["start", "exchange", "profile", "lock"]) {
     ui.banner = () => {};
     ui.info = (message) => {
       ui.messages.push(message);
-      if (message.startsWith("Open this URL")) void fetch(callback);
+      if (message.startsWith("Open this URL"))
+        void fetch(callback, { redirect: "manual" });
     };
     const signalHandlers = process.listenerCount("SIGINT");
     await assert.rejects(

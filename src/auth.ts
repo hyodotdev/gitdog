@@ -1,13 +1,39 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { createServer } from "node:http";
+import { createServer, type ServerResponse } from "node:http";
 import { randomBytes } from "node:crypto";
 import { httpClient, invoke } from "./client.js";
-import { SessionStore, validTokens, tokenExpiresSoon } from "./storage.js";
+import {
+  DEFAULT_API_URL,
+  DEFAULT_AUTH_SITE_URL,
+  DEFAULT_SITE_URL,
+  SessionStore,
+  validTokens,
+  tokenExpiresSoon,
+} from "./storage.js";
 import { asRecord, type Ui } from "./ui.js";
 
 const runFile = promisify(execFile);
 export const CALLBACK_PATH = "/gitdog/callback";
+export const LOGIN_RESULT_PATH = "/cli/login";
+
+type LoginOutcome = "success" | "failed";
+
+function sendToLoginResult(
+  response: ServerResponse,
+  siteUrl: string,
+  outcome: LoginOutcome,
+): Promise<void> {
+  if (response.destroyed) return Promise.resolve();
+  const location = new URL(LOGIN_RESULT_PATH, siteUrl);
+  location.searchParams.set("status", outcome);
+  return new Promise((resolve) => {
+    response.once("close", resolve);
+    response
+      .writeHead(302, { Location: location.href, Connection: "close" })
+      .end();
+  });
+}
 
 export async function openBrowser(
   url: string,
@@ -38,7 +64,10 @@ export async function openBrowser(
   }
 }
 
-export async function createLoginListener(timeoutMs = 300_000) {
+export async function createLoginListener(
+  timeoutMs = 300_000,
+  siteUrl = DEFAULT_SITE_URL,
+) {
   const cancellation = new AbortController();
   const state = randomBytes(32).toString("hex");
   let resolveCode: (code: string) => void;
@@ -50,6 +79,13 @@ export async function createLoginListener(timeoutMs = 300_000) {
   void code.catch(() => {});
   let expectedHost = "";
   let settled = false;
+  // Held open so the browser reports the real result, not just a received code.
+  let pendingResponse: ServerResponse | undefined;
+  const complete = async (outcome: LoginOutcome): Promise<void> => {
+    const response = pendingResponse;
+    pendingResponse = undefined;
+    if (response) await sendToLoginResult(response, siteUrl, outcome);
+  };
   const finish = (error?: Error, value?: string) => {
     if (settled) return;
     settled = true;
@@ -98,21 +134,12 @@ export async function createLoginListener(timeoutMs = 300_000) {
         response.writeHead(410).end("This sign-in has already completed.");
         return;
       }
-      if (url.searchParams.has("error")) {
-        response
-          .writeHead(400)
-          .end("Gitdog sign-in was not completed. Return to your terminal.");
+      if (url.searchParams.has("error") || !url.searchParams.has("code")) {
+        void sendToLoginResult(response, siteUrl, "failed");
         finish(new Error("GitHub sign-in was declined or failed."));
         return;
       }
       const value = url.searchParams.get("code");
-      if (!url.searchParams.has("code")) {
-        response
-          .writeHead(400)
-          .end("Gitdog sign-in was not completed. Return to your terminal.");
-        finish(new Error("GitHub sign-in was declined or failed."));
-        return;
-      }
       if (
         url.searchParams.getAll("code").length !== 1 ||
         !value ||
@@ -121,9 +148,7 @@ export async function createLoginListener(timeoutMs = 300_000) {
         response.writeHead(400).end("Missing or invalid sign-in code.");
         return;
       }
-      response.end(
-        "Gitdog received your sign-in. Return to your terminal to finish. You can close this tab.",
-      );
+      pendingResponse = response;
       finish(undefined, value);
     },
   );
@@ -166,8 +191,10 @@ export async function createLoginListener(timeoutMs = 300_000) {
     redirectTo,
     signal: cancellation.signal,
     code,
+    complete,
     close: async () => {
       finish(new Error("Sign-in cancelled."));
+      await complete("failed");
       process.off("SIGINT", onInterrupt);
       server.closeAllConnections();
       await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -179,8 +206,11 @@ export function validateAuthRedirect(value: string, apiUrl: string): void {
   const url = new URL(value);
   const api = new URL(apiUrl);
   const siteOrigin = api.origin.replace(/\.convex\.cloud$/, ".convex.site");
+  const allowedOrigins = [api.origin, siteOrigin];
+  if (api.origin === new URL(DEFAULT_API_URL).origin)
+    allowedOrigins.push(new URL(DEFAULT_AUTH_SITE_URL).origin);
   if (
-    ![api.origin, siteOrigin].includes(url.origin) ||
+    !allowedOrigins.includes(url.origin) ||
     url.pathname !== "/api/auth/signin/github" ||
     url.username ||
     url.password ||
@@ -201,7 +231,7 @@ export async function login(
       "Browser login needs human interaction. Omit --json; use GITDOG_TOKEN for automation.",
     );
   ui.banner();
-  const listener = await createLoginListener();
+  const listener = await createLoginListener(undefined, siteUrl);
   const client = httpClient(apiUrl, 30_000, listener.signal);
   try {
     ui.info("1 / 2  Sign in with your GitHub account");
@@ -257,6 +287,7 @@ export async function login(
       listener.signal,
     );
     listener.signal.throwIfAborted();
+    await listener.complete("success");
     ui.output(`✓ Signed in as ${String(user.name ?? "GitHub user")}.`);
     if (user.requiresCurrentLegalAttestation)
       ui.info(

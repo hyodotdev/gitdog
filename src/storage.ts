@@ -15,6 +15,7 @@ import { asRecord } from "./ui.js";
 
 export const DEFAULT_API_URL = "https://calm-hippopotamus-56.convex.cloud";
 export const DEFAULT_SITE_URL = "https://gitdog.dev";
+export const DEFAULT_AUTH_SITE_URL = "https://auth.gitdog.dev";
 export type Tokens = { token: string; refreshToken: string };
 export type Session = Tokens & { apiUrl: string; siteUrl: string };
 
