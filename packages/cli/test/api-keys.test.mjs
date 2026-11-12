@@ -408,3 +408,28 @@ test("key path checks follow directory symlinks and fail closed on Git errors", 
     /Could not verify/,
   );
 });
+
+test("generic API calls refuse to send an AI provider key", async () => {
+  let called = false;
+  const api = {
+    async call() {
+      called = true;
+      return {};
+    },
+  };
+  await assert.rejects(
+    createProgram({ api, ui: new CaptureUi() }).parseAsync(
+      [
+        "api",
+        "call",
+        "providerApiKeys/action:save",
+        "--yes",
+        "--data",
+        '{"provider":"openai","apiKey":"sk-test"}',
+      ],
+      { from: "user" },
+    ),
+    /Gitdog settings/,
+  );
+  assert.equal(called, false);
+});

@@ -2,7 +2,12 @@ import { internalAction } from "../_generated/server";
 import type { ActionCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { v } from "convex/values";
-import { getDefaultAiModel } from "../_ai/model";
+import { getDefaultAiModel, type AiProvider } from "../_ai/model";
+import {
+  resolveGenerationProvider,
+  UserApiKeyError,
+  usesUserKey,
+} from "../_ai/providerResolution";
 import { analyzeIssueFormatting } from "../_ai/issueFormatting/workflow";
 import { analyzeIssueWithTools } from "../_ai/issueAnalysis/agenticWorkflow";
 import {
@@ -595,13 +600,31 @@ export const regenerateWithFeedback = internalAction({
       );
       return;
     }
-    // Replaying an already billed checkpoint spends no new quota.
-    const canPerform = replayAuthorized
-      ? { allowed: true as const }
-      : await ctx.runQuery(
-          internal.subscriptions.internalQuery.canPerformActionInternal,
-          { userId: ticket.userId },
-        );
+    let rawAiProvider: AiProvider;
+    try {
+      rawAiProvider = await resolveGenerationProvider(ctx, {
+        userId: ticket.userId,
+        ticketActionId: args.actionId,
+      });
+    } catch (error) {
+      if (!(error instanceof UserApiKeyError)) throw error;
+      // A checkpointed result replays without calling any provider, so a
+      // removed or failing key must not block it.
+      if (!replayAuthorized) {
+        await failPendingGeneration(error.message);
+        return;
+      }
+      rawAiProvider = getDefaultAiModel();
+    }
+    // Replaying an already billed checkpoint spends no new quota, and a
+    // request on the owner's own key spends none of Gitdog's.
+    const canPerform =
+      replayAuthorized || usesUserKey(rawAiProvider)
+        ? { allowed: true as const }
+        : await ctx.runQuery(
+            internal.subscriptions.internalQuery.canPerformActionInternal,
+            { userId: ticket.userId },
+          );
 
     if (!canPerform.allowed) {
       console.error("[regenerateWithFeedback] User cannot perform action");
@@ -618,7 +641,6 @@ export const regenerateWithFeedback = internalAction({
       return;
     }
 
-    const rawAiProvider = getDefaultAiModel();
     const userFeedback = action.userFeedback || "";
     const aiTicketBody = stripExecutionMarkers(ticket.githubBody || "");
 
@@ -1436,13 +1458,31 @@ export const processFollowUp = internalAction({
       );
       return;
     }
-    // Replaying an already billed checkpoint spends no new quota.
-    const canPerform = replayAuthorized
-      ? { allowed: true as const }
-      : await ctx.runQuery(
-          internal.subscriptions.internalQuery.canPerformActionInternal,
-          { userId: ticket.userId },
-        );
+    let rawAiProvider: AiProvider;
+    try {
+      rawAiProvider = await resolveGenerationProvider(ctx, {
+        userId: ticket.userId,
+        ticketActionId: args.actionId,
+      });
+    } catch (error) {
+      if (!(error instanceof UserApiKeyError)) throw error;
+      // A checkpointed result replays without calling any provider, so a
+      // removed or failing key must not block it.
+      if (!replayAuthorized) {
+        await failPendingGeneration(error.message);
+        return;
+      }
+      rawAiProvider = getDefaultAiModel();
+    }
+    // Replaying an already billed checkpoint spends no new quota, and a
+    // request on the owner's own key spends none of Gitdog's.
+    const canPerform =
+      replayAuthorized || usesUserKey(rawAiProvider)
+        ? { allowed: true as const }
+        : await ctx.runQuery(
+            internal.subscriptions.internalQuery.canPerformActionInternal,
+            { userId: ticket.userId },
+          );
 
     if (!canPerform.allowed) {
       console.error("[processFollowUp] User cannot perform action");
@@ -1519,7 +1559,6 @@ To continue using ${getConfiguredGitdogMention() ?? "the Gitdog bot"}, the repos
     }
 
     const aiTicketBody = stripExecutionMarkers(ticket.githubBody || "");
-    const rawAiProvider = getDefaultAiModel();
     const providerRetryAttempt = getProviderRetryAttempt(
       args.providerRetryAttempt,
     );
@@ -2272,7 +2311,10 @@ async function triggerLearningExtraction(
           ticketActionId: options.ticketActionId,
           generationKey: learningGenerationKey,
           operation: "learning-extraction",
-          provider: getDefaultAiModel(),
+          provider: await resolveGenerationProvider(ctx, {
+            userId: options.userId,
+            ticketActionId: options.ticketActionId,
+          }),
           requirePendingTicketAction: false,
           beforeProviderStart: async () => {
             await requireCurrentAiLegalAttestation(ctx, options.userId);

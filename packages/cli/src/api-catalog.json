@@ -215,6 +215,26 @@
     "args": "{}"
   },
   {
+    "path": "providerApiKeys/action:revalidate",
+    "kind": "action",
+    "args": "{ provider: v.union(v.literal(\"anthropic\"), v.literal(\"openai\")) }"
+  },
+  {
+    "path": "providerApiKeys/action:save",
+    "kind": "action",
+    "args": "{ provider: v.union(v.literal(\"anthropic\"), v.literal(\"openai\")), apiKey: v.string() }"
+  },
+  {
+    "path": "providerApiKeys/mutation:remove",
+    "kind": "mutation",
+    "args": "{\n    provider: v.union(v.literal(\"anthropic\"), v.literal(\"openai\")),\n  }"
+  },
+  {
+    "path": "providerApiKeys/query:list",
+    "kind": "query",
+    "args": "{}"
+  },
+  {
     "path": "pullRequests/action:recheck",
     "kind": "action",
     "args": "{ actionId: v.id(\"ticketActions\") }"

@@ -12,6 +12,7 @@ import {
   FileText,
   Zap,
   DollarSign,
+  KeyRound,
 } from "lucide-react";
 import { SiGithub } from "@icons-pack/react-simple-icons";
 import { useTranslation } from "react-i18next";
@@ -299,6 +300,46 @@ export function UsagePage() {
             </div>
           </div>
 
+          {/* Usage on the user's own provider keys (not counted in quota) */}
+          {tokenUsage?.userKey && tokenUsage.userKey.totalActions > 0 && (
+            <div
+              className={cn(
+                "p-6 mb-8",
+                "border border-gray-200",
+                "dark:border-gray-800",
+              )}
+            >
+              <div className={cn("flex items-center gap-3 mb-2")}>
+                <KeyRound
+                  size={20}
+                  className={cn("text-gray-600", "dark:text-gray-400")}
+                />
+                <span
+                  className={cn("text-sm text-gray-600", "dark:text-gray-400")}
+                >
+                  {t("usage.userKey.title")}
+                </span>
+              </div>
+              <div
+                className={cn(
+                  "text-3xl font-brand font-bold text-black",
+                  "dark:text-white",
+                )}
+              >
+                {formatTokens(tokenUsage.userKey.totalTokens)}
+                {tokenUsage.userKey.isPartial ? "+" : ""}
+              </div>
+              <div className={cn("text-sm text-gray-500 mt-1")}>
+                {t("usage.userKey.description", {
+                  count: tokenUsage.userKey.totalActions,
+                  cost: formatCurrency(
+                    tokenUsage.userKey.estimatedProviderCostCents,
+                  ),
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Token Usage Progress */}
           <div
             className={cn(
@@ -461,6 +502,7 @@ export function UsagePage() {
                     (u) => u.repositoryId === repo._id,
                   );
                   const repoTokens = repoUsage?.totalTokens ?? 0;
+                  const repoUserKeyTokens = repoUsage?.userKeyTokens ?? 0;
 
                   return (
                     <div
@@ -522,6 +564,18 @@ export function UsagePage() {
                             >
                               {t("usage.tokens")}
                             </div>
+                            {repoUserKeyTokens > 0 && (
+                              <div
+                                className={cn(
+                                  "text-xs text-gray-500",
+                                  "dark:text-gray-400",
+                                )}
+                              >
+                                {t("usage.userKey.repositoryTokens", {
+                                  tokens: formatTokens(repoUserKeyTokens),
+                                })}
+                              </div>
+                            )}
                           </div>
                           <button
                             onClick={() =>

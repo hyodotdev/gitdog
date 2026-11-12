@@ -117,6 +117,8 @@ export interface AiProvider {
   name: string;
   modelId: string;
   providerId: string;
+  /** "user" when the call runs on the repository owner's own provider key. */
+  keySource?: "user";
 }
 
 export function getDefaultAiModel(): AiProvider {

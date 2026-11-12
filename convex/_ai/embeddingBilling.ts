@@ -258,8 +258,11 @@ async function hasBlockingProviderUsage(
     await Promise.all([
       ctx.db
         .query("chatUsageReservations")
-        .withIndex("by_user_and_status", (q) =>
-          q.eq("userId", userId).eq("status", "ambiguous"),
+        .withIndex("by_user_key_source_and_status", (q) =>
+          q
+            .eq("userId", userId)
+            .eq("keySource", undefined)
+            .eq("status", "ambiguous"),
         )
         .take(USAGE_RESERVATION_CLEANUP_LIMIT + 1),
       ctx.db
@@ -270,9 +273,10 @@ async function hasBlockingProviderUsage(
         .take(USAGE_RESERVATION_CLEANUP_LIMIT + 1),
       ctx.db
         .query("chatUsageReservations")
-        .withIndex("by_user_status_and_provider_started_at", (q) =>
+        .withIndex("by_user_key_source_status_and_provider_started_at", (q) =>
           q
             .eq("userId", userId)
+            .eq("keySource", undefined)
             .eq("status", "pending")
             .gte("providerStartedAt", 0),
         )
@@ -306,8 +310,11 @@ async function checkUnresolvedPaidEmbeddingUsage(
 ): Promise<PaidEmbeddingQuotaDecision | null> {
   const ambiguousChat = await ctx.db
     .query("chatUsageReservations")
-    .withIndex("by_user_and_status", (q) =>
-      q.eq("userId", args.userId).eq("status", "ambiguous"),
+    .withIndex("by_user_key_source_and_status", (q) =>
+      q
+        .eq("userId", args.userId)
+        .eq("keySource", undefined)
+        .eq("status", "ambiguous"),
     )
     .take(USAGE_RESERVATION_CLEANUP_LIMIT + 1);
   if (ambiguousChat.length > USAGE_RESERVATION_CLEANUP_LIMIT) {
@@ -318,9 +325,10 @@ async function checkUnresolvedPaidEmbeddingUsage(
   }
   const expiredChat = await ctx.db
     .query("chatUsageReservations")
-    .withIndex("by_user_status_settlement_and_expiration", (q) =>
+    .withIndex("by_user_key_source_status_settlement_and_expiration", (q) =>
       q
         .eq("userId", args.userId)
+        .eq("keySource", undefined)
         .eq("status", "pending")
         .eq("settlementState", undefined)
         .lte("expiresAt", args.now),
@@ -342,9 +350,10 @@ async function checkUnresolvedPaidEmbeddingUsage(
   }
   const activeChatAttempt = await ctx.db
     .query("chatUsageReservations")
-    .withIndex("by_user_status_and_provider_started_at", (q) =>
+    .withIndex("by_user_key_source_status_and_provider_started_at", (q) =>
       q
         .eq("userId", args.userId)
+        .eq("keySource", undefined)
         .eq("status", "pending")
         .gte("providerStartedAt", 0),
     )
@@ -504,8 +513,11 @@ async function checkPaidEmbeddingQuota(
       .take(MAX_COLLECT_LIMIT + 1),
     ctx.db
       .query("chatUsageReservations")
-      .withIndex("by_user_and_status", (q) =>
-        q.eq("userId", args.userId).eq("status", "pending"),
+      .withIndex("by_user_key_source_and_status", (q) =>
+        q
+          .eq("userId", args.userId)
+          .eq("keySource", undefined)
+          .eq("status", "pending"),
       )
       .take(MAX_COLLECT_LIMIT + 1),
     ctx.db
@@ -516,8 +528,11 @@ async function checkPaidEmbeddingQuota(
       .take(USAGE_RESERVATION_CLEANUP_LIMIT + 1),
     ctx.db
       .query("chatUsageReservations")
-      .withIndex("by_user_and_status", (q) =>
-        q.eq("userId", args.userId).eq("status", "ambiguous"),
+      .withIndex("by_user_key_source_and_status", (q) =>
+        q
+          .eq("userId", args.userId)
+          .eq("keySource", undefined)
+          .eq("status", "ambiguous"),
       )
       .take(USAGE_RESERVATION_CLEANUP_LIMIT + 1),
   ]);

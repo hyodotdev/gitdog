@@ -1,4 +1,5 @@
-import { query } from "../_generated/server";
+import { query, type QueryCtx } from "../_generated/server";
+import type { Doc, Id } from "../_generated/dataModel";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { MAX_COLLECT_LIMIT } from "../_utils/pagination";
 import { getSubscriptionForEntitlement } from "../subscriptions/entitlement";
@@ -52,6 +53,32 @@ export function assertCompleteUsageAggregation(recordCount: number): void {
 }
 
 /**
+ * Usage on the user's own provider keys. It never counts toward quota, so a
+ * busy period is reported as a floor instead of failing the usage page.
+ */
+async function readUserKeyUsage(
+  ctx: QueryCtx,
+  userId: Id<"users">,
+  periodStart: number,
+  periodEnd: number,
+): Promise<{ rows: Doc<"tokenUsage">[]; isPartial: boolean }> {
+  const rows = await ctx.db
+    .query("tokenUsage")
+    .withIndex("by_user_key_source_and_created_at", (q) =>
+      q
+        .eq("userId", userId)
+        .eq("keySource", "user")
+        .gte("createdAt", periodStart)
+        .lt("createdAt", periodEnd),
+    )
+    .take(MAX_TOKEN_USAGE_AGGREGATION_RECORDS + 1);
+  return {
+    rows: rows.slice(0, MAX_TOKEN_USAGE_AGGREGATION_RECORDS),
+    isPartial: rows.length > MAX_TOKEN_USAGE_AGGREGATION_RECORDS,
+  };
+}
+
+/**
  * Get current billing period's usage summary for the authenticated user
  * Aggregates tokenUsage records on-demand to avoid race conditions
  */
@@ -74,14 +101,21 @@ export const getCurrentMonthUsage = query({
     // Aggregate tokenUsage records from periodStart
     const usageRecords = await ctx.db
       .query("tokenUsage")
-      .withIndex("by_user_and_month", (q) =>
+      .withIndex("by_user_key_source_and_created_at", (q) =>
         q
           .eq("userId", userId)
+          .eq("keySource", undefined)
           .gte("createdAt", periodStart)
           .lt("createdAt", periodEnd),
       )
       .take(MAX_TOKEN_USAGE_AGGREGATION_RECORDS + 1);
     assertCompleteUsageAggregation(usageRecords.length);
+    const userKeyRecords = await readUserKeyUsage(
+      ctx,
+      userId,
+      periodStart,
+      periodEnd,
+    );
 
     // `totalTokens` keeps cost-equivalent quota usage, while
     // `embeddingTokens` preserves the provider's actual embedding input count.
@@ -135,9 +169,38 @@ export const getCurrentMonthUsage = query({
     const yearMonth = new Date().toISOString().slice(0, 7);
     const paymentStatus = entitlement.plan === "free" ? "waived" : "pending";
 
+    const userKey = {
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      totalActions: 0,
+      estimatedProviderCostCents: 0,
+      isPartial: userKeyRecords.isPartial,
+    };
+    for (const record of userKeyRecords.rows) {
+      userKey.inputTokens = checkedTokenSum(
+        userKey.inputTokens,
+        record.inputTokens,
+      );
+      userKey.outputTokens = checkedTokenSum(
+        userKey.outputTokens,
+        record.outputTokens,
+      );
+      userKey.totalTokens = checkedTokenSum(
+        userKey.totalTokens,
+        record.totalTokens,
+      );
+      userKey.totalActions = checkedTokenSum(userKey.totalActions, 1);
+      userKey.estimatedProviderCostCents = checkedCostSum(
+        userKey.estimatedProviderCostCents,
+        record.baseCostCents,
+      );
+    }
+
     return {
       yearMonth,
       ...totals,
+      userKey,
       paymentStatus: paymentStatus as "waived" | "pending" | "paid",
     };
   },
@@ -164,14 +227,21 @@ export const getUsageByRepository = query({
     // Get all tokenUsage records for the billing period
     const usageRecords = await ctx.db
       .query("tokenUsage")
-      .withIndex("by_user_and_month", (q) =>
+      .withIndex("by_user_key_source_and_created_at", (q) =>
         q
           .eq("userId", userId)
+          .eq("keySource", undefined)
           .gte("createdAt", periodStart)
           .lt("createdAt", periodEnd),
       )
       .take(MAX_TOKEN_USAGE_AGGREGATION_RECORDS + 1);
     assertCompleteUsageAggregation(usageRecords.length);
+    const userKeyRecords = await readUserKeyUsage(
+      ctx,
+      userId,
+      periodStart,
+      periodEnd,
+    );
 
     // Group by repositoryId
     const usageByRepo = new Map<
@@ -185,24 +255,29 @@ export const getUsageByRepository = query({
         totalServiceFeeCents: number;
         totalCostCents: number;
         totalActions: number;
+        userKeyTokens: number;
+        userKeyActions: number;
       }
     >();
+    const emptyRepositoryUsage = (repositoryId: string) => ({
+      repositoryId,
+      totalTokens: 0,
+      totalInputTokens: 0,
+      totalOutputTokens: 0,
+      totalBaseCostCents: 0,
+      totalServiceFeeCents: 0,
+      totalCostCents: 0,
+      totalActions: 0,
+      userKeyTokens: 0,
+      userKeyActions: 0,
+    });
 
     for (const record of usageRecords) {
       const repoId = record.repositoryId ?? "unknown";
-      const existing = usageByRepo.get(repoId) ?? {
-        repositoryId: repoId,
-        totalTokens: 0,
-        totalInputTokens: 0,
-        totalOutputTokens: 0,
-        totalBaseCostCents: 0,
-        totalServiceFeeCents: 0,
-        totalCostCents: 0,
-        totalActions: 0,
-      };
+      const existing = usageByRepo.get(repoId) ?? emptyRepositoryUsage(repoId);
 
       usageByRepo.set(repoId, {
-        repositoryId: repoId,
+        ...existing,
         totalTokens: checkedTokenSum(existing.totalTokens, record.totalTokens),
         totalInputTokens: checkedTokenSum(
           existing.totalInputTokens,
@@ -228,6 +303,19 @@ export const getUsageByRepository = query({
           existing.totalActions,
           record.usageType === "chat" ? 1 : 0,
         ),
+      });
+    }
+
+    for (const record of userKeyRecords.rows) {
+      const repoId = record.repositoryId ?? "unknown";
+      const existing = usageByRepo.get(repoId) ?? emptyRepositoryUsage(repoId);
+      usageByRepo.set(repoId, {
+        ...existing,
+        userKeyTokens: checkedTokenSum(
+          existing.userKeyTokens,
+          record.totalTokens,
+        ),
+        userKeyActions: checkedTokenSum(existing.userKeyActions, 1),
       });
     }
 

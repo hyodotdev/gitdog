@@ -8,6 +8,7 @@ import {
 } from "../github/installationAccess";
 import { hasCurrentLegalAttestation } from "../users/legal";
 import { checkAccountTokenAllowance } from "../subscriptions/internalQuery";
+import { isUsableProviderKey } from "../providerApiKeys/usability";
 import type { ReviewQuotaRefusal } from "./errors";
 import {
   combinedReviewBody,
@@ -519,7 +520,12 @@ async function checkBatchQuota(
 
 /** Check and hold the tokens a batched review is expected to need. */
 export const reserveBatchedReviewQuota = internalMutation({
-  args: { actionId: v.id("ticketActions"), batches: v.number() },
+  args: {
+    actionId: v.id("ticketActions"),
+    batches: v.number(),
+    // The review runs on the owner's own provider key and holds no quota.
+    userKey: v.optional(v.boolean()),
+  },
   handler: async (
     ctx,
     args,
@@ -540,6 +546,20 @@ export const reserveBatchedReviewQuota = internalMutation({
         reason: "busy",
         message: "The review is no longer pending.",
       };
+    if (args.userKey) {
+      const keys = await ctx.db
+        .query("providerApiKeys")
+        .withIndex("by_user_and_provider", (q) => q.eq("userId", ticket.userId))
+        .collect();
+      const now = Date.now();
+      return keys.some((key) => isUsableProviderKey(key, now))
+        ? { reserved: true }
+        : {
+            reserved: false,
+            reason: "unverified",
+            message: "Your AI provider API key is no longer available.",
+          };
+    }
     // The owner comes from the ticket. Indexing patches the repository
     // several times a second, and this slow usage read would conflict with
     // those writes on every retry.

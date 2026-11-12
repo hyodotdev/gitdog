@@ -132,6 +132,8 @@ export async function insertTokenUsage(
   ctx: MutationCtx,
   row: WithoutSystemFields<Doc<"tokenUsage">>,
 ): Promise<Id<"tokenUsage">> {
+  // Usage on the user's own provider key never counts toward Gitdog quota.
+  if (row.keySource === "user") return await ctx.db.insert("tokenUsage", row);
   const hourStart = getUsageHourStart(row.createdAt);
   const now = Date.now();
   if (!(await hasUsageTotals(ctx, row.userId))) {
@@ -139,7 +141,9 @@ export async function insertTokenUsage(
     // Users with earlier rows wait for backfillUsageTotals.
     const earlier = await ctx.db
       .query("tokenUsage")
-      .withIndex("by_user_and_month", (q) => q.eq("userId", row.userId))
+      .withIndex("by_user_key_source_and_created_at", (q) =>
+        q.eq("userId", row.userId).eq("keySource", undefined),
+      )
       .first();
     if (!earlier) {
       await ctx.db.insert("tokenUsageTotalsStates", {
@@ -176,9 +180,10 @@ export async function rebuildUsageTotalsHour(
 ): Promise<number> {
   const rows = await ctx.db
     .query("tokenUsage")
-    .withIndex("by_user_and_month", (q) =>
+    .withIndex("by_user_key_source_and_created_at", (q) =>
       q
         .eq("userId", userId)
+        .eq("keySource", undefined)
         .gte("createdAt", hourStart)
         .lt("createdAt", hourStart + USAGE_TOTALS_HOUR_MS),
     )
