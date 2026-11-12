@@ -10,7 +10,7 @@
 
 - Repository-aware issue and discussion formatting, answers, and maintainer tagging
 - Claude Sonnet 5.5 generation with GPT-6.1 Sol fallback (see [docs/ai-models.md](docs/ai-models.md))
-- OpenAI embeddings for repository indexing and hybrid code search
+- Keyword repository index plus AI repository tools (search, read file) for code search
 - Private workspace per user
 - Free and Pro token quotas with optional prepaid token packs
 - GitHub App integration for repository access and webhook-driven synchronization

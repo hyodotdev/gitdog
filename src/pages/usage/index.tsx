@@ -64,7 +64,7 @@ export function UsagePage() {
   }
 
   // Token usage calculations
-  // Note: Embedding tokens are already stored as "equivalent chat tokens" (divided by 50)
+  // Historical embedding usage is stored as equivalent chat tokens.
   const totalTokens = tokenUsage?.totalTokens || 0;
   const includedTokens = subscription?.includedTokens ?? 0;
   const purchasedTokens =

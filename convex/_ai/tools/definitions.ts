@@ -20,14 +20,14 @@ export const codebaseTools: ToolDefinition[] = [
   {
     name: "hybrid_search",
     description:
-      "Semantic search using vector embeddings + keyword search to find relevant code chunks (functions, classes). This is the MOST POWERFUL search tool - use this FIRST for finding relevant code. Returns ranked chunks with semantic similarity scores.",
+      "Ranked keyword search over the repository's indexed code chunks (functions, classes), boosted by path, symbol and documentation matches. Use this FIRST with the identifiers, file names and domain terms you expect in the code; run several focused queries rather than one long sentence. Follow up with search_code for exact patterns and read_file to confirm details.",
     input_schema: {
       type: "object",
       properties: {
         query: {
           type: "string",
           description:
-            "Natural language query describing what you're looking for (e.g., 'authentication logic', 'webhook handling', 'database queries')",
+            "Keywords for what you're looking for, ideally identifiers or terms used in the code (e.g., 'webhook signature verify', 'createCheckoutUrl', 'auth session refresh')",
         },
         topK: {
           type: "number",

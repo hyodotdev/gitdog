@@ -2,7 +2,7 @@ import { internalMutation } from "../_generated/server";
 import { v } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { DatabaseWriter } from "../_generated/server";
-import { EMBEDDING_DIMENSIONS } from "../_ai/retrievalEmbeddings";
+import { EMBEDDING_DIMENSIONS } from "../_ai/legacyEmbeddings";
 import { recordEmbeddingUsageInTransaction } from "../tokenUsage/internalMutation";
 import {
   getExactGitHubInstallation,

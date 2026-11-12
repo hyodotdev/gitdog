@@ -117,7 +117,7 @@ export const SUBSCRIPTION_PRICES = {
 export const PRICING = {
   QUOTA_REFERENCE_COST_PER_1M: TOKEN_PRICING.QUOTA_REFERENCE_COST_PER_1M,
 
-  // Embedding pricing
+  // Embeddings are retired; this prices historical usage rows only.
   OPENAI_EMBEDDING_PER_1M: 0.02,
 
   // Platform fees

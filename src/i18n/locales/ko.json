@@ -114,7 +114,7 @@
         "files": "파일 구조 분석",
         "config": "설정 파일 처리",
         "cleanup": "정리 및 마무리",
-        "embeddings": "AI 검색 인덱스 생성"
+        "embeddings": "검색 인덱스 생성"
       }
     },
     "landing": {

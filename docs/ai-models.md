@@ -1,9 +1,9 @@
 # AI Models & Pricing
 
-Gitdog uses Claude for issue, discussion and pull request generation, OpenAI as
-the credit fallback, and OpenAI embeddings with keyword retrieval for
-repository search. All model calls run on the server (Convex); the web app and
-CLI never hold provider keys.
+Gitdog uses Claude for issue, discussion and pull request generation and
+OpenAI as the credit fallback. Repository search is keyword-based; Gitdog does
+not create embeddings. All model calls run on the server (Convex); the web app
+and CLI never hold provider keys.
 
 ## Generation routing
 
@@ -36,8 +36,6 @@ those keys instead of Gitdog's:
 - An action that started on a user key cannot be finished on Gitdog's key.
 - This usage is recorded with `keySource: "user"`. It does not consume
   included or prepaid tokens and is shown separately on the Usage page.
-- Repository embeddings stay on Gitdog's OpenAI key and quota; when that quota
-  is exhausted, search falls back to keyword retrieval.
 - Key checks are limited to five per user every ten minutes.
 - Keys are validated against the generation model on save, encrypted with
   AES-256-GCM using `BYOK_ENCRYPTION_KEY`, and never returned to clients.
@@ -55,24 +53,25 @@ variable names.
 
 ## Repository retrieval
 
-Repository indexing, code queries and repository learnings use OpenAI
-`text-embedding-3-small` (1536 dimensions) together with keyword search.
+Repository indexing parses files into function and class chunks for BM25
+keyword search, ranked by path, symbol and documentation matches. During
+generation the model also searches code by exact pattern, lists directories
+and reads files with its repository tools. No embedding provider is called, so
+indexing costs no AI tokens.
 
 - First connection indexes the repository; default-branch pushes trigger
   incremental indexing, and a daily sync refreshes active repositories.
-- Vector batches are cached by content and provider/model identity, so
-  unchanged content is reused after reindexing.
-- Searches filter by exact provider/model keys, so vectors from different
-  models are never mixed. Without OpenAI access or quota, Gitdog falls back to
-  keyword search instead of sending data to another provider.
+- Repository learnings are stored and searched by keyword.
+- Vectors stored before embeddings were retired are no longer read. Reclaim
+  their storage once per deployment with
+  `bunx convex run ragV2/internalMutation:purgeRetiredEmbeddings '{"confirm":"delete-retired-embeddings"}'`.
 
 ## Token pricing
 
-| Model                         | Input per 1M tokens | Output per 1M tokens |
-| ----------------------------- | ------------------- | -------------------- |
-| Claude Sonnet 5.5             | $2.00               | $10.00               |
-| GPT-6.1 Sol                   | $2.00               | $10.00               |
-| OpenAI text-embedding-3-small | $0.02               | —                    |
+| Model             | Input per 1M tokens | Output per 1M tokens |
+| ----------------- | ------------------- | -------------------- |
+| Claude Sonnet 5.5 | $2.00               | $10.00               |
+| GPT-6.1 Sol       | $2.00               | $10.00               |
 
 Sol prompts above 272K input tokens use 2x input and 1.5x output pricing.
 Prompt caching is disabled, so recorded token counts map directly to the listed

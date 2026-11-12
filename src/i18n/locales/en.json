@@ -114,7 +114,7 @@
         "files": "Analyze File Structure",
         "config": "Process Configuration Files",
         "cleanup": "Cleanup & Finalize",
-        "embeddings": "Build AI Search Index"
+        "embeddings": "Build Search Index"
       }
     },
     "landing": {

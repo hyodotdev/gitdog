@@ -244,7 +244,7 @@ gitdog api call tickets/query:list --data '{"limit":10,"offset":0}' --json
 Queries run directly. Advanced mutations and actions require confirmation or
 `--yes`; review their arguments before execution. Use `--data @file.json` for
 multiline feedback or complex arguments. GitHub webhooks, AI generation,
-embeddings, learning extraction and scheduled jobs stay on the server; they
+indexing, learning extraction and scheduled jobs stay on the server; they
 are triggered by the same connection, sync and approval flows as the web app.
 There is no MCP server or MCP integration in this package.
 

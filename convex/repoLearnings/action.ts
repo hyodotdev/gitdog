@@ -3,35 +3,17 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { ActionCtx } from "../_generated/server";
 import { internalAction } from "../_generated/server";
 import {
-  embedSearchDocuments,
-  EMBEDDING_PROVIDER,
-  embedSearchQuery,
   EMBEDDING_DIMENSIONS,
   EMBEDDING_MODEL,
+  EMBEDDING_PROVIDER,
   EmbeddingProviderError,
-  getEmbeddingInputTokenLimit,
-  getEmbeddingKeys,
-  type EmbeddingKeys,
   type EmbeddingPolicy,
   type EmbeddingRoute,
-} from "../_ai/retrievalEmbeddings";
-import {
-  executeEmbeddingRequest,
-  PAID_USAGE_LIMIT_MESSAGE,
-  resolveEmbeddingBillingDecision,
-} from "../_ai/embeddingBilling";
+} from "../_ai/legacyEmbeddings";
 import { requireStrictCurrentAiLegalAttestation } from "../_ai/legalAttestation";
 import { type RepositoryEmbeddingMetadata } from "../repositories/embeddingPolicy";
-import {
-  assertRepositoryEmbeddingProviderRequest,
-  resolveFreshRepositoryEmbeddingPolicy,
-  resolveStoredRagEmbeddingPolicyWithRefresh,
-  type RepositoryEmbeddingPolicyAttestation,
-  type RepositoryEmbeddingPolicyResolution,
-} from "../repositories/embeddingPolicyRuntime";
 import { v } from "convex/values";
 import {
-  getTrustedLearningRepositoryKey,
   isLearningAllowedForSearch,
   type LearningEmbeddingDataProvenance,
 } from "./trust";
@@ -40,8 +22,6 @@ export type { LearningEmbeddingDataProvenance } from "./trust";
 
 const DEFAULT_LEARNING_SEARCH_LIMIT = 5;
 const MAX_LEARNING_SEARCH_LIMIT = 20;
-const VECTOR_SEARCH_OVERFETCH_MULTIPLIER = 4;
-const MAX_VECTOR_SEARCH_LIMIT = 256;
 export const REPO_LEARNING_EMBEDDING_KEY =
   `${EMBEDDING_PROVIDER}:${EMBEDDING_MODEL}:${EMBEDDING_DIMENSIONS}:search_result` as const;
 
@@ -88,13 +68,6 @@ async function requireDirectRequesterLegalAttestation(
   }
 }
 
-function applyLearningEmbeddingDataPolicy(
-  _policy: EmbeddingPolicy,
-  _provenance: LearningEmbeddingDataProvenance,
-): EmbeddingPolicy {
-  return { route: "paid", allowPaidFallback: false };
-}
-
 type LearningEmbeddingPolicyPublication = {
   expectedUserId: Id<"users">;
   expectedIndexVersion?: number;
@@ -115,9 +88,8 @@ type LearningEmbeddingPolicyPublication = {
 function buildLearningEmbeddingPolicyPublication(
   repository: Doc<"repositories">,
   expectedPolicyRoute: EmbeddingRoute,
-  attestation?: RepositoryEmbeddingPolicyAttestation,
 ): LearningEmbeddingPolicyPublication {
-  const policySnapshot = attestation ?? repository;
+  const policySnapshot = repository;
   const githubRepositoryId = policySnapshot.githubRepositoryId;
   if (
     typeof githubRepositoryId !== "number" ||
@@ -169,20 +141,6 @@ export function getLearningEmbeddingPolicy(
   return { route: "paid", allowPaidFallback: false };
 }
 
-function resolveEmbeddingKeysForFallback(): {
-  keys: EmbeddingKeys;
-  configurationError?: EmbeddingProviderError;
-} {
-  try {
-    return { keys: getEmbeddingKeys() };
-  } catch (error) {
-    if (!(error instanceof EmbeddingProviderError)) {
-      throw error;
-    }
-    return { keys: {}, configurationError: error };
-  }
-}
-
 export function mergeLearningResults(
   vectorResults: Array<LearningWithScore>,
   keywordResults: Array<Doc<"repoLearnings">>,
@@ -224,15 +182,6 @@ export function mergeLearningResults(
   }
 
   return merged;
-}
-
-function logEmbeddingFallback(
-  operation: "create" | "search",
-  error: EmbeddingProviderError,
-): void {
-  console.warn(
-    `[RepoLearnings] AI ${operation} embedding unavailable; using keyword-only fallback (${error.kind}, ${error.route ?? "unresolved"})`,
-  );
 }
 
 /**
@@ -291,150 +240,18 @@ export const createLearning = internalAction({
         { durableRetrySafe: true },
       );
     }
-    const { keys, configurationError } = resolveEmbeddingKeysForFallback();
-    if (configurationError) {
-      logEmbeddingFallback("create", configurationError);
-    }
-    const policyResolution: RepositoryEmbeddingPolicyResolution | undefined =
-      keys.freeApiKey || keys.paidApiKey
-        ? await resolveFreshRepositoryEmbeddingPolicy(ctx, repository)
-        : undefined;
-    const repositoryPolicy =
-      policyResolution?.status === "verified_free" ||
-      policyResolution?.status === "verified_paid"
-        ? policyResolution.policy
-        : getLearningEmbeddingPolicy(repository);
-    const requestedPolicy = applyLearningEmbeddingDataPolicy(
-      repositoryPolicy,
-      embeddingDataProvenance,
-    );
-    const embeddingBilling = configurationError
-      ? undefined
-      : policyResolution?.status !== "unavailable"
-        ? await resolveEmbeddingBillingDecision(ctx, {
-            provider: EMBEDDING_PROVIDER,
-            userId: repository.userId,
-            policy: requestedPolicy,
-            keys,
-          })
-        : undefined;
-    const verifiedAttestation =
-      policyResolution?.status === "verified_free" ||
-      policyResolution?.status === "verified_paid"
-        ? policyResolution.attestation
-        : undefined;
+    // Learnings are stored for keyword search; no embedding is created.
     const publication = buildLearningEmbeddingPolicyPublication(
       repository,
-      requestedPolicy.route,
-      verifiedAttestation,
+      getLearningEmbeddingPolicy(repository).route,
     );
-    let learningId: Id<"repoLearnings"> | undefined;
-    let embeddingPublicationRejected = false;
-
-    if (
-      embeddingBilling?.canEmbed &&
-      policyResolution &&
-      policyResolution.status !== "unavailable"
-    ) {
-      try {
-        const documents = [
-          { title: "repository learning", content: args.content },
-        ];
-        await requireDirectRequesterLegalAttestation(ctx, requestedByUserId);
-        await executeEmbeddingRequest(ctx, {
-          provider: EMBEDDING_PROVIDER,
-          model: EMBEDDING_MODEL,
-          userId: repository.userId,
-          repositoryId: repository._id,
-          // Deliberately no reservationKey: a content-derived one is burned for
-          // good on a failed attempt, and unlike the RAG path this has neither a
-          // generation discriminator nor an embedding cache to recover from.
-          policy: embeddingBilling.policy,
-          keys,
-          inputCount: documents.length,
-          inputTokenLimit: getEmbeddingInputTokenLimit(documents),
-          operation: "repository learning create",
-          validateProviderRequest: async (route) => {
-            await requireDirectRequesterLegalAttestation(
-              ctx,
-              requestedByUserId,
-            );
-            return await assertRepositoryEmbeddingProviderRequest(ctx, {
-              resolution: policyResolution,
-              route,
-              expectedWork: {
-                kind: "learning_create",
-                indexVersion: repository.indexVersion,
-                ticketId: args.ticketId,
-              },
-            });
-          },
-          request: async (policy, client) =>
-            await embedSearchDocuments(documents, { policy, keys, client }),
-          finalize: async ({
-            result,
-            reservationKey,
-            reservationAttemptToken,
-          }) => {
-            await requireDirectRequesterLegalAttestation(
-              ctx,
-              requestedByUserId,
-            );
-            const publishedLearningId = await ctx.runMutation(
-              internal.repoLearnings.mutation.create,
-              {
-                ...learningWriteArgs,
-                embeddingDataProvenance,
-                embedding: result.embeddings[0],
-                embeddingKey: REPO_LEARNING_EMBEDDING_KEY,
-                publication,
-                usage: {
-                  tokens: result.tokens,
-                  model: result.model,
-                  provider: result.provider,
-                  billingTier: result.route,
-                  reservationKey,
-                  reservationAttemptToken,
-                },
-              },
-            );
-            if (!publishedLearningId) {
-              embeddingPublicationRejected = true;
-              throw new EmbeddingProviderError(
-                "repository_access",
-                "Repository learning publication lost access or generation ownership",
-                { route: result.route },
-              );
-            }
-            learningId = publishedLearningId;
-          },
-        });
-      } catch (error) {
-        if (embeddingPublicationRejected) {
-          throw error;
-        }
-        if (!(error instanceof EmbeddingProviderError)) {
-          throw error;
-        }
-        logEmbeddingFallback("create", error);
-      }
-    } else if (embeddingBilling) {
-      const reason = embeddingBilling.paidUsageAllowed
-        ? "Embedding credentials do not match the repository policy"
-        : PAID_USAGE_LIMIT_MESSAGE;
-      console.warn(`[RepoLearnings] ${reason}; using keyword-only create`);
-    }
-
+    await requireDirectRequesterLegalAttestation(ctx, requestedByUserId);
+    const learningId = await ctx.runMutation(
+      internal.repoLearnings.mutation.create,
+      { ...learningWriteArgs, embeddingDataProvenance, publication },
+    );
     if (!learningId) {
-      await requireDirectRequesterLegalAttestation(ctx, requestedByUserId);
-      const keywordLearningId = await ctx.runMutation(
-        internal.repoLearnings.mutation.create,
-        { ...learningWriteArgs, embeddingDataProvenance, publication },
-      );
-      if (!keywordLearningId) {
-        throw new Error("Repository learning publication was rejected");
-      }
-      learningId = keywordLearningId;
+      throw new Error("Repository learning publication was rejected");
     }
 
     console.log("[RepoLearnings] Created learning");
@@ -442,187 +259,6 @@ export const createLearning = internalAction({
     return learningId;
   },
 });
-
-async function getRelevantVectorLearnings(
-  ctx: ActionCtx,
-  args: {
-    repositoryId: Id<"repositories">;
-    query: string;
-    topK: number;
-    repository: Doc<"repositories"> | null;
-    expectedIndexVersion: number;
-    embeddingDataProvenance: LearningEmbeddingDataProvenance;
-    requestedByUserId?: Id<"users">;
-  },
-): Promise<Array<LearningWithScore>> {
-  await requireDirectRequesterLegalAttestation(ctx, args.requestedByUserId);
-  const repository = args.repository;
-  if (!repository || repository.indexVersion !== args.expectedIndexVersion) {
-    return [];
-  }
-  const initialAccess = await ctx.runQuery(
-    internal.repositories.internalQuery.getAiAccessSnapshot,
-    {
-      repositoryId: args.repositoryId,
-      expectedIndexVersion: args.expectedIndexVersion,
-    },
-  );
-  if (!initialAccess) {
-    return [];
-  }
-
-  const repositoryTrustKey = getTrustedLearningRepositoryKey(args.repositoryId);
-  const embeddingScopeKey = `${repositoryTrustKey}:${REPO_LEARNING_EMBEDDING_KEY}`;
-  const vectorScopeField =
-    args.embeddingDataProvenance === "public_github"
-      ? ("publicEmbeddingScopeKey" as const)
-      : ("embeddingScopeKey" as const);
-  const hasTrustedEmbedding = await ctx.runQuery(
-    internal.repoLearnings.internalQuery.hasTrustedEmbeddingInScope,
-    {
-      repositoryId: args.repositoryId,
-      expectedIndexVersion: args.expectedIndexVersion,
-      embeddingScopeKey,
-      embeddingDataProvenance: args.embeddingDataProvenance,
-    },
-  );
-  if (!hasTrustedEmbedding) {
-    return [];
-  }
-
-  const keys = getEmbeddingKeys();
-  const requestedPolicy =
-    repository.ragEmbeddingBillingTier === undefined
-      ? await resolveFreshRepositoryEmbeddingPolicy(ctx, repository)
-      : await resolveStoredRagEmbeddingPolicyWithRefresh(ctx, repository);
-  if (requestedPolicy.status === "unavailable") {
-    console.warn(
-      `[RepoLearnings] ${requestedPolicy.reason}; using keyword-only search`,
-    );
-    return [];
-  }
-  const embeddingBilling = await resolveEmbeddingBillingDecision(ctx, {
-    provider: EMBEDDING_PROVIDER,
-    userId: repository.userId,
-    policy: applyLearningEmbeddingDataPolicy(
-      requestedPolicy.policy,
-      args.embeddingDataProvenance,
-    ),
-    keys,
-  });
-  if (!embeddingBilling.canEmbed) {
-    const reason = embeddingBilling.paidUsageAllowed
-      ? "Embedding credentials do not match the repository policy"
-      : PAID_USAGE_LIMIT_MESSAGE;
-    console.warn(`[RepoLearnings] ${reason}; using keyword-only search`);
-    return [];
-  }
-
-  await requireDirectRequesterLegalAttestation(ctx, args.requestedByUserId);
-  const result = await executeEmbeddingRequest(ctx, {
-    provider: EMBEDDING_PROVIDER,
-    model: EMBEDDING_MODEL,
-    userId: repository.userId,
-    repositoryId: repository._id,
-    policy: embeddingBilling.policy,
-    keys,
-    inputCount: 1,
-    inputTokenLimit: getEmbeddingInputTokenLimit([args.query]),
-    operation: "repository learning search",
-    validateProviderRequest: async (route) => {
-      await requireDirectRequesterLegalAttestation(ctx, args.requestedByUserId);
-      return await assertRepositoryEmbeddingProviderRequest(ctx, {
-        resolution: requestedPolicy,
-        route,
-        expectedWork: {
-          kind: "learning_search",
-          indexVersion: args.expectedIndexVersion,
-          embeddingScopeKey,
-          embeddingDataProvenance: args.embeddingDataProvenance,
-        },
-      });
-    },
-    request: async (policy, client) =>
-      await embedSearchQuery(args.query, { policy, keys, client }),
-  });
-
-  const queryEmbedding = result.embeddings[0];
-  if (!queryEmbedding) {
-    return [];
-  }
-
-  await requireDirectRequesterLegalAttestation(ctx, args.requestedByUserId);
-  const results = await ctx.vectorSearch("repoLearnings", "by_embedding", {
-    vector: queryEmbedding,
-    limit: Math.min(
-      args.topK * VECTOR_SEARCH_OVERFETCH_MULTIPLIER,
-      MAX_VECTOR_SEARCH_LIMIT,
-    ),
-    filter: (q) => q.eq(vectorScopeField, embeddingScopeKey),
-  });
-
-  await assertRepositoryEmbeddingProviderRequest(ctx, {
-    resolution: requestedPolicy,
-    route: result.route,
-    expectedWork: {
-      kind: "learning_search",
-      indexVersion: args.expectedIndexVersion,
-      embeddingScopeKey,
-      embeddingDataProvenance: args.embeddingDataProvenance,
-    },
-  });
-
-  const relevantResults = results.filter((vectorResult) =>
-    isRelevantLearningScore(vectorResult._score),
-  );
-  const learnings: Array<LearningWithScore | null> = await Promise.all(
-    relevantResults.map(
-      async (vectorResult): Promise<LearningWithScore | null> => {
-        const doc: Doc<"repoLearnings"> | null = await ctx.runQuery(
-          internal.repoLearnings.internalQuery.getById,
-          {
-            id: vectorResult._id,
-            repositoryId: args.repositoryId,
-            expectedIndexVersion: args.expectedIndexVersion,
-          },
-        );
-
-        if (
-          !doc ||
-          doc.repositoryId !== args.repositoryId ||
-          doc.repositoryTrustKey !== repositoryTrustKey ||
-          doc.embeddingKey !== REPO_LEARNING_EMBEDDING_KEY ||
-          doc.embeddingScopeKey !== embeddingScopeKey ||
-          (args.embeddingDataProvenance === "public_github" &&
-            doc.publicEmbeddingScopeKey !== embeddingScopeKey) ||
-          !isLearningAllowedForSearch(doc, args.embeddingDataProvenance)
-        ) {
-          return null;
-        }
-
-        return {
-          ...doc,
-          score: vectorResult._score,
-        };
-      },
-    ),
-  );
-
-  const finalAccess = await ctx.runQuery(
-    internal.repositories.internalQuery.getAiAccessSnapshot,
-    {
-      repositoryId: args.repositoryId,
-      expectedIndexVersion: args.expectedIndexVersion,
-    },
-  );
-  if (!finalAccess) {
-    return [];
-  }
-
-  return learnings
-    .filter((learning): learning is LearningWithScore => learning !== null)
-    .slice(0, args.topK);
-}
 
 export const searchLearnings = internalAction({
   args: {
@@ -674,30 +310,6 @@ export const searchLearnings = internalAction({
       },
     );
 
-    let vectorResults: Array<LearningWithScore> = [];
-    const { keys, configurationError } = resolveEmbeddingKeysForFallback();
-    if (configurationError) {
-      logEmbeddingFallback("search", configurationError);
-    }
-    if (keys.freeApiKey || keys.paidApiKey) {
-      try {
-        vectorResults = await getRelevantVectorLearnings(ctx, {
-          repositoryId: args.repositoryId,
-          query: args.query,
-          topK,
-          repository,
-          expectedIndexVersion,
-          embeddingDataProvenance,
-          requestedByUserId: args.requestedByUserId,
-        });
-      } catch (error) {
-        if (!(error instanceof EmbeddingProviderError)) {
-          throw error;
-        }
-        logEmbeddingFallback("search", error);
-      }
-    }
-
     const finalAccess = await ctx.runQuery(
       internal.repositories.internalQuery.getAiAccessSnapshot,
       {
@@ -712,7 +324,7 @@ export const searchLearnings = internalAction({
     await requireDirectRequesterLegalAttestation(ctx, args.requestedByUserId);
 
     return mergeLearningResults(
-      vectorResults,
+      [],
       keywordResults,
       topK,
       embeddingDataProvenance,

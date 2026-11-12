@@ -1105,8 +1105,9 @@ const applicationTables = {
     signature: v.optional(v.string()), // Function/class signature
     docstring: v.optional(v.string()), // Doc comment
 
-    // Search indexes
-    embedding: v.optional(v.array(v.number())), // Vector for semantic search
+    // Search indexes. The embedding fields are retired: nothing writes them,
+    // and they stay optional until purgeRetiredEmbeddings clears old rows.
+    embedding: v.optional(v.array(v.number())),
     embeddingKey: v.optional(v.string()), // Provider/model/dimension/task identity
     embeddingInputMode: v.optional(
       v.union(v.literal("raw_v1"), v.literal("deidentified_v1")),
@@ -1136,16 +1137,10 @@ const applicationTables = {
     .searchIndex("search_text", {
       searchField: "searchableText",
       filterFields: ["repositoryId", "repositoryIndexKey", "language"],
-    })
-    .vectorIndex("by_embedding", {
-      vectorField: "embedding",
-      dimensions: 1536,
-      filterFields: ["embeddingScopeKey", "embeddingLanguageScopeKey"],
     }),
 
-  // Durable provider batches let a removed and later reintroduced chunk reuse
-  // the vector tied to its immutable reservation digest without another paid
-  // provider call. Cache documents stay repository-scoped for safe cleanup.
+  // Retired embedding batch cache. Nothing writes it; existing rows are
+  // removed by purgeRetiredEmbeddings and repository cleanup.
   ragEmbeddingBatches: defineTable({
     reservationKey: v.string(),
     repositoryId: v.id("repositories"),
@@ -1294,7 +1289,7 @@ const applicationTables = {
     ),
     isTrusted: v.boolean(), // Only verified repository authorities may influence responses
     repositoryTrustKey: v.optional(v.string()), // Denormalized vector-search trust scope
-    embedding: v.optional(v.array(v.float64())), // Vector for semantic search (1536 dims)
+    embedding: v.optional(v.array(v.float64())), // Retired; cleared by purgeRetiredEmbeddings
     embeddingKey: v.optional(v.string()),
     embeddingScopeKey: v.optional(v.string()), // Trusted repository + embedding identity
     publicEmbeddingScopeKey: v.optional(v.string()), // Explicitly public GitHub learning vectors only
@@ -1325,17 +1320,6 @@ const applicationTables = {
         "repositoryId",
         "repositoryTrustKey",
         "embeddingDataProvenance",
-      ],
-    })
-    .vectorIndex("by_embedding", {
-      vectorField: "embedding",
-      dimensions: 1536,
-      filterFields: [
-        "repositoryId",
-        "repositoryTrustKey",
-        "embeddingKey",
-        "embeddingScopeKey",
-        "publicEmbeddingScopeKey",
       ],
     }),
 

@@ -5,7 +5,7 @@
 import type { ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
-import type { EmbeddingDataProvenance } from "../embeddings";
+import type { EmbeddingDataProvenance } from "../legacyEmbeddings";
 import { requireStrictCurrentAiLegalAttestation } from "../legalAttestation";
 
 export const SEARCH_CODE_PAGE_SIZE = 64;
@@ -132,7 +132,7 @@ export async function executeTool(
 }
 
 /**
- * Hybrid search using vector embeddings + keyword search (RAG V2)
+ * Ranked keyword search over indexed code chunks (RAG V2)
  */
 async function executeHybridSearch(
   ctx: ActionCtx,
@@ -164,7 +164,7 @@ async function executeHybridSearch(
       return `No results found for query: "${input.query}". The repository may not be indexed yet, or try a different search query.`;
     }
 
-    // Format results with semantic relevance scores and line numbers
+    // Format results with relevance scores and line numbers
     const formatted = results.map((chunk, idx) => {
       const relevance = Math.round(chunk.score * 100);
       // Add line numbers to code for accurate referencing
@@ -185,7 +185,7 @@ ${numberedCode}
 `;
     });
 
-    const summary = `Found ${results.length} semantically relevant code chunks for "${input.query}":\n\n`;
+    const summary = `Found ${results.length} matching code chunks for "${input.query}":\n\n`;
     return summary + formatted.join("\n---\n\n");
   } catch (error) {
     if (requestedByUserId) {
