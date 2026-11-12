@@ -1064,3 +1064,68 @@ describe("round 3 provider key state", () => {
     expect((await key()).status).toBe("active");
   });
 });
+
+describe("round 4 server key expectations", () => {
+  it("derives the expected server key from existing keys when none is recorded", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await insertFixture(t);
+    await saveKey(t, fixture.userId, "openai", OPENAI_KEY);
+    // Keys that predate the record: drop it so only the key rows remain.
+    await t.run(async (ctx) => {
+      for (const row of await ctx.db
+        .query("providerKeyEncryptionState")
+        .collect())
+        await ctx.db.delete(row._id);
+    });
+    const correctKey = process.env.BYOK_ENCRYPTION_KEY;
+    process.env.BYOK_ENCRYPTION_KEY = btoa("w".repeat(32));
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const as = t.withIdentity({ subject: `${fixture.userId}|session` });
+
+    await expect(
+      resolveGenerationProvider(actionCtx(t), { userId: fixture.userId }),
+    ).rejects.toMatchObject({ code: "service_unavailable" });
+    await expect(as.query(api.providerApiKeys.query.list, {})).resolves.toEqual(
+      [expect.objectContaining({ serviceUnavailable: true, readable: true })],
+    );
+    // Saving under the wrong server key is refused, so the record is not
+    // seeded with it.
+    await expect(
+      saveKey(t, fixture.userId, "anthropic", ANTHROPIC_KEY),
+    ).rejects.toThrow("does not match saved keys");
+    await expect(
+      t.run(async (ctx) => ({
+        notifications: await ctx.db.query("notifications").collect(),
+        state: await ctx.db.query("providerKeyEncryptionState").collect(),
+      })),
+    ).resolves.toEqual({ notifications: [], state: [] });
+
+    process.env.BYOK_ENCRYPTION_KEY = correctKey;
+    await expect(
+      resolveGenerationProvider(actionCtx(t), { userId: fixture.userId }),
+    ).resolves.toMatchObject({ keySource: "user" });
+  });
+
+  it("rotates the server key only through the operator mutation", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await insertFixture(t);
+    await saveKey(t, fixture.userId, "openai", OPENAI_KEY);
+    process.env.BYOK_ENCRYPTION_KEY = btoa("w".repeat(32));
+    const { currentEncryptionKeyId } =
+      await import("../../../convex/providerApiKeys/crypto");
+    const newKeyId = (await currentEncryptionKeyId())!;
+    await t.mutation(
+      internal.providerApiKeys.internalMutation.setExpectedEncryptionKeyId,
+      { keyId: newKeyId },
+    );
+    const as = t.withIdentity({ subject: `${fixture.userId}|session` });
+    // Keys saved under the old server key must be entered again.
+    await expect(as.query(api.providerApiKeys.query.list, {})).resolves.toEqual(
+      [expect.objectContaining({ serviceUnavailable: false, readable: false })],
+    );
+    await saveKey(t, fixture.userId, "openai", OPENAI_KEY);
+    await expect(as.query(api.providerApiKeys.query.list, {})).resolves.toEqual(
+      [expect.objectContaining({ readable: true })],
+    );
+  });
+});

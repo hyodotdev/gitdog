@@ -5,7 +5,12 @@ import {
   getSubscriptionForEntitlement,
   hasTrustedProEntitlement,
 } from "./entitlement";
-import { hasUnsettledProHistory } from "./billingBoundaries";
+import {
+  hasUnsettledProHistory,
+  probeProHistory,
+  settleAllEndedTrustedProQuotas,
+  TerminalProQuotaUnavailableError,
+} from "./billingBoundaries";
 import {
   readEffectiveSubscriptionQuota,
   refreshFreeSubscriptionPeriod,
@@ -110,4 +115,28 @@ export async function grantTrialCreditOnce(
     grantedAt: now,
   });
   return { status: "granted", tokens: PRICING.TRIAL_TOKENS };
+}
+
+/**
+ * Settle ended Pro periods first, so a former Pro owner gets the trial on
+ * the first request after the period closes, then grant it. A period that
+ * cannot settle yet leaves the grant for a later request.
+ */
+export async function settleThenGrantTrialCredit(
+  ctx: MutationCtx,
+  userId: Id<"users">,
+  now: number = Date.now(),
+): Promise<{ status: TrialGrantStatus; tokens: number }> {
+  const history = await probeProHistory(ctx, userId, now);
+  // Corrupt history needs an operator; settling it here would only throw.
+  if (history === "corrupt") return { status: "pro_settling", tokens: 0 };
+  if (history === "unsettled") {
+    try {
+      await settleAllEndedTrustedProQuotas(ctx, userId, now);
+    } catch (error) {
+      if (!(error instanceof TerminalProQuotaUnavailableError)) throw error;
+      return { status: "pro_settling", tokens: 0 };
+    }
+  }
+  return await grantTrialCreditOnce(ctx, userId, now);
 }

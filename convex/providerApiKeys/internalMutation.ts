@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import type { Id } from "../_generated/dataModel";
 import { internalMutation, type MutationCtx } from "../_generated/server";
+import { readExpectedEncryptionKeyId } from "./encryptionState";
 
 const PROVIDER_NAMES = { anthropic: "Anthropic", openai: "OpenAI" } as const;
 const FALLBACK_NOTICES = {
@@ -98,6 +99,11 @@ export const upsert = internalMutation({
       unreadableAt: undefined,
       updatedAt: now,
     };
+    // Keys must all use the deployment's expected encryption key; the first
+    // record is seeded from existing keys, not from the key being saved.
+    const expected = await readExpectedEncryptionKeyId(ctx);
+    if (expected !== null && expected !== args.encryptionKeyId)
+      throw new Error("Provider key encryption key does not match saved keys");
     if (!(await ctx.db.query("providerKeyEncryptionState").first()))
       await ctx.db.insert("providerKeyEncryptionState", {
         expectedKeyId: args.encryptionKeyId,
@@ -230,5 +236,26 @@ export const markKeyWorking = internalMutation({
       lastValidatedAt: now,
       updatedAt: now,
     });
+  },
+});
+
+/**
+ * Operator-only rotation: make `keyId` (from the new BYOK_ENCRYPTION_KEY)
+ * the expected encryption key. Keys saved under the old key become
+ * unreadable and their owners must enter them again.
+ */
+export const setExpectedEncryptionKeyId = internalMutation({
+  args: { keyId: v.string() },
+  handler: async (ctx, args) => {
+    if (!/^[a-f0-9]{16}$/.test(args.keyId))
+      throw new Error("Expected a 16-character encryption key id");
+    const current = await ctx.db.query("providerKeyEncryptionState").first();
+    if (current) await ctx.db.patch(current._id, { expectedKeyId: args.keyId });
+    else
+      await ctx.db.insert("providerKeyEncryptionState", {
+        expectedKeyId: args.keyId,
+        createdAt: Date.now(),
+      });
+    return { expectedKeyId: args.keyId };
   },
 });

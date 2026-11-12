@@ -691,12 +691,23 @@ export async function hasUnsettledProHistory(
   userId: Id<"users">,
   now: number,
 ): Promise<boolean> {
+  return (await probeProHistory(ctx, userId, now)) !== "clear";
+}
+
+/** Read-only view of a user's Pro history for optional work like the trial. */
+export async function probeProHistory(
+  ctx: BoundaryReadCtx,
+  userId: Id<"users">,
+  now: number,
+): Promise<"clear" | "unsettled" | "corrupt"> {
   try {
-    return await readUnsettledProHistory(ctx, userId, now);
+    return (await readUnsettledProHistory(ctx, userId, now))
+      ? "unsettled"
+      : "clear";
   } catch {
     // Corrupt boundary history (for example duplicate boundaries) needs an
-    // operator; callers only skip optional work, so report it as unsettled.
-    return true;
+    // operator.
+    return "corrupt";
   }
 }
 

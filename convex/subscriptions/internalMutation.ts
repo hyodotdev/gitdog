@@ -24,7 +24,7 @@ import {
   type ProEntitlementProvenance,
 } from "./entitlement";
 import { refreshFreeSubscriptionPeriod } from "./quotaEntitlement";
-import { creditPurchasedTokens, grantTrialCreditOnce } from "./credit";
+import { creditPurchasedTokens, settleThenGrantTrialCredit } from "./credit";
 import {
   consolidatePurchasedTokenWallet,
   debitPurchasedTokenWallet,
@@ -1897,5 +1897,6 @@ export const recoverSubscriptionInvoiceInbox = internalMutation({
 
 export const grantTrialCredit = internalMutation({
   args: { userId: v.id("users") },
-  handler: async (ctx, args) => await grantTrialCreditOnce(ctx, args.userId),
+  handler: async (ctx, args) =>
+    await settleThenGrantTrialCredit(ctx, args.userId),
 });

@@ -459,13 +459,13 @@ async function checkChatQuota(
   // cron releases them and settles any known-billed outcome.
   const chatState = await expireChatReservations(ctx, args.userId, args.now);
   if (chatState) return chatState;
-  // Accounts that never opened the web app still get their one-time trial.
-  // Skipped without writes when Pro history or the wallet needs attention;
-  // the checks below then refuse as usual.
-  await grantTrialCreditOnce(ctx, args.userId, args.now);
-
   try {
     await settleAllEndedTrustedProQuotas(ctx, args.userId, args.now);
+    // Accounts that never opened the web app still get their one-time
+    // trial, including a former Pro owner whose last period just settled.
+    // Skipped without writes when the wallet needs attention; the checks
+    // below then refuse as usual.
+    await grantTrialCreditOnce(ctx, args.userId, args.now);
   } catch (error) {
     if (error instanceof TerminalProQuotaUnavailableError) {
       return {

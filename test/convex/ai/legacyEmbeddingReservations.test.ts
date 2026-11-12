@@ -221,3 +221,31 @@ describe("retired embedding cleanup scheduling", () => {
     ).resolves.toMatchObject({ continuationScheduled: false });
   });
 });
+
+describe("retired embedding cleanup paging", () => {
+  it("releases ambiguous rows that sort after a full page of staged rows", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await insertOwner(t);
+    const now = Date.now();
+    for (let index = 0; index < 100; index++)
+      await insertReservation(t, owner, `staged-${index}`, {
+        status: "ambiguous",
+        providerStartedAt: now - 120_000,
+        expiresAt: now - 60_000,
+        settlementTokens: 1,
+      });
+    await insertReservation(t, owner, "later", {
+      status: "ambiguous",
+      providerStartedAt: now - 120_000,
+      expiresAt: now + 60_000,
+    });
+    await t.mutation(
+      internal._ai.embeddingBilling.cleanupEmbeddingUsageReservations,
+      {},
+    );
+    expect(await reservation(t, "later")).toMatchObject({
+      status: "released",
+      releaseReason: "embeddings_retired",
+    });
+  });
+});

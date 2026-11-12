@@ -37,6 +37,17 @@ those keys instead of Gitdog's:
 - This usage is recorded with `keySource: "user"`. It does not consume
   included or prepaid tokens and is shown separately on the Usage page.
 - Key checks are limited to five per user every ten minutes.
+- Every saved key must use the same server key. Its id is recorded on the
+  first save (or taken from existing keys). A missing `BYOK_ENCRYPTION_KEY`,
+  or one with another id, is treated as a server misconfiguration: saved keys
+  are paused, saving is refused, and users are not told their keys failed.
+- To rotate the server key on purpose, set the new `BYOK_ENCRYPTION_KEY`, then
+  record its id:
+  `bunx convex run providerApiKeys/internalMutation:setExpectedEncryptionKeyId '{"keyId":"<id>"}'`,
+  where the id is the first 16 hex characters of
+  `printf %s "$BYOK_ENCRYPTION_KEY" | base64 -d | shasum -a 256`. Keys saved
+  under the old server key then become unreadable, and their owners are asked
+  to enter them again. There is no decrypt-only previous key.
 - Keys are validated against the generation model on save, encrypted with
   AES-256-GCM using `BYOK_ENCRYPTION_KEY`, and never returned to clients.
 

@@ -322,7 +322,6 @@ export const generateChunkEmbeddings = internalAction({
           repositoryId: args.repositoryId,
           expectedIndexVersion: indexVersion,
           embeddingMode,
-          embeddingError: embeddingUnavailableMessage,
         },
       );
       if (claimed !== true) {

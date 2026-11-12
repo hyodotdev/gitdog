@@ -348,16 +348,13 @@ export const claimRagGeneration = internalMutation({
       indexProgressAt: now,
       updatedAt: now,
     });
-    // The embedding pass runs after the visible cleanup log, so record its
-    // start in the indexing log to keep the sync screen moving.
+    // The search index pass runs after the visible cleanup log, so record
+    // its start in the indexing log to keep the sync screen moving.
     await ctx.db.insert("repoIndexingLogs", {
       repositoryId: args.repositoryId,
       indexVersion: args.expectedIndexVersion,
-      level: args.embeddingMode === "keyword_only" ? "warning" : "info",
-      message:
-        args.embeddingMode === "keyword_only"
-          ? "Building keyword search index (semantic embeddings unavailable)"
-          : "Building AI search index (semantic embeddings)",
+      level: "info",
+      message: "Building search index",
       createdAt: now,
     });
     return true;

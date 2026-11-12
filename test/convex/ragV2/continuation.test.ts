@@ -905,7 +905,6 @@ describe("RAG embedding work continuations", () => {
     expect(completedState.repository).toMatchObject({
       ragStatus: "completed",
       ragEmbeddingMode: "keyword_only",
-      ragEmbeddingError: expect.stringContaining("embeddings are retired"),
       ragTotalChunks: 1,
       ragIndexedChunks: 1,
       ragFailedChunks: 0,
@@ -969,11 +968,16 @@ describe("RAG embedding work continuations", () => {
     expect(completedState.repository).toMatchObject({
       ragStatus: "completed",
       ragEmbeddingMode: "keyword_only",
-      ragEmbeddingError: expect.stringContaining("embeddings are retired"),
       ragTotalChunks: 1,
       ragIndexedChunks: 1,
       ragFailedChunks: 0,
     });
+    expect(completedState.repository?.ragEmbeddingError).toBeUndefined();
+    const logs = await t.run(async (ctx) =>
+      ctx.db.query("repoIndexingLogs").collect(),
+    );
+    expect(logs.some((log) => log.level === "warning")).toBe(false);
+    expect(logs.map((log) => log.message)).toContain("Building search index");
     expect(completedState.repository?.ragEmbeddingKey).toBeUndefined();
     expect(completedState.chunks).toHaveLength(1);
     expect(completedState.chunks[0].embedding).toBeUndefined();

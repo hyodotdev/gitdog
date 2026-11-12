@@ -9,7 +9,7 @@ import {
 import { hasCurrentLegalAttestation } from "../users/legal";
 import { checkAccountTokenAllowance } from "../subscriptions/internalQuery";
 import { isUsableProviderKey } from "../providerApiKeys/usability";
-import { grantTrialCreditOnce } from "../subscriptions/credit";
+import { settleThenGrantTrialCredit } from "../subscriptions/credit";
 import type { ReviewQuotaRefusal } from "./errors";
 import {
   combinedReviewBody,
@@ -567,7 +567,7 @@ export const reserveBatchedReviewQuota = internalMutation({
             userKeyUnavailable: true,
           };
     }
-    await grantTrialCreditOnce(ctx, ticket.userId);
+    await settleThenGrantTrialCredit(ctx, ticket.userId);
     // The owner comes from the ticket. Indexing patches the repository
     // several times a second, and this slow usage read would conflict with
     // those writes on every retry.

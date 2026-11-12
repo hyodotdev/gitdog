@@ -674,3 +674,41 @@ describe("round 3 wallet and boundary safety", () => {
     ).resolves.toBe("ambiguous");
   });
 });
+
+describe("former Pro owners", () => {
+  it("get the trial on the first request after their Pro period settles", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await insertTicketFixture(t, { trialUsed: false });
+    const now = Date.now();
+    await t.run(async (ctx) => {
+      const periodStart = now - 31 * 86_400_000;
+      const periodEnd = now - 60_000;
+      await ctx.db.insert("subscriptions", {
+        userId: fixture.userId,
+        plan: "pro",
+        status: "canceled",
+        includedTokens: PRICING.PRO_INCLUDED_TOKENS,
+        purchasedTokens: 0,
+        serviceFeeRate: PRICING.PLATFORM_FEE_PRO,
+        periodStart,
+        periodEnd,
+        providerUpdatedAt: periodStart,
+        proEntitlementProvenance: {
+          source: "lemon_squeezy_webhook",
+          verifiedAt: periodStart,
+        },
+        createdAt: periodStart,
+        updatedAt: periodStart,
+      });
+    });
+    await expect(
+      t.mutation(
+        internal._ai.chatBilling.reserveChatUsage,
+        reservationArgs(fixture, "after-pro"),
+      ),
+    ).resolves.toMatchObject({ allowed: true });
+    await expect(
+      t.run(async (ctx) => ctx.db.query("trialCreditGrants").collect()),
+    ).resolves.toEqual([expect.objectContaining({ userId: fixture.userId })]);
+  });
+});
