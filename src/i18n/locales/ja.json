@@ -1,0 +1,1205 @@
+{
+  "common": {
+    "loading": "読み込み中...",
+    "error": "エラー",
+    "success": "成功",
+    "cancel": "キャンセル",
+    "save": "保存",
+    "delete": "削除",
+    "edit": "編集",
+    "close": "閉じる",
+    "search": "検索",
+    "filter": "フィルター",
+    "back": "戻る",
+    "goBack": "戻る",
+    "viewAll": "すべて表示",
+    "justNow": "たった今",
+    "minutesAgo": "{{count}}分前",
+    "hoursAgo": "{{count}}時間前",
+    "daysAgo": "{{count}}日前",
+    "project": "プロジェクト",
+    "projects": "プロジェクト",
+    "requests": "リクエスト",
+    "loadMore": "さらに{{count}}件を読み込む",
+    "you": "あなた",
+    "sending": "送信中..."
+  },
+  "nav": {
+    "workspace": "ワークスペース",
+    "tickets": "チケット",
+    "usage": "使用量",
+    "pricing": "料金",
+    "profile": "プロフィール",
+    "settings": "設定",
+    "signOut": "サインアウト",
+    "skipToContent": "本文へスキップ",
+    "ariaLabels": {
+      "changeLanguage": "言語を変更",
+      "toggleTheme": "テーマを切り替え"
+    }
+  },
+  "auth": {
+    "cliLogin": {
+      "seoTitle": "Gitdog CLI サインイン",
+      "copy": "コマンドをコピー",
+      "copied": "クリップボードにコピーしました。",
+      "closeTab": "このタブは閉じてかまいません。",
+      "openWorkspace": "ワークスペースを開く",
+      "success": {
+        "title": "サインインしました",
+        "description": "Gitdog CLI の準備ができました。ターミナルに戻って作業を続けてください。",
+        "nextStep": "次にプロジェクトを接続します"
+      },
+      "failed": {
+        "title": "サインインを完了できませんでした",
+        "description": "セッションは保存されていません。ターミナルに戻ってもう一度お試しください。",
+        "nextStep": "もう一度サインイン"
+      }
+    },
+    "signInWithGitHub": "GitHubでサインイン",
+    "getStartedFree": "無料で始める",
+    "legalConsent": {
+      "seoTitle": "アカウント利用資格 - Gitdog",
+      "title": "利用資格の確認",
+      "description": "Gitdogは18歳以上で、専門的またはビジネス目的で利用する方のみご利用いただけます。続行する前に利用資格を確認し、ポリシーをご確認ください。",
+      "ageConfirmation": "私は18歳以上であることを確認します。",
+      "professionalUseConfirmation": "私はGitdogを消費者向けではなく、専門的またはビジネス目的にのみ使用することを確認します。",
+      "policyConfirmation": "利用規約とプライバシーポリシーを読み、同意します。",
+      "termsLink": "利用規約を確認",
+      "privacyLink": "プライバシーポリシーを確認",
+      "continueWithGitHub": "GitHubで続行",
+      "confirmAndContinue": "確認して続行",
+      "completingSignIn": "GitHubサインインを完了しています…",
+      "signOut": "代わりにサインアウト",
+      "policyChangedError": "このページを開いている間に利用規約またはプライバシーポリシーが変更されました。最新のポリシーを再読み込みしています…",
+      "saveError": "確認内容を保存できませんでした。もう一度お試しください。",
+      "signInError": "GitHubサインインを開始できませんでした。もう一度お試しください。"
+    }
+  },
+  "home": {
+    "title": "Gitdog - AI GitHubアシスタント",
+    "description": "GitHub IssueとディスカッションのためのAIアシスタント。コードベースに基づいたインテリジェントな回答を受け取れます。",
+    "indexing": {
+      "connectingRepository": "リポジトリを接続中",
+      "connectionFailed": "接続に失敗しました",
+      "repositoryConnected": "リポジトリが接続されました",
+      "pausedTitle": "リポジトリは一時停止中です",
+      "pausedDescription": "リポジトリ所有者がインデックス処理と自動化を一時停止しました。",
+      "pausedTip": "インデックス処理と自動化を再開するには、設定でリポジトリを有効にしてください。",
+      "accessRevokedTitle": "GitHubアクセスが削除されました",
+      "accessRevokedDescription": "Gitdogはこのリポジトリにアクセスできません。インデックス処理や自動化を再開する前に、GitHub Appでリポジトリへのアクセスを復元してください。",
+      "accessRevokedDescriptionReadOnly": "Gitdogはこのリポジトリにアクセスできません。リポジトリ所有者にGitHub Appのアクセス復元を依頼してください。",
+      "accessRevokedTip": "インデックス処理を再試行する前に、GitHub Appの設定でリポジトリへのアクセスを復元してください。",
+      "reconnectTitle": "リポジトリを再接続",
+      "reconnectDescription": "GitHub Appのインストールを再接続する必要があります。このリポジトリをもう一度選択して、検証済みアクセスを復元してください。",
+      "reconnectDescriptionReadOnly": "GitHub Appのインストールを再接続する必要があります。リポジトリ所有者にアクセスの復元を依頼してください。",
+      "reconnectButton": "リポジトリを再接続",
+      "reconnectTip": "自動化を再開する前にリポジトリを再接続し、変更されないGitHubリポジトリIDを確認してください。",
+      "stalledTitle": "インデックスの確認が必要です",
+      "stalledDescription": "{{minutes}}分以上インデックス処理が進んでいません。再試行すると、新しいインデックス世代で開始します。",
+      "stalledDescriptionReadOnly": "{{minutes}}分以上インデックス処理が進んでいません。リポジトリ所有者に再試行を依頼してください。",
+      "retryButton": "インデックスを再試行",
+      "retrying": "再試行中...",
+      "retryStarted": "インデックス処理を再開しました。",
+      "retryFailed": "インデックス処理を再開できませんでした。もう一度お試しください。",
+      "initializing": "初期化中...",
+      "completedTip": "✓ リポジトリのインデックス処理が完了しました。AI機能を利用できます。",
+      "failedTip": "✗ インデックス処理に失敗しました。上のログで詳細を確認してください。",
+      "stalledTip": "インデックス処理が進んでいません。再試行して続行してください。",
+      "stalledTipReadOnly": "インデックス処理が進んでいません。リポジトリ所有者が再開できます。",
+      "inProgressTip": "大規模なリポジトリでは数分以上かかる場合があります。このページを閉じて後で戻っても問題ありません。",
+      "phases": {
+        "setup": "設定と認証",
+        "metadata": "リポジトリメタデータを取得",
+        "files": "ファイル構造を分析",
+        "config": "設定ファイルを処理",
+        "cleanup": "クリーンアップと完了処理",
+        "embeddings": "AI検索インデックスを構築"
+      }
+    },
+    "landing": {
+      "heading": "Issueに、あなたのコードで答える",
+      "subtitle": "Gitdogはリポジトリを読み、Issueの整形、質問への回答、プルリクエストのレビューを行います。承認を必須にすれば、確認するまで何も投稿されません。",
+      "cta": "GitHubでサインイン",
+      "viewPricing": "料金を見る",
+      "thread": {
+        "title": "タイムアウト後にWebhookハンドラーが2回実行される",
+        "sample": "サンプルスレッド",
+        "question": "1件の配信がなぜ2回実行されるのですか？",
+        "draftBy": "Gitdogの下書き",
+        "answer": "最初の試行が遅いと、タイムアウト後に再試行されます。<symbol>processDelivery</symbol>が処理の完了後に配信IDを記録するためです。<path>src/webhooks/retry.ts:48</path>で先にIDを保存してください。"
+      },
+      "capabilitiesTitle": "GitdogがGitHubで行うこと",
+      "capabilities": {
+        "format": {
+          "title": "Issueの整形",
+          "description": "荒い報告を明確なタイトルと構造化された本文に整え、比較できるよう原文も残します。"
+        },
+        "answer": {
+          "title": "質問への回答",
+          "description": "一般論ではなく、インデックス済みのコードをもとにIssueとディスカッションの回答を下書きします。"
+        },
+        "review": {
+          "title": "プルリクエストのレビュー",
+          "description": "リポジトリに基づくレビューコメントを受け取れます。マージの判断はあなたが行います。"
+        },
+        "tag": {
+          "title": "メンテナーのタグ付け",
+          "description": "コード変更が必要な依頼では、担当者に通知します。"
+        }
+      },
+      "stepsTitle": "使い方",
+      "steps": {
+        "connect": {
+          "title": "リポジトリを接続",
+          "description": "GitHub Appをインストールし、Gitdogが読むリポジトリを選びます。"
+        },
+        "mention": {
+          "title": "@gitdogbotをメンション",
+          "description": "GitHubでタグ付けするか、リポジトリ設定に従って新しいチケットの処理を自動で始めます。"
+        },
+        "approve": {
+          "title": "下書きを承認",
+          "description": "チケット画面から投稿、変更依頼、却下を行います。"
+        }
+      },
+      "demoTitle": "Gitdogデモ動画",
+      "ctaBottomTitle": "今日から自動化を始めましょう",
+      "ctaBottomSubtitle": "無料プランは月100kトークンを含みます。クレジットカード不要。"
+    },
+    "workspace": {
+      "title": "ワークスペース",
+      "description": "AI自動化されたリポジトリ管理",
+      "plan": "プラン：",
+      "actionsPerMonth": "月{{count}}アクション",
+      "tokenLimit": "含まれるトークンとプリペイド残高の上限",
+      "connectedRepositories": "接続されたリポジトリ",
+      "connectRepository": "リポジトリを接続",
+      "noRepositories": {
+        "title": "接続されたリポジトリがありません",
+        "description": "最初のGitHubリポジトリを接続してワークフロー自動化を開始しましょう"
+      },
+      "repoCard": {
+        "paused": "一時停止中",
+        "githubAccessRemoved": "GitHubアクセスが削除されました",
+        "reconnectRequired": "再接続が必要です",
+        "reconnectDescription": "リポジトリアクセスを復元するため、GitHub Appのインストールを再接続してください。",
+        "reconnectButton": "再接続",
+        "connecting": "接続中...",
+        "indexing": "インデックス中...",
+        "indexingCode": "リポジトリファイルをインデックス中",
+        "indexingSearch": "検索インデックスを作成中",
+        "finalizingSearch": "検索インデックスを仕上げ中",
+        "stalled": "インデックスの確認が必要",
+        "searchProgress": "{{chunks}}チャンク登録 · {{files}}ファイル処理済み",
+        "lastProgress": "最終進行 {{minutes}}分前",
+        "syncQueued": "新しい変更が待機中です。現在のインデックスを先に完了します。",
+        "stalledHelp": "リポジトリ詳細で復旧状況を確認するか、インデックスを再試行してください。",
+        "failed": "失敗",
+        "featuresEnabled": "{{count}}機能が有効",
+        "actionsThisMonth": "今月{{count}}アクション",
+        "settings": "設定 →"
+      },
+      "tokensPerMonth": "月 {{count, number}}kトークン"
+    }
+  },
+  "repositories": {
+    "connect": {
+      "title": "リポジトリを接続 - Gitdog",
+      "description": "GitHubリポジトリをGitdogに接続してAI自動化を有効にします。",
+      "heading": "GitHubリポジトリを接続",
+      "subtitle": "AI自動化を有効にするリポジトリを選択してください",
+      "loadingRepos": "リポジトリを読み込み中...",
+      "searchPlaceholder": "リポジトリを検索...",
+      "noReposFound": "リポジトリが見つかりません",
+      "connect": "接続 →",
+      "install": {
+        "title": "Gitdog GitHubアプリをインストール",
+        "description": "リポジトリ（個人および組織リポジトリを含む）にアクセスするには、Gitdog GitHubアプリをインストールする必要があります。",
+        "maybeLater": "後で",
+        "installButton": "GitHubアプリをインストール"
+      },
+      "verificationPending": {
+        "title": "GitHub接続を完了しています",
+        "description": "GitdogはGitHubによるインストール確認を待っています。このページを開いたまま、しばらくしてから確認を再試行してください。",
+        "organizationDescription": "セキュリティ上、組織のインストールはGitHubが署名したインストール更新でアクセスを確認した後に接続できます。",
+        "reauthDescription": "この既存のインストールを確認するには、GitHubの認証を更新する必要があります。",
+        "recoveryInstructions": "GitHub認証を更新するか、GitHubアクセス管理でリポジトリの選択を実際に変更してください。選択がすでに正しい場合は、GitHub Appをアンインストールしてから再インストールし、もう一度お試しください。",
+        "reauthorize": "GitHub認証を更新",
+        "reauthorizing": "GitHubを開いています...",
+        "retry": "確認を再試行",
+        "retrying": "確認中...",
+        "manageAccess": "GitHubアクセスを管理",
+        "stillPending": "GitHubがまだインストールを確認しています。しばらくしてからもう一度お試しください。"
+      },
+      "connectSuccess": "リポジトリが正常に接続されました",
+      "addAccount": "別のアカウントまたは組織を追加",
+      "configure": "設定",
+      "reposCount": "{{count}}個のリポジトリ",
+      "private": "プライベート",
+      "reconciliation": {
+        "syncing": "アクセスを同期中",
+        "title": "リポジトリアクセスを同期しています",
+        "description": "Gitdogがリポジトリアクセスを確認している間は接続できません。準備が整うと一覧が自動的に更新されます。",
+        "failed": "同期に失敗しました",
+        "failureTitle": "リポジトリアクセスを同期できませんでした",
+        "failureDescription": "GitHub Appの設定またはアクセス権を確認してから、同期を再試行してください。",
+        "retry": "同期を再試行",
+        "retrying": "同期を再試行しています...",
+        "retryFailed": "リポジトリアクセスの同期を再開できませんでした。ページを更新してもう一度お試しください。"
+      },
+      "reconnect": {
+        "title": "{{repository}}を再接続",
+        "description": "このGitHubリポジトリを選択して、検証済みのインストールアクセスを復元してください。"
+      },
+      "errors": {
+        "loadFailed": "リポジトリの読み込みに失敗しました",
+        "connectFailed": "リポジトリの接続に失敗しました",
+        "recoveryUnavailable": "GitHubインストールの復旧を一時的に利用できません。ページを更新してもう一度お試しください。",
+        "recoveryLimitExceeded": "GitHubインストールの復旧がサポート上限を超えました。続行するにはサポートへお問い合わせください。",
+        "reconnectTargetUnavailable": "このリポジトリは再接続できなくなりました。"
+      }
+    },
+    "settings": {
+      "title": "{{owner}}/{{repo}} - 設定 - Gitdog",
+      "description": "AI自動化設定を構成",
+      "backToWorkspace": "ワークスペースに戻る",
+      "connectingTitle": "リポジトリを接続中 - Gitdog",
+      "connectingBackButton": "ワークスペースに戻る",
+      "logsButton": "ログ",
+      "logsModalTitle": "リポジトリインデックスログ",
+      "paused": "一時停止中",
+      "githubAccessRemoved": "GitHubアクセスが削除されました",
+      "githubAccessRemovedDescription": "Gitdogはこのリポジトリにアクセスできません。有効化または同期する前に、GitHub Appでリポジトリへのアクセスを復元してください。",
+      "manageGithubAccess": "GitHubアクセスを管理",
+      "reconnectRequired": "再接続が必要です",
+      "reconnectDescription": "Gitdogで同期または自動化する前に、検証済みのGitHub Appインストールでこのリポジトリを再接続してください。",
+      "reconnectDescriptionReadOnly": "Gitdogで使用するには、リポジトリ所有者がGitHub Appのインストールを再接続する必要があります。",
+      "reconnectButton": "リポジトリを再接続",
+      "pauseButton": "一時停止",
+      "activateButton": "有効化",
+      "syncButton": "同期",
+      "syncing": "同期中...",
+      "syncStarted": "同期が開始されました。AIがコードベースを再分析します。",
+      "syncFailed": "同期の開始に失敗しました",
+      "saveButton": "保存",
+      "saving": "保存中...",
+      "saveSuccess": "設定が正常に保存されました",
+      "saveFailed": "設定の保存に失敗しました",
+      "errors": {
+        "invalidRepository": "無効なリポジトリ",
+        "notFound": "リポジトリが見つかりません"
+      },
+      "repositoryPaused": "リポジトリが一時停止されました",
+      "repositoryActivated": "リポジトリが有効化されました",
+      "toggleFailed": "状態の変更に失敗しました",
+      "issueAssistant": {
+        "title": "Issueアシスタント",
+        "enabled": {
+          "label": "Issueアシスタントを有効化",
+          "description": "AIがIssueのフォーマット改善と質問への回答をサポートします"
+        },
+        "autoFormat": {
+          "label": "フォーマットが不十分なIssueを自動整理",
+          "description": "Issueのタイトルと説明の改善を提案します"
+        },
+        "autoAnswer": {
+          "label": "質問に自動回答",
+          "description": "コードベースのコンテキストを使用してIssueの質問に回答します"
+        },
+        "tagMaintainers": {
+          "label": "コード変更が必要な場合はメンテナーをタグ",
+          "description": "コード変更が必要な場合、直接変更せずにメンテナーをタグします"
+        },
+        "requireApproval": {
+          "label": "アクション前に承認が必要",
+          "description": "GitHubに投稿する前にAIの提案を確認します"
+        },
+        "responseStyle": {
+          "label": "回答スタイル（オプション）",
+          "description": "AIがIssueにどのように回答するかをカスタマイズします。システムプロンプトに追加されます。",
+          "placeholder": "例：常にフレンドリーでプロフェッショナルなトーンで回答してください。明確さのために箇条書きを使用してください。関連するコード例を含めてください。"
+        }
+      },
+      "discussionAssistant": {
+        "title": "Discussionアシスタント",
+        "enabled": {
+          "label": "Discussionアシスタントを有効化",
+          "description": "AIがDiscussionのフォーマット改善と質問への回答をサポートします"
+        },
+        "autoFormat": {
+          "label": "フォーマットが不十分なDiscussionを自動整理",
+          "description": "Discussionのタイトルと説明の改善を提案します"
+        },
+        "autoAnswer": {
+          "label": "質問に自動回答",
+          "description": "コードベースのコンテキストを使用してDiscussionの質問に回答します"
+        },
+        "tagMaintainers": {
+          "label": "コード変更が議論される際にメンテナーをタグ",
+          "description": "コード変更が議論される際に関連するメンテナーをタグします"
+        },
+        "requireApproval": {
+          "label": "アクション前に承認が必要",
+          "description": "GitHubに投稿する前にAIの提案をレビューします"
+        },
+        "responseStyle": {
+          "label": "回答スタイル（オプション）",
+          "description": "AIがDiscussionにどのように回答するかをカスタマイズします。システムプロンプトに追加されます。",
+          "placeholder": "例：詳細な説明と例を提供してください。新しいユーザーを歓迎する態度で回答してください。関連するドキュメントへのリンクを含めてください。"
+        }
+      },
+      "dangerZone": {
+        "title": "危険ゾーン",
+        "disconnect": {
+          "title": "リポジトリの接続解除",
+          "description": "Gitdogからこのリポジトリを削除します。自動化設定が削除されます。",
+          "button": "接続解除"
+        }
+      },
+      "disconnectModal": {
+        "title": "リポジトリの接続を解除しますか？",
+        "description": "<strong>{{owner}}/{{repo}}</strong>の接続を解除してもよろしいですか？このリポジトリのすべての自動化設定が削除されます。",
+        "cancel": "キャンセル",
+        "confirm": "接続解除"
+      },
+      "disconnectSuccess": "リポジトリの接続が解除されました",
+      "disconnectFailed": "リポジトリの接続解除に失敗しました",
+      "pullRequests": {
+        "title": "プルリクエストレビュー",
+        "enabled": "新しいPRとコミットを自動レビュー",
+        "description": "変更コード、関連実装、リポジトリの指針を読み、根拠のある不具合だけを提案します。トークン上限を守るため、ドラフトPRとDependabotなどのボットが作成したPRは対象外です。",
+        "approval": "投稿前に承認する",
+        "approvalDescription": "GitdogがGitHubにインラインレビューを投稿する前にチケットで確認します。",
+        "limitations": "コメントのみを投稿し、マージの承認・ブロックやコードの実行は行いません。変更ファイル300件までを制限付きコンテキストで検証します。60件を超えるPRは分割して検証し、1件のコメントにまとめて投稿します。未確認の範囲はチケットに表示します。",
+        "permissions": "GitHub Appの権限を確認",
+        "suggestions": "適用可能な修正案を含める",
+        "suggestionsDescription": "元のコードと一致する小さな修正案を提示します。作成者または書き込み権限のあるレビュアーがGitHubで適用し、自動コミットは行いません。"
+      }
+    }
+  },
+  "tickets": {
+    "title": "チケット - Gitdog",
+    "description": "GitHubのIssueとディスカッションチケットを表示・管理",
+    "heading": "チケット",
+    "subtitle": "GitHubのIssueとディスカッションに対するAIサポートを管理",
+    "signInRequired": "チケットを表示するにはサインインしてください。",
+    "searchPlaceholder": "タイトル、リポジトリ、または番号で検索...",
+    "filterType": "タイプ：",
+    "filterStatus": "ステータス：",
+    "filterRepo": "リポジトリ：",
+    "types": {
+      "all": "すべて",
+      "issue": "Issue",
+      "discussion": "Discussion",
+      "pullRequest": "プルリクエスト"
+    },
+    "status": {
+      "all": "すべて",
+      "open": "オープン",
+      "closed": "クローズ",
+      "pending": "承認待ち"
+    },
+    "repoFilter": {
+      "showingFor": "表示中のチケット：",
+      "clearFilter": "フィルタークリア"
+    },
+    "pendingApprovals": "承認待ち",
+    "pendingActionsCount": "{{count}}件の待機中アクション",
+    "noTickets": {
+      "title": "まだチケットがありません",
+      "description": "接続されたリポジトリでIssueやディスカッションが作成されるとここに表示されます"
+    },
+    "actionCount": "{{count}}件のアクション",
+    "pendingActionCount": "{{count}}件待機中",
+    "viewOnGitHub": "GitHubで表示",
+    "actionTypes": {
+      "format": "Issue形式を改善",
+      "answer": "質問に回答",
+      "tagMaintainers": "メンテナーをタグ",
+      "followUp": "フォローアップ",
+      "review": "コードレビュー"
+    },
+    "actionStatus": {
+      "pending": "処理中",
+      "pending_approval": "承認待ち",
+      "approved": "承認済み",
+      "rejected": "拒否済み",
+      "completed": "完了",
+      "failed": "失敗"
+    },
+    "detail": {
+      "backToTickets": "チケットに戻る",
+      "invalidTicketId": "無効なチケットID",
+      "ticketNotFound": "チケットが見つからないか、アクセスが拒否されました",
+      "originalContent": "元のコンテンツ",
+      "actions": "アクション",
+      "noActions": "このチケットに対するアクションはまだありません",
+      "chatHistory": "チャット履歴",
+      "chatHistoryCount_other": "チャット履歴（{{count}}件のメッセージ）",
+      "noActionDetails": "このアクションの詳細はありません",
+      "proposedChanges": "提案された変更",
+      "changesSummary": "変更概要",
+      "originalTitle": "元のタイトル",
+      "suggestedTitle": "提案されたタイトル",
+      "originalBody": "元の本文",
+      "suggestedBody": "提案された本文",
+      "reasoning": "分析",
+      "maintainers": "メンテナー",
+      "maintainerTagged": "コード変更リクエストにメンテナーがタグされます",
+      "proposedComment": "提案されたコメント",
+      "applyFormatting": "形式を適用",
+      "postComment": "コメントを投稿",
+      "requestChanges": "変更をリクエスト",
+      "requestChangesTitle": "変更をリクエスト",
+      "requestChangesDescription": "AIがより良い応答を生成するためのフィードバックを提供してください",
+      "feedbackPlaceholder": "希望する変更を説明してください...",
+      "submitFeedback": "フィードバックを送信",
+      "reject": "拒否",
+      "actionApproved": "アクションが承認され実行されました",
+      "responseRefreshing": "最新のリポジトリインデックスで下書きを更新しています。投稿前に新しい下書きを確認してください。",
+      "actionRejected": "アクションが拒否されました",
+      "changesRequested": "変更をリクエストしました。再生成中...",
+      "approveFailed": "アクションの承認に失敗しました",
+      "rejectFailed": "アクションの拒否に失敗しました",
+      "requestChangesFailed": "変更のリクエストに失敗しました",
+      "executionCompleted": "正常に実行されました",
+      "generating": "AIが応答を生成中...",
+      "analyzingIssue": "AIがイシューを分析し、コードベースを探索しています...",
+      "processingStep": "AIは次の作業を実行中です:",
+      "stepExploring": "リポジトリ構造の探索",
+      "stepReading": "関連ファイルの読み取り",
+      "stepAnalyzing": "イシューコンテキストの分析",
+      "stepGenerating": "詳細な応答の生成",
+      "user": "ユーザー",
+      "assistant": "AIアシスタント",
+      "titleChange": "タイトル",
+      "bodyChange": "本文",
+      "before": "変更前",
+      "after": "変更後",
+      "editedByGitdog": "Gitdogが編集済み",
+      "currentContent": "現在のコンテンツ",
+      "title": "タイトル",
+      "deleteTicket": "チケットを削除",
+      "deleteTicketTitle": "チケットを削除",
+      "deleteTicketDescription": "このチケットを削除してもよろしいですか？この操作は元に戻せません。チケットはリストから非表示になります。",
+      "deleteConfirm": "削除",
+      "ticketDeleted": "チケットが削除されました",
+      "deleteFailed": "チケットの削除に失敗しました",
+      "reviewScope": "レビュー対象コミット {{sha}}。テストは実行しておらず、マージの承認ではありません。",
+      "reviewCoverage": "ソース読み取り: {{count}}件",
+      "recheckReview": "最新コミットを再検証 · 投稿なし",
+      "reviewVerification": "レビュー再検証",
+      "reviewVerificationNote": "検証専用です。このアクションはGitHubに投稿しません。",
+      "reviewCoverageLimited": "確認したソースパスと除外したパスは、それぞれ最初の100件まで表示されます。",
+      "reviewCoverageUnknown": "ソース読み取り数: 記録なし",
+      "reviewExcluded": "完全に確認できなかったファイル",
+      "reviewNotPublished": "レビュー完了・GitHubへの投稿なし",
+      "reviewFailureDetails": "失敗の詳細",
+      "emptyBody": "（空）"
+    }
+  },
+  "usage": {
+    "title": "使用量 - Gitdog",
+    "description": "AIトークン使用量を追跡",
+    "heading": "使用量",
+    "subtitle": "AIトークン使用量とプリペイド残高を追跡",
+    "stats": {
+      "totalTokens": "合計トークン",
+      "ofTokens": "{{count}}無料中",
+      "estimatedCost": "自動超過課金",
+      "coveredByTokens": "含まれるトークンと購入済みトークンで充当",
+      "prepaidOnly": "自動課金はありません。追加利用にはプリペイドトークンパックが必要です。",
+      "includedAllowance": "{{included}}を含む",
+      "allowanceWithPurchased": "{{included}}を含む + 購入分残り{{remaining}}",
+      "currentPlan": "現在のプラン",
+      "active": "アクティブ",
+      "billingPeriod": "請求期間",
+      "to": "〜 {{date}}"
+    },
+    "tokenUsageThisMonth": "現在の請求期間のトークン使用量",
+    "tokensCount": "{{used}} / {{limit}} トークン",
+    "approachingFreeLimit": "{{limit}}トークンの上限に近づいています。中断を避けるにはプリペイドトークンパックを購入してください。",
+    "freeLimitReached": "トークン上限に達しました。続けるにはプリペイドトークンパックを購入してください。",
+    "usageByRepository": "リポジトリ別使用量",
+    "noRepositories": {
+      "description": "まだ接続されたリポジトリがありません",
+      "button": "リポジトリを接続"
+    },
+    "actionsThisMonth": "現在の請求期間で{{count}}アクション",
+    "tokens": "トークン",
+    "noFeaturesEnabled": "有効な機能なし",
+    "featureLabels": {
+      "issueAssistant": "Issueアシスタント",
+      "autoFormat": "自動フォーマット",
+      "autoAnswer": "自動回答",
+      "tagMaintainers": "メンテナーをタグ",
+      "discussionAssistant": "ディスカッションアシスタント",
+      "autoFormatDiscussion": "自動フォーマット",
+      "autoAnswerDiscussion": "自動回答"
+    },
+    "upgrade": {
+      "title": "Proにアップグレード",
+      "description": "月額$9.99のProサブスクリプションで2.4Mトークン含むと優先処理を獲得",
+      "button": "プランを見る",
+      "inlineTitle": "より多い月間枠が必要ですか？",
+      "inlineDescription": "Proには毎月2.4Mトークンが含まれます。追加利用にはプリペイドトークンパックが必要です。"
+    }
+  },
+  "profile": {
+    "title": "プロフィール - Gitdog",
+    "description": "プロフィール設定を管理",
+    "subscription": {
+      "title": "サブスクリプション",
+      "currentPlan": "現在のプラン",
+      "active": "アクティブ",
+      "thisMonth": "今月",
+      "currentBillingPeriod": "現在の請求期間",
+      "actions": "{{count}}アクション",
+      "of": "/ {{count}}",
+      "billingPeriod": "請求期間",
+      "to": "〜 {{date}}",
+      "upgrade": {
+        "title": "プランをアップグレード",
+        "description": "Proでは毎月2.4Mトークンとチームコラボレーションを利用できます。追加利用にはプリペイドトークンパックが必要です。",
+        "button": "プランを見る"
+      }
+    },
+    "repositories": {
+      "title": "接続されたリポジトリ",
+      "totalRepositories": "合計リポジトリ",
+      "active": "{{count}}アクティブ"
+    }
+  },
+  "footer": {
+    "copyright": "© {{year}} Gitdog. AI GitHubアシスタント。",
+    "product": "製品",
+    "pricing": "料金",
+    "company": "会社",
+    "about": "概要",
+    "contact": "お問い合わせ",
+    "legal": "法的情報",
+    "termsOfService": "利用規約",
+    "privacyPolicy": "プライバシーポリシー",
+    "support": "サポート",
+    "slack": "Slackに参加"
+  },
+  "contact": {
+    "title": "お問い合わせ - Gitdog",
+    "description": "お問い合わせください",
+    "heading": "お問い合わせ",
+    "subtitle": "ご質問がありましたら、お好みの方法でご連絡ください。",
+    "slack": {
+      "title": "Slackに参加",
+      "description": "コミュニティに参加してリアルタイムサポートを受けましょう"
+    },
+    "email": {
+      "title": "メールでお問い合わせ",
+      "description": "メールをお送りいただければ、ご返信いたします"
+    },
+    "responseTime": "通常24〜48時間以内にご返信いたします"
+  },
+  "about": {
+    "title": "概要 - Gitdog",
+    "description": "Gitdogとチームについて",
+    "heading": "Gitdogについて",
+    "createdWith": "愛と",
+    "andPassion": "情熱を込めて作りました",
+    "madeInKorea": "韓国で制作",
+    "createdBy": "制作者:",
+    "managedBy": "管理:",
+    "whatIsGitdog": {
+      "title": "Gitdogとは？",
+      "description": "Gitdogは、開発者がIssueとディスカッションをより効率的に管理できるようにするAI駆動のGitHubアシスタントです。高度なAIモデルを使用してコードベースのコンテキストを分析し、インテリジェントな応答を提供し、Issueをフォーマットし、質問に自動的に回答します。"
+    }
+  },
+  "banner": {
+    "connectPrompt": "GitHubリポジトリを接続してAI自動化を有効にしましょう",
+    "connectNow": "今すぐ接続"
+  },
+  "billing": {
+    "title": "請求 - Gitdog",
+    "description": "サブスクリプションと請求の管理",
+    "heading": "プラン＆請求",
+    "subtitle": "無料プランには毎月100kトークンが含まれます。さらに必要な場合は、トークンパックの購入またはアップグレードが可能です。",
+    "month": "月",
+    "currentPlan": "現在のプラン",
+    "recommended": "おすすめ",
+    "downgrade": "ダウングレード",
+    "upgradeToPro": "Proにアップグレード",
+    "freeDescription": "月100kトークン、上限到達後は利用停止",
+    "proDescription": "毎月2.4Mトークン込み、必要に応じてプリペイドトークンパックを購入可能",
+    "currentUsage": "現在の使用量",
+    "usage": {
+      "plan": "プラン",
+      "tokensThisMonth": "現在の請求期間のトークン",
+      "actionsThisMonth": "現在の請求期間のアクション",
+      "estimatedCost": "自動超過課金"
+    },
+    "tokenPricing": "トークン価格",
+    "model": "AIモデル",
+    "inputTokens": "入力トークン",
+    "outputTokens": "出力トークン",
+    "freeTokens": "無料トークン",
+    "platformFee": "プリペイドトークンパック",
+    "proDiscount": "自動超過課金はありません。必要なときにプリペイドトークンパックを購入してください",
+    "needHelp": "請求についてご質問がありますか？",
+    "contactUs": "お問い合わせ"
+  },
+  "upgrade": {
+    "title": "プランをアップグレード",
+    "message": "Proで毎月2.4Mトークンと優先処理を利用",
+    "limitReached": {
+      "title": "月間制限に達しました",
+      "message": "トークン上限に達しました。AI自動化を続けるには、トークンパックを購入するかアップグレードしてください。"
+    },
+    "approachingLimit": {
+      "title": "制限に近づいています",
+      "message": "トークン上限に近づいています。中断を避けるには、トークンパックを購入するかアップグレードしてください。"
+    },
+    "featureLocked": {
+      "title": "Pro専用機能",
+      "message": "この機能はProプランでのみ利用可能です。高度な自動化を利用するにはアップグレードしてください。"
+    },
+    "recommended": "おすすめ",
+    "prepaidTokenPack": "プリペイドトークンパック",
+    "prepaidTokenPackDescription": "一度購入すると有効期限はありません。利用可能なトークン残高を使い切ると自動化は停止します。",
+    "maybeLater": "後で",
+    "viewPlans": "プランを見る",
+    "currentlyOnFree": "現在Freeプランをご利用中（月100kトークン、上限あり）",
+    "highPerformanceNote": "最高品質の結果を提供するために高性能AIモデルを使用しています。"
+  },
+  "pricing": {
+    "title": "料金 - Gitdog",
+    "description": "ニーズに合ったプランを選択",
+    "heading": "シンプルで透明な料金",
+    "subtitle": "月間トークン枠を選び、必要に応じてプリペイドトークンパックを追加できます。自動超過課金はありません。",
+    "month": "月",
+    "currentPlan": "現在のプラン",
+    "recommended": "おすすめ",
+    "downgrade": "ダウングレード",
+    "upgradeToPro": "Proにアップグレード",
+    "getStarted": "始める",
+    "processing": "処理中...",
+    "freeDescription": "月100kトークン無料（上限あり）",
+    "proDescription": "毎月2.4Mトークン込み、追加利用にはプリペイドトークンパックが必要",
+    "loggedIn": {
+      "heading": "プラン&請求",
+      "subtitle": "サブスクリプションを管理し、現在の使用状況を確認してください。",
+      "currentUsage": "現在の使用状況",
+      "plan": "プラン",
+      "tokensThisMonth": "現在の請求期間のトークン",
+      "actionsThisMonth": "現在の請求期間のアクション",
+      "estimatedCost": "自動超過課金"
+    },
+    "features": {
+      "freeTokens": "月100kトークン無料（上限あり）",
+      "includedTokens": "毎月2.4Mトークン込み",
+      "basicSupport": "コミュニティサポート",
+      "prioritySupport": "優先サポート",
+      "issueAssistant": "Issueアシスタント",
+      "discussionAssistant": "Discussionアシスタント",
+      "noAutomaticOverage": "自動超過課金なし",
+      "allFeatures": "すべての機能を含む",
+      "prepaidTokens": "追加利用向けプリペイドトークンパック",
+      "teamCollaboration": "チームコラボレーション"
+    },
+    "tokenPack": {
+      "title": "もっとトークンが必要ですか？",
+      "description": "追加AI利用向けのプリペイドトークンパックを購入できます。月間の含まれるトークンの後に使用され、有効期限はありません。",
+      "neverExpire": "トークンの有効期限なし",
+      "prepaidPurchase": "1回限りのプリペイド購入",
+      "bestValue": "最もお得",
+      "purchase": "購入"
+    },
+    "tokenPricing": "トークン価格",
+    "tokenPricingDescription": "Freeには月100k、Proには月2.4Mトークンが含まれます。どちらも利用可能な上限で停止し、プリペイドトークンパックで追加できます。",
+    "freeTokensLabel": "月間無料トークン",
+    "platformFeeLabel": "プリペイドトークンパック",
+    "billingLabel": "課金",
+    "prepaidTokensLabel": "プリペイドトークンパック",
+    "needHelp": "ご質問がありますか？",
+    "contactUs": "お問い合わせ"
+  },
+  "invitations": {
+    "title": "招待",
+    "pending": "保留中",
+    "noInvitations": "保留中の招待はありません",
+    "accept": "承諾",
+    "reject": "拒否",
+    "accepted": "招待を承諾しました",
+    "rejected": "招待を辞退しました",
+    "invitedBy": "{{username}}からの招待",
+    "asRole": "{{role}}として"
+  },
+  "team": {
+    "title": "チーム",
+    "members": "メンバー",
+    "inviteMember": "メンバーを招待",
+    "pendingInvitations": "保留中の招待",
+    "proRequired": "Pro登録が必要です",
+    "proRequiredDescription": "メンバーの招待はProプランの機能です。チームコラボレーションを有効にするにはアップグレードしてください。",
+    "viewPricing": "料金プランを見る",
+    "roleUpdated": "役割を更新しました",
+    "memberRemoved": "メンバーを削除しました",
+    "leftRepository": "リポジトリから退出しました",
+    "invitationCancelled": "招待をキャンセルしました",
+    "invitationSent": "招待を送信しました",
+    "inviteUnavailable": {
+      "disconnecting": "このリポジトリの接続解除中はメンバーを招待できません。",
+      "reconnect": "メンバーを招待する前にGitHub Appを再接続してください。",
+      "revoked": "メンバーを招待する前にGitHubリポジトリへのアクセスを復元してください。",
+      "syncing": "GitdogがGitHubリポジトリへのアクセスを確認している間はメンバーを招待できません。"
+    },
+    "roles": {
+      "owner": "オーナー",
+      "editor": "閲覧者",
+      "viewer": "閲覧者"
+    },
+    "roleDescriptions": {
+      "editor": "閲覧のみ",
+      "viewer": "閲覧のみ"
+    },
+    "inviteModal": {
+      "title": "チームメンバーを招待",
+      "usernameLabel": "GitHubユーザー名",
+      "usernamePlaceholder": "GitHubユーザー名を入力",
+      "usernameRequired": "GitHubユーザー名を入力してください",
+      "roleLabel": "役割",
+      "send": "招待を送信",
+      "userNotFound": "ユーザーが見つかりません。Gitdogアカウントが必要です。",
+      "alreadyMember": "このユーザーは既にこのリポジトリのメンバーです。",
+      "alreadyInvited": "このユーザーには既に保留中の招待があります。",
+      "repositoryUnavailable": "GitHubリポジトリへのアクセスが復元されるまでメンバーを招待できません。",
+      "inviteFailed": "招待の送信に失敗しました。再度お試しください。"
+    },
+    "ownerOnly": "オーナーのみがチームを管理できます",
+    "remove": "削除",
+    "leave": "退出"
+  },
+  "notifications": {
+    "title": "通知",
+    "markAllRead": "すべて既読にする",
+    "noNotifications": "通知はありません"
+  },
+  "notFound": {
+    "title": "ページが見つかりません - Gitdog",
+    "description": "お探しのページは存在しません",
+    "heading": "ページが見つかりません",
+    "message": "お探しのページは存在しないか、移動された可能性があります。URLを確認するか、ホームページに戻ってください。",
+    "goHome": "ホームへ",
+    "goBack": "戻る"
+  },
+  "serverError": {
+    "title": "サーバーエラー - Gitdog",
+    "description": "サーバーで問題が発生しました",
+    "heading": "サーバーエラー",
+    "message": "サーバーで問題が発生しました。問題の解決に取り組んでいます。しばらくしてからもう一度お試しください。",
+    "tryAgain": "再試行",
+    "goHome": "ホームへ"
+  },
+  "errors": {
+    "discussion": {
+      "notFound": "Discussionが見つかりません。削除されたか、アクセス権限がない可能性があります。",
+      "updateFailed": "Discussionの更新に失敗しました。編集権限がない可能性があります。",
+      "commentFailed": "コメントの追加に失敗しました。Discussionがロックされているか、権限がない可能性があります。",
+      "accessDenied": "Discussionにアクセスできません。権限を確認してください。"
+    },
+    "issue": {
+      "updateFailed": "Issueの更新に失敗しました。編集権限がない可能性があります。",
+      "commentFailed": "コメントの追加に失敗しました。権限を確認してください。"
+    },
+    "tokenLimit": {
+      "limitReached": "月間トークン制限に達しました。AI自動化を継続するには、プランをアップグレードしてください。"
+    },
+    "generic": {
+      "permissionDenied": "権限がありません。GitHub Appの権限を確認してください。",
+      "notFound": "要求されたリソースが見つかりません。",
+      "networkError": "ネットワークエラーが発生しました。もう一度お試しください。"
+    }
+  },
+  "admin": {
+    "payments": {
+      "title": "管理者決済 - Gitdog",
+      "heading": "決済",
+      "monthlyRevenue": "月間収益",
+      "allTimeRevenue": "累計収益",
+      "tokensSoldThisMonth": "今月販売トークン",
+      "totalTokensSold": "累計販売トークン",
+      "totalTransactions": "取引",
+      "total": "合計:",
+      "months": {
+        "jan": "1月",
+        "feb": "2月",
+        "mar": "3月",
+        "apr": "4月",
+        "may": "5月",
+        "jun": "6月",
+        "jul": "7月",
+        "aug": "8月",
+        "sep": "9月",
+        "oct": "10月",
+        "nov": "11月",
+        "dec": "12月"
+      },
+      "stats": {
+        "totalEvents": "総イベント数",
+        "successful": "成功",
+        "failed": "失敗",
+        "refunded": "返金済み",
+        "tokensSold": "販売トークン"
+      },
+      "tabs": {
+        "proUsers": "Proユーザー",
+        "users": "ユーザー",
+        "purchaseHistory": "購入履歴"
+      },
+      "empty": {
+        "noProSubscribers": "Proサブスクライバーはまだいません",
+        "noUsers": "ユーザーが見つかりません",
+        "noHistory": "購入履歴がまだありません"
+      },
+      "subscription": {
+        "pro": "PRO",
+        "status": "ステータス:",
+        "included": "含む:",
+        "purchased": "購入済み:",
+        "used": "使用済み:"
+      },
+      "actions": {
+        "addTokens": "トークン追加",
+        "refundTokens": "トークン返金",
+        "cancelSubscription": "サブスクリプション解約",
+        "reactivateSubscription": "サブスクリプション再有効化",
+        "refund": "返金",
+        "add": "トークン追加",
+        "cancel": "キャンセル",
+        "reactivate": "再有効化"
+      },
+      "form": {
+        "tokenAmount": "トークン数",
+        "invalidTokenAmount": "正の整数のトークン数を入力してください",
+        "adminNote": "管理者メモ（任意）"
+      },
+      "logs": "ログ",
+      "tokens": "トークン",
+      "moreLogs": "+ {{count}}件のログ",
+      "adminNote": "管理者:"
+    },
+    "workflows": {
+      "title": "管理者ワークフロー - Gitdog",
+      "heading": "ワークフロー",
+      "stats": {
+        "total": "合計",
+        "successRate": "成功率",
+        "approvalRate": "承認率",
+        "failed": "失敗",
+        "tokensUsed": "使用トークン",
+        "totalCost": "総コスト"
+      },
+      "byWorkflowType": "ワークフロータイプ別",
+      "successFailed": "{{success}}成功 / {{failed}}失敗",
+      "viewModes": {
+        "byTicket": "チケット別",
+        "byIndexing": "インデックス別",
+        "allLogs": "すべてのログ"
+      },
+      "noTitle": "タイトルなし",
+      "repositoryIndexing": "リポジトリインデックス",
+      "loadMore": "もっと読み込む",
+      "empty": {
+        "noAiLogs": "AIログがありません",
+        "noIndexingLogs": "インデックスログがありません"
+      },
+      "logDetails": {
+        "error": "エラー",
+        "userFeedback": "ユーザーフィードバック",
+        "systemPrompt": "システムプロンプト",
+        "userPrompt": "ユーザープロンプト",
+        "aiResponse": "AI応答"
+      },
+      "copyAnalysisPrompt": "分析プロンプトをコピー",
+      "logs": "ログ",
+      "tokens": "トークン",
+      "changes": "{{count}}回変更"
+    },
+    "nav": {
+      "workflows": "ワークフロー",
+      "payments": "決済"
+    },
+    "backToApp": "アプリに戻る"
+  },
+  "legal": {
+    "privacy": {
+      "title": "プライバシーポリシー - Gitdog",
+      "description": "Gitdogのプライバシーポリシー - AI駆動のGitHubアシスタント",
+      "heading": "プライバシーポリシー",
+      "companyInfo": "Hyo Dev",
+      "lastUpdated": "最終更新日：2026年11月3日",
+      "intro": "Hyo Dev（以下「当社」）は、AI駆動のGitHubアシスタントプラットフォームであるGitdogを提供しています。当社はお客様のプライバシーを保護し、情報を責任を持って取り扱うことに尽力しています。このプライバシーポリシーでは、収集する情報、使用方法、およびお客様の権利について説明します。",
+      "section1": {
+        "title": "1. 収集する情報",
+        "account": {
+          "title": "1.1. アカウント情報",
+          "description": "GitHub OAuthを通じてアカウントを作成する際、以下の情報を収集します：",
+          "items": [
+            "GitHubユーザー名とプロフィール情報",
+            "メールアドレス（GitHubより）",
+            "プロフィール画像（GitHubより）",
+            "18歳以上であることの確認、専門的またはビジネス目的での利用確認、および現在の利用規約とプライバシーポリシーへの同意記録（確認日時とポリシーバージョンを含む）"
+          ],
+          "note": "この情報はアカウントの作成と管理に必要です。"
+        },
+        "repository": {
+          "title": "1.2. リポジトリデータ",
+          "description": "Gitdogにリポジトリを接続すると、以下を処理します：",
+          "items": [
+            "リポジトリメタデータ（名前、説明、言語）",
+            "AI分析とインデックス作成のためのファイル内容",
+            "IssueとDiscussionの内容"
+          ],
+          "note": "このデータは、コードベースのコンテキストに基づいてAI支援を提供するために使用されます。"
+        },
+        "usage": {
+          "title": "1.3. 使用データ",
+          "description": "以下の使用情報を収集します：",
+          "items": [
+            "課金目的のトークン使用量",
+            "アクション履歴（AI応答、フォーマット変更）",
+            "機能使用統計"
+          ]
+        },
+        "automatic": {
+          "title": "1.4. 自動的に収集される情報",
+          "description": "以下の技術情報を収集する場合があります：",
+          "items": [
+            "サーバーログ",
+            "IPアドレス",
+            "ブラウザタイプとデバイス情報"
+          ],
+          "note": "これはセキュリティ、デバッグ、パフォーマンス向上のために使用されます。"
+        }
+      },
+      "section2": {
+        "title": "2. 情報の使用方法",
+        "description": "収集した情報を以下の目的で使用します：",
+        "items": [
+          "サービスの提供、維持、改善",
+          "ユーザーアカウントの認証と管理",
+          "AIリクエストの処理と応答の生成",
+          "課金のためのトークン使用量の計算と追跡",
+          "カスタマーサポートの提供",
+          "プラットフォームのセキュリティ確保",
+          "法的義務の遵守"
+        ],
+        "note": "マーケティング目的で個人情報を販売または共有することはありません。"
+      },
+      "section3": {
+        "title": "3. 処理の法的根拠（GDPR）",
+        "description": "欧州経済領域（EEA）のユーザーについては、以下に基づいてデータを処理します：",
+        "items": [
+          "契約上の必要性（サービス提供のため）",
+          "正当な利益（セキュリティ、改善）",
+          "法的遵守",
+          "同意（該当する場合）"
+        ]
+      },
+      "section4": {
+        "title": "4. データ共有とサードパーティプロバイダー",
+        "description": "プラットフォーム運営のために信頼できるサードパーティサービスを使用しています：",
+        "convex": {
+          "title": "Convex（ホスティングプロバイダー）",
+          "description": "Convexを使用して以下を含むアプリケーションデータをホストおよび処理します：",
+          "items": [
+            "アカウント情報",
+            "リポジトリインデックスデータ",
+            "アクション履歴"
+          ]
+        },
+        "github": {
+          "title": "GitHub",
+          "description": "以下のためにGitHubと統合しています：",
+          "items": ["認証", "リポジトリアクセス", "IssueとDiscussionのやり取り"]
+        },
+        "lemonSqueezy": {
+          "title": "Lemon Squeezy",
+          "description": "決済処理にLemon Squeezyを使用しています。Lemon Squeezyは以下を処理します：",
+          "items": ["決済情報", "サブスクリプション管理"],
+          "note": "Gitdogはカード認証情報を保存しません。新しいWebhookは署名付きの生データを保持せずに正規化します。従来のWebhook生データ記録は、安全な移行が完了するまで、または未解決の手動審査、法務、セキュリティ、会計上の保持が必要な間、一時的に保持される場合があります。"
+        },
+        "note": "Gitdogの運営に必要な範囲で、上記プロバイダーの適用規約およびプライバシー慣行に従ってデータを共有するか、法律で要求される場合にのみデータを共有します。",
+        "aiGeneration": {
+          "title": "Anthropic Claude と OpenAI",
+          "description": "イシューとディスカッションへの応答生成に、Anthropic の Claude Messages API と OpenAI Responses API を使用します。クレジットや支出上限に達した場合、または設定された利用期間が終了した場合、別のプロバイダーに切り替わることがあります。 Gitdogが使用するOpenAIプロジェクトでは入力・出力データの共有が有効です。OpenAIに送信されるリポジトリのコード抜粋、プロンプト、生成された応答は、OpenAIモデルの改善や学習に使用される場合があります。この目的で共有する権限のないリポジトリを接続したり、コンテンツを送信したりしないでください。 リポジトリのインデックス作成、意味検索、リポジトリ学習にもOpenAI Embeddings APIを使用します。これらのリクエストにはコードの断片、検索クエリ、リポジトリ学習の内容が含まれ、同じOpenAIデータ共有設定が適用されます。",
+          "items": [
+            "関連するリポジトリのコード抜粋とコンテキスト",
+            "イシューやディスカッションの内容、追加メッセージ、ツールの実行結果",
+            "Gitdog に提供されたリポジトリの指示と応答設定"
+          ]
+        }
+      },
+      "section5": {
+        "title": "5. 国際データ転送",
+        "description": "お客様が世界中にいらっしゃるため、お客様の情報はお客様の国外で処理される場合があります。以下のような保護措置を使用しています：",
+        "items": ["標準契約条項（SCC）", "業界標準のセキュリティ慣行"]
+      },
+      "section6": {
+        "title": "6. データ保持",
+        "description": "以下を保持します：",
+        "items": [
+          "アカウントがアクティブな間はアカウントデータ",
+          "リポジトリが接続されている間はリポジトリインデックスデータ",
+          "参照用に12ヶ月間アクション履歴",
+          "正規化された決済取引、利用権限の変更、返金・監査記録は原則として5年間保持した後に削除します。ただし、法務、セキュリティ、会計、または未解決の手動審査のためにより長い保持が必要な場合を除き、従来のWebhook生データ項目は安全な移行と適用される保持措置の終了後に削除または非識別化します",
+          "重複したクレジット付与や請求を防ぐため、コンテンツを含まない不可逆の決済照合フィンガープリントを無期限に保持する場合があり、このフィンガープリントにはWebhookの生データ、カード情報、連絡先情報は含まれない",
+          "セキュリティとデバッグのために限られた期間ログと診断"
+        ],
+        "note": "いつでもアカウントの削除を要求できます。"
+      },
+      "section7": {
+        "title": "7. セキュリティ",
+        "description": "以下を含む技術的および組織的措置を使用してデータを保護しています：",
+        "items": [
+          "暗号化された接続（HTTPS/TLS）",
+          "安全なホスティングインフラストラクチャ",
+          "アクセス制御と監査ログ",
+          "定期的なセキュリティレビュー"
+        ]
+      },
+      "section8": {
+        "title": "8. 児童のプライバシー",
+        "description": "Gitdogは18歳以上の方のみご利用いただけます。18歳未満の方の個人情報を意図的に収集することはありません。18歳未満の方が個人情報を提供したと思われる場合は、削除できるよう当社までご連絡ください。"
+      },
+      "section9": {
+        "title": "9. お客様の権利",
+        "description": "お住まいの地域によっては（例：GDPR、CCPA）、以下の権利がある場合があります：",
+        "items": [
+          "個人データへのアクセス",
+          "不正確な情報の訂正",
+          "削除の要求",
+          "処理の制限または異議申し立て",
+          "データポータビリティの要求",
+          "同意の撤回"
+        ],
+        "contact": "これらの権利を行使するには、以下にご連絡ください"
+      },
+      "section10": {
+        "title": "10. ポリシーの変更",
+        "description": "このプライバシーポリシーを随時更新する場合があります。重要な変更については、メールまたはウェブサイトを通じてユーザーに通知します。"
+      },
+      "section11": {
+        "title": "11. お問い合わせ",
+        "description": "このポリシーまたはお客様のデータについてご質問がある場合は、以下にご連絡ください："
+      }
+    },
+    "terms": {
+      "title": "利用規約 - Gitdog",
+      "description": "Gitdogの利用規約 - AI駆動のGitHubアシスタント",
+      "heading": "利用規約",
+      "companyInfo": "Hyo Dev",
+      "lastUpdated": "最終更新日：2026年11月3日",
+      "intro": "Hyo Dev（以下「当社」）が提供するAI駆動のGitHubアシスタントプラットフォームであるGitdogへようこそ。サービスを使用することにより、この利用規約に同意したものとみなされます。",
+      "section1": {
+        "title": "1. 規約の承諾",
+        "description": "Gitdogにアクセスまたは使用することにより、この利用規約およびプライバシーポリシーに拘束されることに同意したものとみなされます。同意しない場合は、サービスを使用しないでください。"
+      },
+      "section2": {
+        "title": "2. サービスの説明",
+        "description": "Gitdogは、開発者がGitHub IssueとDiscussionをより効率的に管理できるようにするAI駆動のプラットフォームです。高度なAIモデルを使用して：",
+        "items": [
+          "コードベースのコンテキストを分析",
+          "インテリジェントな応答を提供",
+          "Issueを自動フォーマット",
+          "リポジトリに基づいて質問に回答"
+        ]
+      },
+      "section3": {
+        "title": "3. アカウント要件",
+        "requirements": {
+          "title": "3.1. 利用資格とGitHubアカウント",
+          "description": "Gitdogを利用するには、18歳以上で有効なGitHubアカウントを所有し、消費者向けではなく専門的またはビジネス目的にのみGitdogを使用する必要があります。サインインまたは認証済みアカウントを使用する前に、これらの利用資格を確認し、本利用規約およびプライバシーポリシーに同意する必要があります。GitHubアカウントを接続することにより、GitHubのOAuthスコープで許可される範囲でリポジトリデータにアクセスすることを承認したものとみなされます。"
+        },
+        "responsibility": {
+          "title": "3.2. アカウントの責任",
+          "description": "アカウントのセキュリティを維持し、アカウントで発生するすべての活動について責任を負います。"
+        }
+      },
+      "section4": {
+        "title": "4. 許容される使用",
+        "description": "以下を行わないことに同意するものとします：",
+        "items": [
+          "違法な目的でサービスを使用する",
+          "システムへの不正アクセスを試みる",
+          "サービスを妨害または中断する",
+          "悪意のあるコードまたはコンテンツをアップロードする",
+          "適用される法律または規制に違反する",
+          "過度または自動化されたリクエストでAIシステムを悪用する"
+        ]
+      },
+      "section5": {
+        "title": "5. 課金と支払い",
+        "plans": {
+          "title": "5.1. サブスクリプションプラン",
+          "description": "FreeとProのサブスクリプションプランには月間トークン枠が含まれます。追加利用にはプリペイドトークンパックが必要で、利用可能なトークン残高を超えた使用が自動的に課金されることはありません。"
+        },
+        "payments": {
+          "title": "5.2. 決済処理",
+          "description": "支払いはLemon Squeezyを通じて処理されます。正確な請求情報を提供し、支払い方法への請求を承認することに同意するものとします。"
+        },
+        "refunds": {
+          "title": "5.3. 返金",
+          "description": "返金はケースバイケースで処理されます。誤って請求されたと思われる場合は、お問い合わせください。"
+        }
+      },
+      "section6": {
+        "title": "6. 知的財産権",
+        "ourRights": {
+          "title": "6.1. 当社の権利",
+          "description": "Gitdogのコード、デザイン、ブランディングはHyo Devが所有しています。許可なく当社の知的財産を複製、変更、または配布することはできません。"
+        },
+        "yourContent": {
+          "title": "6.2. お客様のコンテンツ",
+          "description": "お客様のコードとリポジトリコンテンツの所有権はお客様にあります。Gitdogを使用することにより、サービス提供に必要な範囲で、プライバシーポリシーに記載されたプロバイダーが適用規約に従って処理できるよう、当社がお客様のコンテンツを処理および開示するための限定的かつ非独占的なライセンスを付与したものとみなされます。"
+        }
+      },
+      "section7": {
+        "title": "7. AI生成コンテンツ",
+        "description": "AI応答はコードベースと入力に基づいて生成されます。正確性を追求していますが：",
+        "items": [
+          "AI応答にはエラーが含まれる可能性があります",
+          "使用前にAI提案をレビューする責任はお客様にあります",
+          "AI出力の正確性や完全性を保証するものではありません"
+        ]
+      },
+      "section8": {
+        "title": "8. 責任の制限",
+        "description": "法律で許可される最大限度において：",
+        "items": [
+          "間接的、偶発的、または結果的損害について責任を負いません",
+          "総責任額は過去12ヶ月間にお支払いいただいた金額に制限されます",
+          "中断のない、またはエラーのないサービスを保証するものではありません"
+        ]
+      },
+      "section9": {
+        "title": "9. 保証の免責",
+        "description": "サービスは、商品性、特定目的への適合性、および非侵害の保証を含む、明示的または黙示的を問わず、いかなる種類の保証もなく「現状のまま」で提供されます。"
+      },
+      "section10": {
+        "title": "10. 終了",
+        "description": "この規約に違反した場合、サービスへのアクセスを一時停止または終了する場合があります。プロフィール設定を通じていつでもアカウントをキャンセルすることもできます。"
+      },
+      "section11": {
+        "title": "11. 規約の変更",
+        "description": "この利用規約を随時更新する場合があります。重要な変更については、メールまたはウェブサイトを通じてお知らせします。変更後も継続して使用した場合、承諾したものとみなされます。"
+      },
+      "section12": {
+        "title": "12. 準拠法",
+        "description": "この規約は大韓民国の法律に準拠します。すべての紛争は韓国の裁判所で解決されます。"
+      },
+      "section13": {
+        "title": "13. お問い合わせ",
+        "description": "この規約についてご質問がある場合は、以下にお問い合わせください："
+      }
+    }
+  }
+}

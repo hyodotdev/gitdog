@@ -1,0 +1,4 @@
+interface:
+  display_name: "Review Self"
+  short_description: "Review current work in five-minute loops"
+  default_prompt: "Use $review-self to review the current Gitdog work, fix actionable findings, and recheck every five minutes until stable."

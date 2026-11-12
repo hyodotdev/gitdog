@@ -1,0 +1,107 @@
+# Gitdog - AI GitHub Assistant (Full Documentation)
+
+> AI-powered assistant for GitHub repositories. Automates issue responses and discussion replies with intelligent codebase-aware answers.
+
+## What is Gitdog?
+
+Gitdog is an AI automation platform designed specifically for GitHub repositories. It works by integrating with your GitHub repository through a GitHub App, indexing your codebase, and then providing intelligent, context-aware responses when users mention @gitdogbot in issues or discussions.
+
+The AI understands your codebase structure, dependencies, and code patterns to provide accurate and helpful responses that are specifically tailored to your project.
+
+## How It Works
+
+1. **Connect Repository**: Install the Gitdog GitHub App on your repository
+2. **Automatic Indexing**: Gitdog indexes your codebase to understand the project structure
+3. **Mention @gitdogbot**: In any issue or discussion, mention @gitdogbot with your question
+4. **AI Response**: Gitdog analyzes the context and provides an intelligent, codebase-aware response
+
+## Core Features
+
+### Issue Automation
+When someone opens an issue or comments on one, mentioning @gitdogbot will trigger an AI response that:
+- Analyzes the issue content
+- Searches relevant code in your repository
+- Provides helpful guidance based on your actual codebase
+- Can suggest code fixes or implementation approaches
+
+### Discussion Assistant
+For GitHub Discussions, Gitdog can:
+- Answer technical questions about your project
+- Provide code examples from your codebase
+- Guide users through setup and configuration
+- Explain architectural decisions
+
+## Pricing Plans
+
+### Free Plan - $0/month
+- 100,000 tokens per month
+- Hard limit with no automatic overage charges
+- Prepaid token packs available for additional usage
+- All features included
+- Issue and discussion automation
+- Codebase indexing
+- Perfect for small projects and personal use
+
+### Pro Plan - $9.99/month
+- 2.4M tokens included per month
+- Prepaid token packs for additional usage
+- No automatic overage charges; usage stops when the available token balance is exhausted
+- All features included
+- Team collaboration support
+- Priority support
+- Best for active repositories and teams
+
+### Prepaid Token Packs (One-time purchase)
+- Small Pack: $9.99 for 2.2M tokens (never expire)
+- Large Pack: $29.99 for 7.5M tokens (never expire, best value)
+
+## Technical Specifications
+
+- **Platform Type**: Software as a Service (SaaS)
+- **Integration Method**: GitHub App
+- **Supported Languages**: All programming languages
+- **Authentication**: GitHub OAuth
+- **API**: Convex real-time database
+- **Frontend**: React with TypeScript
+- **Styling**: Tailwind CSS
+
+## Frequently Asked Questions
+
+### What is Gitdog?
+Gitdog is an AI-powered GitHub assistant that automatically responds to issues and discussions by understanding your codebase context.
+
+### How do I get started?
+Sign in with your GitHub account at gitdog.dev, connect your repository, and start mentioning @gitdogbot in your issues or discussions.
+
+### Is my code secure?
+Gitdog processes repository files to build its search index and retains that index while the repository is connected. Access, provider processing, retention, and deletion are described in the Privacy Policy.
+
+### What languages are supported?
+Gitdog supports all programming languages. The AI can understand and analyze code in JavaScript, TypeScript, Python, Go, Rust, Java, C++, and many more.
+
+### How accurate are the responses?
+Gitdog uses advanced AI models with your codebase context to provide highly relevant responses. The accuracy depends on the complexity of the question and the clarity of your codebase structure.
+
+### Can I use Gitdog for private repositories?
+Yes, Gitdog works with both public and private repositories. Your private code remains secure.
+
+### How is token usage calculated?
+Tokens are counted based on the AI model input (your question + code context) and output (AI response). Larger codebases and longer responses use more tokens.
+
+## Contact Information
+
+- Website: https://gitdog.dev
+- Contact Page: https://gitdog.dev/contact
+- Terms of Service: https://gitdog.dev/legal/terms-of-service
+- Privacy Policy: https://gitdog.dev/legal/privacy-policy
+
+## Navigation
+
+- Home: https://gitdog.dev/
+- Pricing: https://gitdog.dev/pricing
+- About: https://gitdog.dev/about
+- Contact: https://gitdog.dev/contact
+
+## Keywords and Topics
+
+GitHub automation, AI code assistant, GitHub bot, AI developer tools, GitHub integration, issue automation, discussion assistant, developer productivity, GitHub App, codebase AI, intelligent code assistant, GitHub workflow automation

@@ -1,0 +1,148 @@
+name: Deploy Convex
+
+on:
+  workflow_call:
+    secrets:
+      CONVEX_DEPLOY_KEY:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy Convex functions
+    runs-on: ubuntu-latest
+    env:
+      CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "26.13.0"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.4
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Verify production runtime configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          required_production_env=(
+            GITHUB_APP_SLUG
+            GITHUB_APP_ID
+            GITHUB_APP_PRIVATE_KEY
+            GITHUB_WEBHOOK_SECRET
+            GITHUB_APP_CLIENT_ID
+            GITHUB_APP_CLIENT_SECRET
+            SITE_URL
+            LS_API_KEY
+            LS_STORE_ID
+            LS_WEBHOOK_SECRET
+            LS_TEST_MODE
+            LS_SETTLEMENT_FINGERPRINT_SECRET_V1
+            LS_PRO_VARIANT_ID
+            LS_TOKEN_PACK_SMALL_VARIANT_ID
+            LS_TOKEN_PACK_LARGE_VARIANT_ID
+          )
+          declare -A production_env
+          for name in "${required_production_env[@]}"; do
+            value="$(bunx convex env get "$name" --prod 2>/dev/null || true)"
+            if [ -z "$value" ]; then
+              echo "::error::Required production Convex variable $name is missing or empty."
+              exit 1
+            fi
+            production_env["$name"]="$value"
+          done
+
+          if [ "${production_env[GITHUB_APP_SLUG]}" != "gitdogbot" ]; then
+            echo "::error::GITHUB_APP_SLUG must be exactly gitdogbot in production."
+            exit 1
+          fi
+
+          if ! DEPLOY_URL_TO_VALIDATE="${production_env[SITE_URL]}" bun run .github/scripts/validateDeployUrl.ts; then
+            echo "::error::SITE_URL must exactly match a public HTTPS origin without a trailing slash in production."
+            exit 1
+          fi
+
+          if [ "${production_env[LS_TEST_MODE]}" != "false" ]; then
+            echo "::error::LS_TEST_MODE must be exactly false in production."
+            exit 1
+          fi
+
+          id_names=(
+            LS_STORE_ID
+            LS_PRO_VARIANT_ID
+            LS_TOKEN_PACK_SMALL_VARIANT_ID
+            LS_TOKEN_PACK_LARGE_VARIANT_ID
+          )
+          for name in "${id_names[@]}"; do
+            if [[ ! "${production_env[$name]}" =~ ^[1-9][0-9]*$ ]]; then
+              echo "::error::$name must be a positive Lemon Squeezy ID."
+              exit 1
+            fi
+          done
+          if [ "${production_env[LS_PRO_VARIANT_ID]}" = "${production_env[LS_TOKEN_PACK_SMALL_VARIANT_ID]}" ] ||
+             [ "${production_env[LS_PRO_VARIANT_ID]}" = "${production_env[LS_TOKEN_PACK_LARGE_VARIANT_ID]}" ] ||
+             [ "${production_env[LS_TOKEN_PACK_SMALL_VARIANT_ID]}" = "${production_env[LS_TOKEN_PACK_LARGE_VARIANT_ID]}" ]; then
+            echo "::error::Lemon Squeezy product variant IDs must be distinct."
+            exit 1
+          fi
+
+          if ! LS_PREFLIGHT_FINGERPRINT_SECRET="${production_env[LS_SETTLEMENT_FINGERPRINT_SECRET_V1]}" bun -e '
+            const secret = process.env.LS_PREFLIGHT_FINGERPRINT_SECRET ?? "";
+            if (new TextEncoder().encode(secret.trim()).byteLength < 32) process.exit(1);
+          '; then
+            echo "::error::LS_SETTLEMENT_FINGERPRINT_SECRET_V1 must contain at least 32 UTF-8 bytes."
+            exit 1
+          fi
+
+          generation_route="$(bunx convex env get AI_GENERATION_ROUTE --prod 2>/dev/null || true)"
+          if [ -n "$generation_route" ] && [ "$generation_route" != "claude-openai" ]; then
+            echo "::error::AI_GENERATION_ROUTE must be claude-openai."
+            exit 1
+          fi
+          generation_keys=(OPENAI_API_KEY)
+          if bun -e 'process.exit(Date.now() < Date.parse("2027-01-17T15:00:00Z") ? 0 : 1)'; then
+            anthropic_auth_mode="$(bunx convex env get ANTHROPIC_AUTH_MODE --prod 2>/dev/null || true)"
+            case "${anthropic_auth_mode:-api-key}" in
+              api-key) generation_keys+=(ANTHROPIC_API_KEY) ;;
+              federation)
+                generation_keys+=(ANTHROPIC_ORGANIZATION_ID ANTHROPIC_FEDERATION_RULE_ID ANTHROPIC_SERVICE_ACCOUNT_ID ANTHROPIC_WORKSPACE_ID JWT_PRIVATE_KEY JWKS)
+                federation_scope="$(bunx convex env get ANTHROPIC_FEDERATION_SCOPE --prod 2>/dev/null || true)"
+                case "${federation_scope:-workspace:inference}" in
+                  workspace:inference|workspace:developer) ;;
+                  *) echo "::error::ANTHROPIC_FEDERATION_SCOPE must match an approved workspace scope."; exit 1 ;;
+                esac
+                ;;
+              *) echo "::error::ANTHROPIC_AUTH_MODE must be api-key or federation."; exit 1 ;;
+            esac
+          fi
+          for name in "${generation_keys[@]}"; do
+            value="$(bunx convex env get "$name" --prod 2>/dev/null || true)"
+            if [ -z "$value" ]; then
+              echo "::error::Required production AI variable $name is missing or empty."
+              exit 1
+            fi
+          done
+          unset value production_env generation_route generation_keys anthropic_auth_mode federation_scope
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Deploy Convex functions
+        run: |
+          if [ -z "$CONVEX_DEPLOY_KEY" ]; then
+            echo "::error::CONVEX_DEPLOY_KEY secret not set. Create a production Convex deploy key and add it to this repository's Actions secrets."
+            exit 1
+          fi
+
+          bunx convex deploy --yes

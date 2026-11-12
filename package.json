@@ -1,56 +1,103 @@
 {
-  "name": "gitdog",
-  "version": "0.2.2",
-  "description": "Manage Gitdog projects, GitHub automation and API keys from your terminal",
-  "type": "module",
-  "bin": {
-    "gitdog": "dist/cli.js"
-  },
-  "files": [
-    "dist",
-    "README.md"
-  ],
-  "engines": {
-    "node": ">=22.14.0"
-  },
-  "packageManager": "bun@1.4.4",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/hyodotdev/gitdog-cli.git"
-  },
-  "homepage": "https://gitdog.dev",
-  "bugs": {
-    "url": "https://github.com/hyodotdev/gitdog-cli/issues"
-  },
+  "name": "gitdog-workspace",
+  "private": true,
   "license": "UNLICENSED",
-  "keywords": [
-    "gitdog",
-    "github",
-    "cli",
-    "automation",
-    "ai"
+  "version": "0.1.0",
+  "type": "module",
+  "packageManager": "bun@1.4.4",
+  "workspaces": [
+    "packages/*"
   ],
-  "publishConfig": {
-    "access": "public",
-    "registry": "https://registry.npmjs.org"
-  },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc --noEmit",
-    "lint": "prettier --check .",
+    "dev": "bun run --parallel dev:frontend dev:backend",
+    "dev:frontend": "vite",
+    "dev:backend": "convex dev",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:ui": "vitest --ui",
+    "test:watch": "vitest watch",
+    "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
+    "lint:fix": "eslint . --ext ts,tsx --fix",
+    "typecheck": "tsc --noEmit && tsc -p convex --noEmit && tsc -p e2e --noEmit",
     "format": "prettier --write .",
-    "test": "bun run build && node --test test/*.test.mjs",
-    "test:dev": "bun run build && node scripts/test-dev.mjs",
-    "dev": "bun src/cli.ts",
-    "prepack": "bun run build"
+    "format:check": "prettier --check .",
+    "check": "bun run typecheck && bun run lint && bun run format:check",
+    "prepare": "husky",
+    "test:e2e:dev": "bun e2e/runDev.ts",
+    "test:e2e:pr-review": "bun e2e/runPrReview.ts",
+    "typecheck:cli": "bun run --cwd packages/cli typecheck",
+    "test:cli": "bun run --cwd packages/cli test",
+    "check:api": "bun packages/cli/scripts/sync-api.mjs --check"
+  },
+  "lint-staged": {
+    "*.{ts,tsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,md,yml,yaml}": [
+      "prettier --write"
+    ]
   },
   "dependencies": {
-    "commander": "^15.0.0",
-    "convex": "^1.49.0"
+    "@auth/core": "^0.41.3",
+    "@convex-dev/auth": "^0.0.98",
+    "@icons-pack/react-simple-icons": "^13.15.1",
+    "@lemonsqueezy/lemonsqueezy.js": "^4.0.0",
+    "@preact/signals-react": "^3.12.0",
+    "clsx": "^2.1.1",
+    "convex": "1.49.0",
+    "i18next": "^27.1.1",
+    "i18next-browser-languagedetector": "^8.3.0",
+    "jose": "^6.2.17",
+    "lucide-react": "^1.72.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-helmet-async": "^3.1.0",
+    "react-i18next": "^18.0.1",
+    "react-markdown": "^10.1.0",
+    "react-router": "^8.5.1",
+    "rehype-raw": "^7.0.0",
+    "rehype-sanitize": "^6.0.0",
+    "remark-gfm": "^4.0.1",
+    "tailwind-merge": "^3.7.0"
   },
   "devDependencies": {
-    "@types/node": "^22.20.5",
-    "prettier": "^3.9.10",
-    "typescript": "~6.0.3"
+    "@eslint/js": "^10.0.1",
+    "@tailwindcss/postcss": "^4.3.5",
+    "@tailwindcss/typography": "^0.5.20",
+    "@types/node": "^26.6.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.3.0",
+    "@vitest/ui": "^5.1.0",
+    "convex-test": "0.0.70",
+    "eslint": "^10.14.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.7",
+    "glob": "^14.0.5",
+    "globals": "^17.14.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.6.0",
+    "micromark": "^4.0.3",
+    "postcss": "~8.5.32",
+    "prettier": "^3.10.1",
+    "tailwindcss": "^4.3.5",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.72.2",
+    "vite": "^8.3.8",
+    "vitest": "^5.1.0"
+  },
+  "overrides": {
+    "brace-expansion": "^5.0.12",
+    "minimatch": "^11.0.4",
+    "nanoid": "^3.3.20",
+    "postcss-selector-parser": "^6.1.5",
+    "source-map-js": "^1.2.2",
+    "vite": "$vite",
+    "zod": "^4.6.7"
+  },
+  "engines": {
+    "node": ">=22.22.2"
   }
 }

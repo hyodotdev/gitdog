@@ -15,6 +15,9 @@ jobs:
   package:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: packages/cli
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -44,22 +47,22 @@ jobs:
           npm install --prefix "$RUNNER_TEMP/gitdog-smoke" --ignore-scripts "./$archive"
           "$RUNNER_TEMP/gitdog-smoke/node_modules/.bin/gitdog" --version
           "$RUNNER_TEMP/gitdog-smoke/node_modules/.bin/gitdog" --json api list > "$RUNNER_TEMP/catalog.json"
-          node --input-type=module -e "import fs from 'node:fs'; import assert from 'node:assert/strict'; assert.ok(JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP+'/catalog.json')).length >= 86)"
+          node --input-type=module -e "import fs from 'node:fs'; import assert from 'node:assert/strict'; assert.ok(JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP+'/catalog.json')).length >= 87)"
           sha512sum "$archive" > release.sha512
       - name: Run the exact archive through npx without a global install
         working-directory: ${{ runner.temp }}
         shell: bash
         run: |
           set -euo pipefail
-          version="$(node -p "require(process.env.GITHUB_WORKSPACE + '/package.json').version")"
-          actual="$(npx --yes --package "$GITHUB_WORKSPACE/gitdog-$version.tgz" gitdog --version)"
+          version="$(node -p "require(process.env.GITHUB_WORKSPACE + '/packages/cli/package.json').version")"
+          actual="$(npx --yes --package "$GITHUB_WORKSPACE/packages/cli/gitdog-$version.tgz" gitdog --version)"
           test "$actual" = "$version"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: npm-package
           path: |
-            gitdog-*.tgz
-            release.sha512
+            packages/cli/gitdog-*.tgz
+            packages/cli/release.sha512
           if-no-files-found: error
           retention-days: 30
 
@@ -71,6 +74,9 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    defaults:
+      run:
+        working-directory: packages/cli
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -84,5 +90,6 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: npm-package
+          path: packages/cli
       - run: sha512sum --check release.sha512
       - run: node scripts/release.mjs publish
