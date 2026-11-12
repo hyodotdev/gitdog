@@ -567,7 +567,13 @@ export const reserveBatchedReviewQuota = internalMutation({
             userKeyUnavailable: true,
           };
     }
-    await settleThenGrantTrialCredit(ctx, ticket.userId);
+    // Optional: an unexpected settlement problem must not end the review as
+    // a failed quota check; the check below reports real quota problems.
+    try {
+      await settleThenGrantTrialCredit(ctx, ticket.userId);
+    } catch {
+      console.warn("Trial credit grant was skipped");
+    }
     // The owner comes from the ticket. Indexing patches the repository
     // several times a second, and this slow usage read would conflict with
     // those writes on every retry.

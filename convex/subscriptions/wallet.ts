@@ -126,7 +126,9 @@ export async function debitPurchasedTokenWallet(
   if (debited > 0) {
     const trial = await readTrialTokens(ctx, args.targetSubscriptionId);
     if (args.paidOnly && remaining < trial) {
-      throw new Error("Refund would consume trial tokens");
+      throw new Error(
+        "Refund would consume trial tokens; record it for manual review instead",
+      );
     }
     // Usage spends the trial first so paid tokens stay refundable.
     const remainingTrial = args.paidOnly ? trial : Math.max(0, trial - debited);

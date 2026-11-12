@@ -95,11 +95,14 @@ export function UsagePage() {
   const totalAvailable = availability.totalAvailableTokens;
   const tokenLimit = totalAvailable;
 
-  // A free account with no trial or prepaid tokens left has nothing available.
+  // With nothing available and nothing used there is nothing to measure,
+  // so the bar stays empty and the next-step card explains what to do.
   const usagePercentage =
     totalAvailable > 0
       ? Math.min((totalTokens / totalAvailable) * 100, 100)
-      : 100;
+      : totalTokens > 0
+        ? 100
+        : 0;
 
   // Both plans stop at their included and prepaid token limit.
   const estimatedCost = calculateEstimatedAdditionalUsageCharge();

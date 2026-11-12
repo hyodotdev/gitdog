@@ -1129,3 +1129,36 @@ describe("round 4 server key expectations", () => {
     );
   });
 });
+
+describe("round 6 recovery", () => {
+  it("clears the unreadable flag after a successful request on the same key", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await insertFixture(t);
+    await saveKey(t, fixture.userId, "anthropic", ANTHROPIC_KEY);
+    const key = async () =>
+      (
+        await t.run(async (ctx) => ctx.db.query("providerApiKeys").collect())
+      )[0];
+    // Flagged during a rotation that was later rolled back.
+    const saved = await key();
+    await t.run(async (ctx) =>
+      ctx.db.patch(saved._id, { unreadableAt: Date.now() - 60_000 }),
+    );
+    const flagged = await key();
+    // A request that started before the flag leaves it in place.
+    await t.mutation(internal.providerApiKeys.internalMutation.markKeyWorking, {
+      userId: fixture.userId,
+      provider: "anthropic",
+      keyIv: flagged.iv,
+      requestStartedAt: flagged.unreadableAt! - 1,
+    });
+    expect((await key()).unreadableAt).toBeDefined();
+
+    const provider = await resolveGenerationProvider(actionCtx(t), {
+      userId: fixture.userId,
+    });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(claudeResponse());
+    await provider.chat(question);
+    expect((await key()).unreadableAt).toBeUndefined();
+  });
+});

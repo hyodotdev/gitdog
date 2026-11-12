@@ -224,15 +224,25 @@ export const markKeyWorking = internalMutation({
         q.eq("userId", args.userId).eq("provider", args.provider),
       )
       .unique();
-    if (!row || (row.status === "active" && row.lastError === undefined))
+    if (
+      !row ||
+      (row.status === "active" &&
+        row.lastError === undefined &&
+        row.unreadableAt === undefined)
+    )
       return;
     if (row.status === "invalid") return;
     if (row.iv !== args.keyIv) return;
-    if ((row.lastError?.at ?? 0) >= args.requestStartedAt) return;
+    if (
+      (row.lastError?.at ?? 0) >= args.requestStartedAt ||
+      (row.unreadableAt ?? 0) >= args.requestStartedAt
+    )
+      return;
     const now = Date.now();
     await ctx.db.patch(row._id, {
       status: "active",
       lastError: undefined,
+      unreadableAt: undefined,
       lastValidatedAt: now,
       updatedAt: now,
     });

@@ -194,7 +194,9 @@ async function userKeyLeaf(
     row.provider === "anthropic"
       ? new ClaudeProvider(apiKey, undefined, { enforceAccessDeadline: false })
       : new OpenAIProvider(apiKey),
-    row.status !== "active" || row.lastError !== undefined
+    row.status !== "active" ||
+      row.lastError !== undefined ||
+      row.unreadableAt !== undefined
       ? { keyIv: row.iv }
       : undefined,
   );
