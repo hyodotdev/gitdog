@@ -157,11 +157,8 @@ export class SessionStore {
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
         if (await removeAbandonedLock(path)) continue;
-        if (Date.now() >= deadline)
-          throw new Error(
-            `Another Gitdog process is updating authentication. Retry later; if it crashed, remove ${path}.`,
-            { cause: error },
-          );
+        // The deadline is checked only at the top of the loop, so an expired
+        // wait always fails with the same error.
         await new Promise((resolve) =>
           setTimeout(
             resolve,
