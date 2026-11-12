@@ -459,7 +459,8 @@ async function checkEmbeddingProviderHolds(
       .withIndex("by_subscription_status_and_period_start", (q) =>
         q.eq("subscriptionId", subscription._id).eq("status", status),
       )
-      .take(MAX_PROVIDER_HOLDS_PER_SCOPE);
+      .take(MAX_PROVIDER_HOLDS_PER_SCOPE + 1);
+    if (reservations.length > MAX_PROVIDER_HOLDS_PER_SCOPE) return "ambiguous";
     for (const reservation of reservations) {
       if (!reservationBelongsToBoundary(reservation, subscription, boundary))
         continue;
@@ -686,6 +687,20 @@ export async function settleEndedTrustedProSubscriptionQuota(
  * grant instead of tripping the settlement errors.
  */
 export async function hasUnsettledProHistory(
+  ctx: BoundaryReadCtx,
+  userId: Id<"users">,
+  now: number,
+): Promise<boolean> {
+  try {
+    return await readUnsettledProHistory(ctx, userId, now);
+  } catch {
+    // Corrupt boundary history (for example duplicate boundaries) needs an
+    // operator; callers only skip optional work, so report it as unsettled.
+    return true;
+  }
+}
+
+async function readUnsettledProHistory(
   ctx: BoundaryReadCtx,
   userId: Id<"users">,
   now: number,

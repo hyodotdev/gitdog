@@ -394,6 +394,7 @@ export const refundTokens = mutation({
       targetSubscriptionId: walletSubscription._id,
       tokensToDebit: args.tokensToRefund,
       now,
+      paidOnly: true,
     });
     if (debit.debited !== args.tokensToRefund) {
       throw new Error("Purchased token balance is too small for this refund");

@@ -269,9 +269,11 @@ describe("provider key management", () => {
       apiKey: OPENAI_KEY,
     });
     process.env.BYOK_ENCRYPTION_KEY = btoa("z".repeat(32));
+    // A different server key than the one keys were saved with is a server
+    // misconfiguration, not a problem with this key.
     await expect(
       as.action(api.providerApiKeys.action.revalidate, { provider: "openai" }),
-    ).rejects.toMatchObject({ data: { reason: "unreadable" } });
+    ).rejects.toMatchObject({ data: { reason: "not_configured" } });
     delete process.env.BYOK_ENCRYPTION_KEY;
     await expect(
       as.action(api.providerApiKeys.action.save, {
@@ -362,7 +364,7 @@ describe("provider key failure notices", () => {
     ]);
   });
 
-  it("reports a key the server can no longer decrypt as unreadable", async () => {
+  it("reports a changed server key as a service problem, not unreadable keys", async () => {
     const t = convexTest(schema, modules);
     const { as } = await signedIn(t);
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
@@ -377,7 +379,13 @@ describe("provider key failure notices", () => {
     );
     process.env.BYOK_ENCRYPTION_KEY = btoa("z".repeat(32));
     await expect(as.query(api.providerApiKeys.query.list, {})).resolves.toEqual(
-      [expect.objectContaining({ readable: false, status: "active" })],
+      [
+        expect.objectContaining({
+          readable: true,
+          serviceUnavailable: true,
+          status: "active",
+        }),
+      ],
     );
   });
 });

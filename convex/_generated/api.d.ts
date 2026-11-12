@@ -88,6 +88,7 @@ import type * as paymentLogs_privacy from "../paymentLogs/privacy.js";
 import type * as paymentLogs_settlementConfiguration from "../paymentLogs/settlementConfiguration.js";
 import type * as providerApiKeys_action from "../providerApiKeys/action.js";
 import type * as providerApiKeys_crypto from "../providerApiKeys/crypto.js";
+import type * as providerApiKeys_encryptionState from "../providerApiKeys/encryptionState.js";
 import type * as providerApiKeys_internalMutation from "../providerApiKeys/internalMutation.js";
 import type * as providerApiKeys_internalQuery from "../providerApiKeys/internalQuery.js";
 import type * as providerApiKeys_mutation from "../providerApiKeys/mutation.js";
@@ -254,6 +255,7 @@ declare const fullApi: ApiFromModules<{
   "paymentLogs/settlementConfiguration": typeof paymentLogs_settlementConfiguration;
   "providerApiKeys/action": typeof providerApiKeys_action;
   "providerApiKeys/crypto": typeof providerApiKeys_crypto;
+  "providerApiKeys/encryptionState": typeof providerApiKeys_encryptionState;
   "providerApiKeys/internalMutation": typeof providerApiKeys_internalMutation;
   "providerApiKeys/internalQuery": typeof providerApiKeys_internalQuery;
   "providerApiKeys/mutation": typeof providerApiKeys_mutation;

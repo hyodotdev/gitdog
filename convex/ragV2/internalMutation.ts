@@ -1267,7 +1267,14 @@ export const deleteEmbeddingBatchCachePage = internalMutation({
   },
 });
 
-const RETIRED_EMBEDDING_PURGE_BATCH = 100;
+// Page sizes keep one transaction well under Convex's read and write limits:
+// a cached batch holds up to 32 vectors (about 400 KB), a chunk up to about
+// 150 KB of code, text and vector, and a learning a few KB.
+const RETIRED_EMBEDDING_PURGE_PAGE = {
+  chunks: 25,
+  batches: 8,
+  learnings: 50,
+} as const;
 const retiredEmbeddingPhase = v.union(
   v.literal("chunks"),
   v.literal("batches"),
@@ -1293,7 +1300,7 @@ export const purgeRetiredEmbeddings = internalMutation({
   handler: async (ctx, args) => {
     const phase = args.phase ?? "chunks";
     const paginationOpts = {
-      numItems: RETIRED_EMBEDDING_PURGE_BATCH,
+      numItems: RETIRED_EMBEDDING_PURGE_PAGE[phase],
       cursor: args.cursor ?? null,
     };
     let page: { isDone: boolean; continueCursor: string };

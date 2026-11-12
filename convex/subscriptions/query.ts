@@ -1,4 +1,5 @@
-import { getUserWalletRows } from "./wallet";
+// Matches the wallet row bound in wallet.ts.
+const MAX_WALLET_ROWS = 100;
 import { query } from "../_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { PRICING, CLAUDE_API_ENDS_AT, GENERATION_MODELS } from "../_ai/config";
@@ -77,6 +78,31 @@ export const getCurrent = query({
       };
     }
 
+    // Too many wallet rows to sum safely: show the plan without balances
+    // instead of failing every page that reads the subscription.
+    const walletRows = await ctx.db
+      .query("subscriptions")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .take(MAX_WALLET_ROWS + 1);
+    if (walletRows.length > MAX_WALLET_ROWS) {
+      const entitlement = getEffectiveSubscriptionEntitlement(
+        subscription,
+        now,
+      );
+      return {
+        plan: entitlement.plan,
+        status: entitlement.status,
+        includedTokens: entitlement.includedTokens,
+        purchasedTokens: 0,
+        purchasedTokensDebited: 0,
+        trialTokens: 0,
+        walletUnverified: true as const,
+        serviceFeeRate: entitlement.serviceFeeRate,
+        periodStart: entitlement.periodStart,
+        periodEnd: entitlement.periodEnd,
+      };
+    }
+
     const quota = await readEffectiveSubscriptionQuota(ctx, subscription, now);
     if (!quota.verified) throw new Error(INVALID_USAGE_MESSAGE);
     const entitlement = quota.entitlement;
@@ -107,7 +133,7 @@ export const getCurrent = query({
       purchasedTokens: entitlement.purchasedTokens,
       purchasedTokensDebited,
       // Unspent trial inside purchasedTokens, summed across wallet rows.
-      trialTokens: (await getUserWalletRows(ctx, userId)).reduce(
+      trialTokens: walletRows.reduce(
         (total, row) => total + (row.trialTokens ?? 0),
         0,
       ),

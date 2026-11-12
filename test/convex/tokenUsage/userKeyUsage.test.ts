@@ -49,6 +49,8 @@ const modules = {
     import("../../../convex/pullRequests/internalMutation"),
   "../../../convex/tokenUsage/query.ts": () =>
     import("../../../convex/tokenUsage/query"),
+  "../../../convex/providerApiKeys/query.ts": () =>
+    import("../../../convex/providerApiKeys/query"),
 };
 
 const ANTHROPIC_KEY = `sk-ant-api03-${"a".repeat(40)}`;
@@ -823,14 +825,14 @@ describe("provider resolution with user keys", () => {
     ).resolves.toMatchObject({ keySource: "user" });
   });
 
-  it("does not mark keys rejected when they cannot be decrypted", async () => {
+  it("does not mark keys rejected when the server key changed", async () => {
     const t = convexTest(schema, modules);
     const fixture = await insertFixture(t);
     await saveKey(t, fixture.userId, "anthropic", ANTHROPIC_KEY);
     process.env.BYOK_ENCRYPTION_KEY = btoa("z".repeat(32));
     await expect(
       resolveGenerationProvider(actionCtx(t), { userId: fixture.userId }),
-    ).rejects.toMatchObject({ code: "unreadable" });
+    ).rejects.toMatchObject({ code: "service_unavailable" });
     const [key] = await t.run(async (ctx) =>
       ctx.db.query("providerApiKeys").collect(),
     );
@@ -976,6 +978,89 @@ describe("user key recovery and server key problems", () => {
       keys: await ctx.db.query("providerApiKeys").collect(),
     }));
     expect(state.notifications).toEqual([]);
-    expect(state.keys[0].unreadableNotifiedAt).toBeUndefined();
+    expect(state.keys[0].unreadableAt).toBeUndefined();
+  });
+});
+
+describe("round 3 provider key state", () => {
+  it("flags a key that fails to decrypt under the right server key", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await insertFixture(t);
+    await saveKey(t, fixture.userId, "openai", OPENAI_KEY);
+    await t.run(async (ctx) => {
+      const [key] = await ctx.db.query("providerApiKeys").collect();
+      await ctx.db.patch(key._id, { ciphertext: btoa("corrupt-ciphertext") });
+    });
+    await expect(
+      resolveGenerationProvider(actionCtx(t), { userId: fixture.userId }),
+    ).rejects.toMatchObject({ code: "unreadable" });
+    const as = t.withIdentity({ subject: `${fixture.userId}|session` });
+    await expect(as.query(api.providerApiKeys.query.list, {})).resolves.toEqual(
+      [expect.objectContaining({ readable: false, status: "active" })],
+    );
+    await saveKey(t, fixture.userId, "openai", OPENAI_KEY);
+    await expect(as.query(api.providerApiKeys.query.list, {})).resolves.toEqual(
+      [expect.objectContaining({ readable: true })],
+    );
+  });
+
+  it("treats a server key that differs from the saved one as a server problem", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await insertFixture(t);
+    await saveKey(t, fixture.userId, "openai", OPENAI_KEY);
+    process.env.BYOK_ENCRYPTION_KEY = btoa("w".repeat(32));
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await expect(
+      resolveGenerationProvider(actionCtx(t), { userId: fixture.userId }),
+    ).rejects.toMatchObject({ code: "service_unavailable" });
+    const as = t.withIdentity({ subject: `${fixture.userId}|session` });
+    await expect(as.query(api.providerApiKeys.query.list, {})).resolves.toEqual(
+      [expect.objectContaining({ serviceUnavailable: true, readable: true })],
+    );
+    await expect(
+      t.run(async (ctx) => ctx.db.query("notifications").collect()),
+    ).resolves.toEqual([]);
+  });
+
+  it("does not let a late success hide a newer failure or a replaced key", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await insertFixture(t);
+    await saveKey(t, fixture.userId, "anthropic", ANTHROPIC_KEY);
+    await t.mutation(
+      internal.providerApiKeys.internalMutation.recordKeyFailure,
+      {
+        userId: fixture.userId,
+        provider: "anthropic",
+        code: "out_of_credit",
+      },
+    );
+    const key = async () =>
+      (
+        await t.run(async (ctx) => ctx.db.query("providerApiKeys").collect())
+      )[0];
+    const failed = await key();
+    // Request started before the failure was recorded.
+    await t.mutation(internal.providerApiKeys.internalMutation.markKeyWorking, {
+      userId: fixture.userId,
+      provider: "anthropic",
+      keyIv: failed.iv,
+      requestStartedAt: failed.lastError!.at - 1,
+    });
+    expect((await key()).status).toBe("out_of_credit");
+    // A different saved key (another iv).
+    await t.mutation(internal.providerApiKeys.internalMutation.markKeyWorking, {
+      userId: fixture.userId,
+      provider: "anthropic",
+      keyIv: "another-iv",
+      requestStartedAt: failed.lastError!.at + 1,
+    });
+    expect((await key()).status).toBe("out_of_credit");
+    await t.mutation(internal.providerApiKeys.internalMutation.markKeyWorking, {
+      userId: fixture.userId,
+      provider: "anthropic",
+      keyIv: failed.iv,
+      requestStartedAt: failed.lastError!.at + 1,
+    });
+    expect((await key()).status).toBe("active");
   });
 });

@@ -2851,8 +2851,9 @@ export async function hasOpenUsageReservation(
   userId: Id<"users">,
 ): Promise<boolean> {
   // Retired embedding reservations are released by their cleanup cron and
-  // no longer hold plan operations.
-  const [chatPending, chatAmbiguous] = await Promise.all([
+  // no longer hold plan operations, except a staged, known-billed outcome
+  // that still has to be charged to the wallet.
+  const [chatPending, chatAmbiguous, ...stagedEmbedding] = await Promise.all([
     ctx.db
       .query("chatUsageReservations")
       .withIndex("by_user_key_source_and_status", (q) =>
@@ -2871,6 +2872,17 @@ export async function hasOpenUsageReservation(
           .eq("status", "ambiguous"),
       )
       .first(),
+    ...(["pending", "ambiguous"] as const).map((status) =>
+      ctx.db
+        .query("embeddingUsageReservations")
+        .withIndex("by_user_status_settlement_and_expiration", (q) =>
+          q
+            .eq("userId", userId)
+            .eq("status", status)
+            .eq("settlementState", "staged"),
+        )
+        .first(),
+    ),
   ]);
-  return Boolean(chatPending || chatAmbiguous);
+  return Boolean(chatPending || chatAmbiguous || stagedEmbedding.some(Boolean));
 }

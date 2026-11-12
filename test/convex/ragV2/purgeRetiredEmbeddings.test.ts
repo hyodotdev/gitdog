@@ -88,3 +88,70 @@ describe("retired embedding purge", () => {
     expect(state.batches).toEqual([]);
   });
 });
+
+describe("retired embedding purge paging", () => {
+  it("deletes at most eight large cached batches per transaction", async () => {
+    const t = convexTest(schema, modules);
+    await t.run(async (ctx) => {
+      const now = Date.now();
+      const userId = await ctx.db.insert("users", {});
+      const repositoryId = await ctx.db.insert("repositories", {
+        indexSyncPending: false,
+        indexVersion: 1,
+        indexStatus: "completed",
+        indexProgressAt: now,
+        ragStatus: "completed",
+        ragTotalChunks: 0,
+        ragIndexedChunks: 0,
+        ragFailedChunks: 0,
+        userId,
+        installationId: 1,
+        githubRepositoryId: 1,
+        githubRepo: "owner/repo",
+        githubRepoKey: "owner/repo",
+        name: "repo",
+        githubUrl: "https://github.com/owner/repo",
+        isActive: true,
+        settings: {
+          issueAssistantEnabled: true,
+          autoFormatIssue: true,
+          autoAnswerQuestions: true,
+          tagMaintainersForCodeChanges: true,
+          discussionAssistantEnabled: true,
+          autoFormatDiscussion: true,
+          autoAnswerDiscussionQuestions: true,
+          tagMaintainersForDiscussionCodeChanges: true,
+          requireApproval: false,
+          requireApprovalForDiscussions: false,
+        },
+        monthlyActions: 0,
+        lastResetAt: now,
+        createdAt: now,
+        updatedAt: now,
+      });
+      // Realistic size: 32 vectors of 1536 dimensions (about 400 KB).
+      const embeddings = Array.from({ length: 32 }, () =>
+        Array.from({ length: 1536 }, () => 0.5),
+      );
+      for (let index = 0; index < 20; index++)
+        await ctx.db.insert("ragEmbeddingBatches", {
+          reservationKey: `batch-${index}`,
+          repositoryId,
+          embeddingKey: "openai:text-embedding-3-small:1536:code_retrieval",
+          embeddings,
+          createdAt: now,
+          updatedAt: now,
+        });
+    });
+    await expect(
+      t.mutation(internal.ragV2.internalMutation.purgeRetiredEmbeddings, {
+        confirm: "delete-retired-embeddings",
+        phase: "batches",
+      }),
+    ).resolves.toMatchObject({ phase: "batches", changed: 8, done: false });
+    await t.finishAllScheduledFunctions(() => undefined);
+    await expect(
+      t.run(async (ctx) => ctx.db.query("ragEmbeddingBatches").collect()),
+    ).resolves.toEqual([]);
+  }, 30_000);
+});

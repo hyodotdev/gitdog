@@ -35,8 +35,9 @@ const applicationTables = {
       v.literal("out_of_credit"),
     ),
     lastValidatedAt: v.number(),
-    // Set once the owner was told the key can no longer be decrypted.
-    unreadableNotifiedAt: v.optional(v.number()),
+    // Set when this key failed to decrypt (the owner is told once); cleared
+    // when the key is saved or checked again.
+    unreadableAt: v.optional(v.number()),
     lastError: v.optional(
       v.object({
         code: v.union(
@@ -52,6 +53,13 @@ const applicationTables = {
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index("by_user_and_provider", ["userId", "provider"]),
+  // The id of the encryption key provider keys were first saved with. An
+  // environment key with another id is a server misconfiguration, not a
+  // problem with users' keys.
+  providerKeyEncryptionState: defineTable({
+    expectedKeyId: v.string(),
+    createdAt: v.number(),
+  }),
   // One row per user that ever received the sign-in trial credit. It is
   // never deleted, so the trial cannot be granted twice.
   trialCreditGrants: defineTable({

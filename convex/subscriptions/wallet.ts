@@ -109,6 +109,8 @@ export async function debitPurchasedTokenWallet(
     targetSubscriptionId: Id<"subscriptions">;
     tokensToDebit: number;
     now: number;
+    // Refunds take back paid tokens only and never touch the unspent trial.
+    paidOnly?: boolean;
   },
 ): Promise<{ debited: number; remaining: number }> {
   if (!Number.isSafeInteger(args.tokensToDebit) || args.tokensToDebit < 0) {
@@ -122,9 +124,12 @@ export async function debitPurchasedTokenWallet(
   const debited = Math.min(balance, args.tokensToDebit);
   const remaining = balance - debited;
   if (debited > 0) {
-    // Spend the trial first so paid tokens stay refundable.
     const trial = await readTrialTokens(ctx, args.targetSubscriptionId);
-    const remainingTrial = Math.max(0, trial - debited);
+    if (args.paidOnly && remaining < trial) {
+      throw new Error("Refund would consume trial tokens");
+    }
+    // Usage spends the trial first so paid tokens stay refundable.
+    const remainingTrial = args.paidOnly ? trial : Math.max(0, trial - debited);
     await ctx.db.patch(args.targetSubscriptionId, {
       purchasedTokens: remaining,
       trialTokens: remainingTrial > 0 ? remainingTrial : undefined,

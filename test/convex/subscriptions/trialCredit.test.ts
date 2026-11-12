@@ -470,3 +470,207 @@ describe("trial tokens in the wallet", () => {
     ).resolves.toMatchObject({ trialTokens: PRICING.TRIAL_TOKENS - 150 });
   });
 });
+
+describe("round 3 wallet and boundary safety", () => {
+  it("refunds take back paid tokens only", async () => {
+    const t = convexTest(schema, modules);
+    const { userId, as } = await signedIn(t);
+    await as.mutation(api.subscriptions.mutation.claimTrialCredit, {});
+    const { consolidatePurchasedTokenWallet, debitPurchasedTokenWallet } =
+      await import("../../../convex/subscriptions/wallet");
+    await t.run(async (ctx) => {
+      const [row] = await ctx.db.query("subscriptions").collect();
+      const now = Date.now();
+      await consolidatePurchasedTokenWallet(ctx, {
+        userId,
+        targetSubscriptionId: row._id,
+        tokensToAdd: 200,
+        now,
+      });
+      await expect(
+        debitPurchasedTokenWallet(ctx, {
+          userId,
+          targetSubscriptionId: row._id,
+          tokensToDebit: 300,
+          now,
+          paidOnly: true,
+        }),
+      ).rejects.toThrow("trial tokens");
+      await debitPurchasedTokenWallet(ctx, {
+        userId,
+        targetSubscriptionId: row._id,
+        tokensToDebit: 200,
+        now,
+        paidOnly: true,
+      });
+      expect(await ctx.db.get(row._id)).toMatchObject({
+        purchasedTokens: PRICING.TRIAL_TOKENS,
+        trialTokens: PRICING.TRIAL_TOKENS,
+      });
+    });
+  });
+
+  it("does not crash a batched review when Pro boundary history is corrupt", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await insertTicketFixture(t, { trialUsed: false });
+    const now = Date.now();
+    await t.run(async (ctx) => {
+      const subscriptionId = await ctx.db.insert("subscriptions", {
+        userId: fixture.userId,
+        plan: "pro",
+        status: "canceled",
+        includedTokens: PRICING.PRO_INCLUDED_TOKENS,
+        purchasedTokens: 0,
+        serviceFeeRate: PRICING.PLATFORM_FEE_PRO,
+        periodStart: now - 40 * 86_400_000,
+        periodEnd: now - 86_400_000,
+        proEntitlementProvenance: {
+          source: "lemon_squeezy_webhook",
+          verifiedAt: now - 40 * 86_400_000,
+        },
+        createdAt: now,
+        updatedAt: now,
+      });
+      for (let copy = 0; copy < 2; copy++)
+        await ctx.db.insert("subscriptionBillingBoundaries", {
+          subscriptionId,
+          periodStart: now - 40 * 86_400_000,
+          periodEnd: now - 86_400_000,
+          providerUpdatedAt: now,
+          status: "settled",
+          createdAt: now,
+          updatedAt: now,
+        });
+    });
+    const grant = await t.mutation(
+      internal.subscriptions.internalMutation.grantTrialCredit,
+      { userId: fixture.userId },
+    );
+    expect(grant).toEqual({ status: "pro_settling", tokens: 0 });
+    const reviewAction = await t.run(async (ctx) => {
+      const action = await ctx.db.get(fixture.ticketActionId);
+      return await ctx.db.insert("ticketActions", {
+        ticketId: action!.ticketId,
+        actionType: "review",
+        chatHistory: [],
+        proposalVersion: 0,
+        status: "pending",
+        createdAt: now,
+      });
+    });
+    const result = await t
+      .mutation(
+        internal.pullRequests.internalMutation.reserveBatchedReviewQuota,
+        { actionId: reviewAction, batches: 1 },
+      )
+      .catch((error: Error) => ({ thrown: error.message }));
+    // The grant step itself never throws; any refusal comes from the
+    // existing quota check, as it did before the trial existed.
+    expect(result).not.toHaveProperty(
+      "thrown",
+      expect.stringContaining("trial"),
+    );
+  });
+
+  it("degrades getCurrent instead of throwing for more than 100 wallet rows", async () => {
+    const t = convexTest(schema, modules);
+    const { userId, as } = await signedIn(t);
+    await t.run(async (ctx) => {
+      const now = Date.now();
+      for (let index = 0; index < 101; index++)
+        await ctx.db.insert("subscriptions", {
+          userId,
+          plan: "free",
+          status: "active",
+          includedTokens: 0,
+          purchasedTokens: 1,
+          serviceFeeRate: PRICING.PLATFORM_FEE_FREE,
+          periodStart: now - 1_000,
+          periodEnd: now + 86_400_000,
+          createdAt: now + index,
+          updatedAt: now,
+        });
+    });
+    await expect(
+      as.query(api.subscriptions.query.getCurrent, {}),
+    ).resolves.toMatchObject({ plan: "free", walletUnverified: true });
+  });
+
+  it("counts a staged embedding outcome as open usage and caps embedding holds", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await insertTicketFixture(t, { trialUsed: true });
+    const { hasOpenUsageReservation } =
+      await import("../../../convex/_ai/chatBilling");
+    const { checkBillingBoundaryProviderHolds } =
+      await import("../../../convex/subscriptions/billingBoundaries");
+    const now = Date.now();
+    const subscriptionId = await t.run(async (ctx) =>
+      ctx.db.insert("subscriptions", {
+        userId: fixture.userId,
+        plan: "free",
+        status: "active",
+        includedTokens: 0,
+        purchasedTokens: 0,
+        serviceFeeRate: PRICING.PLATFORM_FEE_FREE,
+        periodStart: now - 1_000,
+        periodEnd: now + 86_400_000,
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
+    const insert = (key: string, staged: boolean) =>
+      t.run(async (ctx) =>
+        ctx.db.insert("embeddingUsageReservations", {
+          reservationKey: key,
+          attemptToken: `${key}:1`,
+          userId: fixture.userId,
+          repositoryId: fixture.repositoryId,
+          operation: "RAG search",
+          provider: "openai",
+          model: "text-embedding-3-small",
+          inputCount: 1,
+          providerTokenLimit: 100,
+          reservedTokens: 2,
+          subscriptionId,
+          entitlementPlan: "free",
+          includedTokens: 0,
+          serviceFeeRate: 0.25,
+          quotaPeriodStart: now - 1_000,
+          quotaPeriodEnd: now + 60_000,
+          status: "pending",
+          providerStartedAt: now - 1_000,
+          ...(staged
+            ? { settlementState: "staged" as const, settlementTokens: 1 }
+            : {}),
+          expiresAt: now + 60_000,
+          createdAt: now,
+          updatedAt: now,
+        }),
+      );
+    await insert("plain", false);
+    await expect(
+      t.run((ctx) => hasOpenUsageReservation(ctx, fixture.userId)),
+    ).resolves.toBe(false);
+    await insert("staged", true);
+    await expect(
+      t.run((ctx) => hasOpenUsageReservation(ctx, fixture.userId)),
+    ).resolves.toBe(true);
+
+    for (let index = 0; index < 100; index++)
+      await insert(`hold-${index}`, false);
+    await expect(
+      t.run(async (ctx) =>
+        checkBillingBoundaryProviderHolds(
+          ctx,
+          (await ctx.db.get(subscriptionId))!,
+          {
+            subscriptionId,
+            periodStart: now - 1_000,
+            periodEnd: now + 86_400_000,
+          } as never,
+          now,
+        ),
+      ),
+    ).resolves.toBe("ambiguous");
+  });
+});

@@ -1,5 +1,11 @@
 import { v } from "convex/values";
 import { internalQuery } from "../_generated/server";
+import { readEncryptionState } from "./encryptionState";
+
+export const getEncryptionState = internalQuery({
+  args: {},
+  handler: async (ctx) => await readEncryptionState(ctx),
+});
 
 export const getEncryptedKeys = internalQuery({
   args: { userId: v.id("users") },

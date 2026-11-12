@@ -81,8 +81,8 @@ class UserKeyProvider implements AiProvider {
     private readonly userId: Id<"users">,
     private readonly keyProvider: KeyProvider,
     private readonly inner: AiProvider,
-    // The saved key last failed, so a success should clear that state.
-    private needsRecovery: boolean = false,
+    // Set when the saved key last failed, so a success clears that state.
+    private recovery?: { keyIv: string },
   ) {}
   get name() {
     return this.inner.name;
@@ -112,14 +112,21 @@ class UserKeyProvider implements AiProvider {
     messages: ChatMessage[],
     options?: ChatCompletionOptions,
   ): Promise<ChatCompletionResult> {
+    const requestStartedAt = Date.now();
     try {
       const result = await this.inner.chat(messages, options);
-      if (this.needsRecovery) {
-        this.needsRecovery = false;
+      if (this.recovery) {
+        const { keyIv } = this.recovery;
+        this.recovery = undefined;
         try {
           await this.ctx.runMutation(
             internal.providerApiKeys.internalMutation.markKeyWorking,
-            { userId: this.userId, provider: this.keyProvider },
+            {
+              userId: this.userId,
+              provider: this.keyProvider,
+              keyIv,
+              requestStartedAt,
+            },
           );
         } catch {
           /* Best effort: the next success tries again. */
@@ -151,7 +158,7 @@ function logMissingEncryptionKeyOnce() {
   if (missingEncryptionKeyLogged) return;
   missingEncryptionKeyLogged = true;
   console.error(
-    "[ProviderKeys] BYOK_ENCRYPTION_KEY is missing or invalid; saved keys cannot be used",
+    "[ProviderKeys] BYOK_ENCRYPTION_KEY is missing, invalid or not the key saved keys use; saved keys cannot be used",
   );
 }
 
@@ -187,7 +194,9 @@ async function userKeyLeaf(
     row.provider === "anthropic"
       ? new ClaudeProvider(apiKey, undefined, { enforceAccessDeadline: false })
       : new OpenAIProvider(apiKey),
-    row.status !== "active" || row.lastError !== undefined,
+    row.status !== "active" || row.lastError !== undefined
+      ? { keyIv: row.iv }
+      : undefined,
   );
 }
 
@@ -214,6 +223,14 @@ export async function resolveGenerationProvider(
     if (action?.aiKeySource === "user")
       throw new UserApiKeyError("removed", "anthropic");
     return getDefaultAiModel();
+  }
+  const encryption = await ctx.runQuery(
+    internal.providerApiKeys.internalQuery.getEncryptionState,
+    {},
+  );
+  if (!encryption.ok) {
+    logMissingEncryptionKeyOnce();
+    throw new UserApiKeyError("service_unavailable", rows[0].provider);
   }
   const now = Date.now();
   const leaves = new Map<KeyProvider, AiProvider>();

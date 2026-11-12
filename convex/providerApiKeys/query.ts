@@ -1,6 +1,6 @@
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { query } from "../_generated/server";
-import { currentEncryptionKeyId } from "./crypto";
+import { readEncryptionState } from "./encryptionState";
 
 export const list = query({
   args: {},
@@ -11,13 +11,18 @@ export const list = query({
       .query("providerApiKeys")
       .withIndex("by_user_and_provider", (q) => q.eq("userId", userId))
       .collect();
-    const keyId = rows.length > 0 ? await currentEncryptionKeyId() : null;
-    // A missing server key is a configuration problem, not the user's.
-    const serviceUnavailable = rows.length > 0 && keyId === null;
+    const state = rows.length > 0 ? await readEncryptionState(ctx) : null;
+    // A missing or wrong server key is a configuration problem, not the
+    // user's, so keys are not reported as unreadable then.
+    const serviceUnavailable = state !== null && !state.ok;
     return rows.map((row) => ({
       serviceUnavailable,
       // False when the server can no longer decrypt this key.
-      readable: serviceUnavailable || row.encryptionKeyId === keyId,
+      readable:
+        serviceUnavailable ||
+        (state?.ok === true &&
+          row.encryptionKeyId === state.keyId &&
+          row.unreadableAt === undefined),
       provider: row.provider,
       last4: row.last4,
       status: row.status,

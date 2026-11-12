@@ -95,9 +95,14 @@ export const upsert = internalMutation({
       status: "active" as const,
       lastValidatedAt: now,
       lastError: undefined,
-      unreadableNotifiedAt: undefined,
+      unreadableAt: undefined,
       updatedAt: now,
     };
+    if (!(await ctx.db.query("providerKeyEncryptionState").first()))
+      await ctx.db.insert("providerKeyEncryptionState", {
+        expectedKeyId: args.encryptionKeyId,
+        createdAt: now,
+      });
     if (existing) await ctx.db.patch(existing._id, fields);
     else
       await ctx.db.insert("providerApiKeys", {
@@ -167,7 +172,7 @@ export const markValidated = internalMutation({
     await ctx.db.patch(row._id, {
       status: "active",
       lastError: undefined,
-      unreadableNotifiedAt: undefined,
+      unreadableAt: undefined,
       lastValidatedAt: now,
       updatedAt: now,
     });
@@ -184,20 +189,28 @@ export const noteUnreadableKey = internalMutation({
         q.eq("userId", args.userId).eq("provider", args.provider),
       )
       .unique();
-    if (!row || row.unreadableNotifiedAt !== undefined) return;
+    if (!row || row.unreadableAt !== undefined) return;
     await notifyProviderKeyFailure(
       ctx,
       args.userId,
       args.provider,
       "unreadable",
     );
-    await ctx.db.patch(row._id, { unreadableNotifiedAt: Date.now() });
+    await ctx.db.patch(row._id, { unreadableAt: Date.now() });
   },
 });
 
 /** A request on the key just worked: clear a stale failure, once. */
 export const markKeyWorking = internalMutation({
-  args: { userId: v.id("users"), provider: providerValidator },
+  args: {
+    userId: v.id("users"),
+    provider: providerValidator,
+    // The saved key the request used (its iv changes on every save) and
+    // when the request started, so a late success cannot hide a newer
+    // failure or a replaced key.
+    keyIv: v.string(),
+    requestStartedAt: v.number(),
+  },
   handler: async (ctx, args) => {
     const row = await ctx.db
       .query("providerApiKeys")
@@ -208,6 +221,8 @@ export const markKeyWorking = internalMutation({
     if (!row || (row.status === "active" && row.lastError === undefined))
       return;
     if (row.status === "invalid") return;
+    if (row.iv !== args.keyIv) return;
+    if ((row.lastError?.at ?? 0) >= args.requestStartedAt) return;
     const now = Date.now();
     await ctx.db.patch(row._id, {
       status: "active",
