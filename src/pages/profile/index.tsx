@@ -9,6 +9,7 @@ import { CreditCard, Calendar, Activity, Settings } from "lucide-react";
 import { SiGithub } from "@icons-pack/react-simple-icons";
 import { useTranslation } from "react-i18next";
 import { cn } from "../../utils/cn";
+import { ProviderKeysSection } from "./ProviderKeysSection";
 import {
   calculateTokenAvailability,
   getUtcMonthlyPeriod,
@@ -360,6 +361,8 @@ export function ProfilePage() {
             </div>
           )}
         </section>
+
+        <ProviderKeysSection />
 
         {/* Connected Repositories */}
         <section>

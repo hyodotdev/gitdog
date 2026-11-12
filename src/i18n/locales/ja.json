@@ -544,6 +544,11 @@
       "button": "プランを見る",
       "inlineTitle": "より多い月間枠が必要ですか？",
       "inlineDescription": "Proには毎月2.4Mトークンが含まれます。追加利用にはプリペイドトークンパックが必要です。"
+    },
+    "userKey": {
+      "title": "自分の API キー",
+      "description": "今期間、自分のキーで {{count}} 件のリクエスト、プロバイダー価格で約 {{cost}}。上限には含まれません。",
+      "repositoryTokens": "+ 自分の API キーで {{tokens}}"
     }
   },
   "profile": {
@@ -569,6 +574,32 @@
       "title": "接続されたリポジトリ",
       "totalRepositories": "合計リポジトリ",
       "active": "{{count}}アクティブ"
+    },
+    "providerKeys": {
+      "title": "自分の AI プロバイダーキー",
+      "description": "Anthropic または OpenAI の API キーを追加すると、自分が所有するリポジトリの Issue・Discussion・プルリクエストの処理をそのキーで実行します。この利用分はプロバイダーから直接請求され、Gitdog のトークン上限には含まれません。",
+      "note": "まず Claude を使い、Claude が使えないかクレジットがない場合は OpenAI を使います。保存したキーが失敗した場合、Gitdog のキーには切り替えず停止します。リポジトリ検索の埋め込みは引き続き Gitdog の含まれるトークンを使い、尽きるとキーワード検索に切り替わります。キーは暗号化して保存され、再表示されません。",
+      "inputLabel": "{{provider}} API キー",
+      "save": "キーを保存",
+      "replace": "キーを置き換え",
+      "remove": "削除",
+      "checkAgain": "再確認",
+      "savedKey": "末尾 {{last4}} のキー",
+      "lastChecked": "最終確認 {{date}}",
+      "status": {
+        "active": "有効",
+        "invalid": "拒否",
+        "out_of_credit": "クレジット不足",
+        "notSet": "未設定"
+      },
+      "errors": {
+        "format": "{{provider}} の API キーの形式ではありません。",
+        "rejected": "{{provider}} がこの API キーを拒否しました。",
+        "noModelAccess": "この {{provider}} API キーでは Gitdog が使うモデルにアクセスできません。",
+        "throttled": "数秒待ってからもう一度お試しください。",
+        "reenter": "この API キーをもう一度入力してください。",
+        "unavailable": "{{provider}} が現在この API キーを確認できません。しばらくしてからお試しください。"
+      }
     }
   },
   "footer": {

@@ -1311,6 +1311,10 @@ export function createProgram(
         throw new Error(
           "Use keys create to issue API keys securely into a private file.",
         );
+      if (operation.path === "providerApiKeys/action:save")
+        throw new Error(
+          "Add AI provider keys in Gitdog settings so the key is never echoed or kept in shell history.",
+        );
       const data = await jsonArguments(text(opts.data) ?? "{}");
       if (operation.kind !== "query") {
         if (!ui.json) ui.output({ operation: operation.path, arguments: data });

@@ -544,6 +544,11 @@
       "button": "플랜 보기",
       "inlineTitle": "더 높은 월간 한도가 필요하신가요?",
       "inlineDescription": "Pro는 매월 2.4M 토큰을 포함합니다. 추가 사용에는 선불 토큰 팩이 필요합니다."
+    },
+    "userKey": {
+      "title": "내 API 키",
+      "description": "이번 기간 내 키로 {{count}}건 요청, 제공자 가격 기준 약 {{cost}}. 한도에 포함되지 않습니다.",
+      "repositoryTokens": "+ 내 API 키 {{tokens}}"
     }
   },
   "profile": {
@@ -569,6 +574,32 @@
       "title": "연결된 저장소",
       "totalRepositories": "총 저장소",
       "active": "{{count}}개 활성"
+    },
+    "providerKeys": {
+      "title": "내 AI 제공자 키",
+      "description": "Anthropic 또는 OpenAI API 키를 직접 추가하면, 내가 소유한 레포지토리의 이슈·디스커션·PR 작업을 그 키로 실행합니다. 이 사용량은 제공자에게 직접 청구되며 Gitdog 토큰 한도에 포함되지 않습니다.",
+      "note": "Claude를 먼저 사용하고, Claude를 쓸 수 없거나 크레딧이 없으면 OpenAI를 사용합니다. 저장한 키가 실패하면 Gitdog 키로 바꾸지 않고 중단합니다. 레포지토리 검색용 임베딩은 계속 Gitdog 포함 토큰을 쓰며, 소진되면 키워드 검색으로 전환됩니다. 키는 암호화되어 저장되고 다시 표시되지 않습니다.",
+      "inputLabel": "{{provider}} API 키",
+      "save": "키 저장",
+      "replace": "키 교체",
+      "remove": "삭제",
+      "checkAgain": "다시 확인",
+      "savedKey": "끝자리 {{last4}}",
+      "lastChecked": "마지막 확인 {{date}}",
+      "status": {
+        "active": "사용 중",
+        "invalid": "거부됨",
+        "out_of_credit": "크레딧 없음",
+        "notSet": "설정 안 됨"
+      },
+      "errors": {
+        "format": "{{provider}} API 키 형식이 아닙니다.",
+        "rejected": "{{provider}}가 이 API 키를 거부했습니다.",
+        "noModelAccess": "이 {{provider}} API 키로는 Gitdog가 사용하는 모델에 접근할 수 없습니다.",
+        "throttled": "몇 초 후에 다시 시도해 주세요.",
+        "reenter": "이 API 키를 다시 입력해 주세요.",
+        "unavailable": "{{provider}}에서 지금 이 API 키를 확인할 수 없습니다. 잠시 후 다시 시도해 주세요."
+      }
     }
   },
   "footer": {
