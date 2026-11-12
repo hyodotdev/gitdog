@@ -180,7 +180,7 @@ async function userKeyLeaf(
     try {
       await ctx.runMutation(
         internal.providerApiKeys.internalMutation.noteUnreadableKey,
-        { userId: row.userId, provider: row.provider },
+        { userId: row.userId, provider: row.provider, keyIv: row.iv },
       );
     } catch {
       /* Best effort: the request still fails with an actionable error. */

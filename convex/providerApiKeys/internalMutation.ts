@@ -187,7 +187,13 @@ export const markValidated = internalMutation({
 
 /** Tell the owner once that a saved key can no longer be decrypted. */
 export const noteUnreadableKey = internalMutation({
-  args: { userId: v.id("users"), provider: providerValidator },
+  args: {
+    userId: v.id("users"),
+    provider: providerValidator,
+    // The saved key that failed; a report about a key since replaced is
+    // ignored.
+    keyIv: v.string(),
+  },
   handler: async (ctx, args) => {
     const row = await ctx.db
       .query("providerApiKeys")
@@ -195,7 +201,7 @@ export const noteUnreadableKey = internalMutation({
         q.eq("userId", args.userId).eq("provider", args.provider),
       )
       .unique();
-    if (!row || row.unreadableAt !== undefined) return;
+    if (!row || row.unreadableAt !== undefined || row.iv !== args.keyIv) return;
     await notifyProviderKeyFailure(
       ctx,
       args.userId,

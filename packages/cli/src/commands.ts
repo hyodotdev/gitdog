@@ -522,19 +522,33 @@ export function createProgram(
           last4: string;
           status: string;
           readable?: boolean;
+          serviceUnavailable?: boolean;
           lastValidatedAt: number;
           lastErrorCode: string | null;
         }>
       >("query", "providerApiKeys/query:list");
-      ui.output(
-        keys.map((key) => ({
-          provider: key.provider,
-          key: `…${key.last4}`,
-          status: key.readable === false ? "unreadable" : key.status,
-          lastChecked: new Date(key.lastValidatedAt).toISOString(),
-          lastError: key.lastErrorCode,
-        })),
-      );
+      const rows = keys.map((key) => ({
+        provider: key.provider,
+        key: `…${key.last4}`,
+        status: key.serviceUnavailable
+          ? "checks_unavailable"
+          : key.readable === false
+            ? "unreadable"
+            : key.status,
+        lastChecked: new Date(key.lastValidatedAt).toISOString(),
+        lastError: key.lastErrorCode,
+      }));
+      // The generic renderer only keeps its preferred columns, which would
+      // drop provider, key and check times.
+      if (ui.json || rows.length === 0) ui.output(rows);
+      else
+        ui.table(rows, [
+          "provider",
+          "key",
+          "status",
+          "lastChecked",
+          "lastError",
+        ]);
     },
   );
   command(

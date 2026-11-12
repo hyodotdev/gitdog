@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router";
 import { api } from "../../convex/_generated/api";
 import { cn } from "../utils/cn";
+import { summarizeProviderKeys } from "../utils/providerKeyState";
 
 /**
  * What a free account does after the trial: add its own provider key or go
@@ -13,10 +14,9 @@ export function TrialNextStep({ tokensLeft }: { tokensLeft: number }) {
   const navigate = useNavigate();
   const keys = useQuery(api.providerApiKeys.query.list);
   if (keys === undefined) return null;
-  const hasUsableKey = keys.some(
-    (key) => key.readable && key.status === "active",
-  );
-  const exhausted = tokensLeft <= 0 && !hasUsableKey;
+  const { keyChecksUnavailable, activeKey } = summarizeProviderKeys(keys);
+  const hasUsableKey = activeKey !== undefined;
+  const exhausted = tokensLeft <= 0 && !hasUsableKey && !keyChecksUnavailable;
 
   const addKey = () => navigate("/profile#ai-keys");
   return (
@@ -29,11 +29,13 @@ export function TrialNextStep({ tokensLeft }: { tokensLeft: number }) {
       )}
     >
       <h3 className={cn("text-lg font-bold mb-2")}>
-        {exhausted
-          ? t("trial.exhaustedTitle")
-          : hasUsableKey
-            ? t("trial.usingKeyTitle")
-            : t("trial.nextTitle")}
+        {keyChecksUnavailable
+          ? t("trial.keyChecksUnavailableTitle")
+          : exhausted
+            ? t("trial.exhaustedTitle")
+            : hasUsableKey
+              ? t("trial.usingKeyTitle")
+              : t("trial.nextTitle")}
       </h3>
       <p
         className={cn(
@@ -41,11 +43,13 @@ export function TrialNextStep({ tokensLeft }: { tokensLeft: number }) {
           exhausted ? "opacity-80" : "text-gray-600 dark:text-gray-400",
         )}
       >
-        {exhausted
-          ? t("trial.exhaustedBody")
-          : hasUsableKey
-            ? t("trial.usingKeyBody")
-            : t("trial.nextBody")}
+        {keyChecksUnavailable
+          ? t("trial.keyChecksUnavailableBody")
+          : exhausted
+            ? t("trial.exhaustedBody")
+            : hasUsableKey
+              ? t("trial.usingKeyBody")
+              : t("trial.nextBody")}
       </p>
       <div className={cn("flex flex-wrap gap-2")}>
         <button

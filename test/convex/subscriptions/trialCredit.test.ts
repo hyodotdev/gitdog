@@ -712,3 +712,77 @@ describe("former Pro owners", () => {
     ).resolves.toEqual([expect.objectContaining({ userId: fixture.userId })]);
   });
 });
+
+describe("staged embedding charges in chat quota", () => {
+  it("keeps tokens owed for a staged embedding outcome out of new chat reservations", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await insertTicketFixture(t, { trialUsed: true });
+    const now = Date.now();
+    await t.run(async (ctx) => {
+      const date = new Date(now);
+      const subscriptionId = await ctx.db.insert("subscriptions", {
+        userId: fixture.userId,
+        plan: "free",
+        status: "active",
+        includedTokens: 0,
+        purchasedTokens: 5_000,
+        serviceFeeRate: PRICING.PLATFORM_FEE_FREE,
+        periodStart: Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1),
+        periodEnd: Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1),
+        createdAt: now,
+        updatedAt: now,
+      });
+      // Exhaust the free allowance so only the 5,000 wallet tokens remain.
+      await ctx.db.insert("tokenUsage", {
+        purchasedTokensDebited: 0,
+        userId: fixture.userId,
+        repositoryId: fixture.repositoryId,
+        usageType: "chat",
+        inputTokens: getFreeIncludedTokens(now),
+        outputTokens: 0,
+        totalTokens: getFreeIncludedTokens(now),
+        inputCostCents: 0,
+        outputCostCents: 0,
+        baseCostCents: 0,
+        serviceFeeCents: 0,
+        totalCostCents: 0,
+        model: GENERATION_MODELS.anthropic.modelId,
+        provider: "anthropic",
+        serviceFeeRate: PRICING.PLATFORM_FEE_FREE,
+        createdAt: now,
+      });
+      await ctx.db.insert("embeddingUsageReservations", {
+        reservationKey: "staged-before-retirement",
+        attemptToken: "1",
+        userId: fixture.userId,
+        repositoryId: fixture.repositoryId,
+        operation: "RAG search",
+        provider: "openai",
+        model: "text-embedding-3-small",
+        inputCount: 1,
+        providerTokenLimit: 1_000,
+        reservedTokens: 2_000,
+        subscriptionId,
+        entitlementPlan: "free",
+        includedTokens: 0,
+        serviceFeeRate: 0.25,
+        quotaPeriodStart: now - 1_000,
+        quotaPeriodEnd: now + 60_000,
+        status: "pending",
+        providerStartedAt: now - 1_000,
+        settlementState: "staged",
+        settlementTokens: 900,
+        expiresAt: now + 60_000,
+        createdAt: now,
+        updatedAt: now,
+      });
+    });
+    // 4,000 tokens fit the wallet alone but not with the 2,000 still owed.
+    await expect(
+      t.mutation(
+        internal._ai.chatBilling.reserveChatUsage,
+        reservationArgs(fixture, "chat-over-owed"),
+      ),
+    ).resolves.toEqual({ allowed: false, reason: "limit_reached" });
+  });
+});

@@ -181,7 +181,7 @@ export const revalidate = action({
       // it is, and the key is flagged so the owner sees it.
       await ctx.runMutation(
         internal.providerApiKeys.internalMutation.noteUnreadableKey,
-        { userId, provider: args.provider },
+        { userId, provider: args.provider, keyIv: row.iv },
       );
       keyError(
         "BAD_REQUEST",

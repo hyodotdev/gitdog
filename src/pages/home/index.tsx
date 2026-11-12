@@ -8,6 +8,7 @@ import { SiGithub } from "@icons-pack/react-simple-icons";
 import { LoadingIndicator } from "../../components/uis/LoadingIndicator";
 import { useTranslation } from "react-i18next";
 import { LandingPage } from "./LandingPage";
+import { summarizeProviderKeys } from "../../utils/providerKeyState";
 import { RepositoryIndexingProgress } from "./RepositoryIndexingProgress";
 import {
   FAQPageJsonLd,
@@ -23,9 +24,8 @@ export function HomePage() {
     api.providerApiKeys.query.list,
     currentUser ? {} : "skip",
   );
-  const activeKey = providerKeys?.find(
-    (key) => key.readable && key.status === "active",
-  );
+  const { keyChecksUnavailable, activeKey } =
+    summarizeProviderKeys(providerKeys);
   const navigate = useNavigate();
 
   // Show loading while checking auth
@@ -137,14 +137,16 @@ export function HomePage() {
                 className="flex items-center gap-2 text-gray-600 underline hover:no-underline dark:text-gray-400"
               >
                 <KeyRound size={16} aria-hidden="true" />
-                {activeKey
-                  ? t("home.workspace.usingOwnKey", {
-                      provider:
-                        activeKey.provider === "anthropic"
-                          ? "Anthropic"
-                          : "OpenAI",
-                    })
-                  : t("trial.addKey")}
+                {keyChecksUnavailable
+                  ? t("trial.keyChecksUnavailableTitle")
+                  : activeKey
+                    ? t("home.workspace.usingOwnKey", {
+                        provider:
+                          activeKey.provider === "anthropic"
+                            ? "Anthropic"
+                            : "OpenAI",
+                      })
+                    : t("trial.addKey")}
               </Link>
             </div>
           </div>

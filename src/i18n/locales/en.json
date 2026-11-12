@@ -1301,6 +1301,8 @@
     "manageKeys": "Manage your keys",
     "viewPro": "View Pro",
     "monthlyUntil": "Plus {{tokens}} free monthly tokens until {{date}}. Trial tokens never reset.",
-    "prepaidLeft": "Plus {{tokens}} prepaid tokens."
+    "prepaidLeft": "Plus {{tokens}} prepaid tokens.",
+    "keyChecksUnavailableTitle": "Key checks are temporarily unavailable",
+    "keyChecksUnavailableBody": "Your saved API keys can't be used right now because of a temporary Gitdog server problem. Nothing is wrong with your keys; work will resume once it is fixed."
   }
 }

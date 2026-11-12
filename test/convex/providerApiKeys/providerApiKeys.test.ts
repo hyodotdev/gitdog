@@ -414,10 +414,14 @@ describe("provider key notice transitions", () => {
       provider: "openai",
     });
     await fail("invalid");
-    const unreadable = () =>
+    const savedIv = async () =>
+      (await t.run(async (ctx) => ctx.db.query("providerApiKeys").collect()))[0]
+        .iv;
+    const unreadable = async (keyIv?: string) =>
       t.mutation(internal.providerApiKeys.internalMutation.noteUnreadableKey, {
         userId,
         provider: "openai",
+        keyIv: keyIv ?? (await savedIv()),
       });
     await unreadable();
     await unreadable();
@@ -432,13 +436,20 @@ describe("provider key notice transitions", () => {
       { provider: "openai", reason: "unreadable" },
     ]);
 
-    // Saving the key again re-arms the unreadable notice.
+    // Saving the key again re-arms the unreadable notice, and a late report
+    // about the replaced key is ignored.
+    const replacedIv = await savedIv();
     await t.mutation(internal.providerApiKeys.internalMutation.upsert, {
       userId,
       provider: "openai",
       ...(await encryptProviderKey(userId, "openai", OPENAI_KEY)),
       last4: OPENAI_KEY.slice(-4),
     });
+    await unreadable(replacedIv);
+    expect(
+      (await t.run(async (ctx) => ctx.db.query("providerApiKeys").collect()))[0]
+        .unreadableAt,
+    ).toBeUndefined();
     await unreadable();
     expect(
       (await t.run(async (ctx) => ctx.db.query("notifications").collect()))

@@ -1293,6 +1293,8 @@
     "manageKeys": "キーを管理",
     "viewPro": "Proを見る",
     "monthlyUntil": "{{date}}まで月間無料トークン{{tokens}}も利用できます。体験トークンはリセットされません。",
-    "prepaidLeft": "プリペイドトークン{{tokens}}も利用できます。"
+    "prepaidLeft": "プリペイドトークン{{tokens}}も利用できます。",
+    "keyChecksUnavailableTitle": "現在キーを確認できません",
+    "keyChecksUnavailableBody": "Gitdogサーバーの一時的な問題により、保存済みのAPIキーを現在使用できません。キー自体に問題はなく、解消されると処理が再開されます。"
   }
 }

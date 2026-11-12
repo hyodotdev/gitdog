@@ -1285,6 +1285,8 @@
     "manageKeys": "내 키 관리",
     "viewPro": "Pro 보기",
     "monthlyUntil": "{{date}}까지 월 무료 토큰 {{tokens}}도 남아 있습니다. 체험 토큰은 초기화되지 않습니다.",
-    "prepaidLeft": "선불 토큰 {{tokens}}도 남아 있습니다."
+    "prepaidLeft": "선불 토큰 {{tokens}}도 남아 있습니다.",
+    "keyChecksUnavailableTitle": "지금은 키를 확인할 수 없습니다",
+    "keyChecksUnavailableBody": "Gitdog 서버의 일시적인 문제로 저장된 API 키를 지금 사용할 수 없습니다. 키에는 문제가 없으며, 해결되면 작업이 다시 진행됩니다."
   }
 }

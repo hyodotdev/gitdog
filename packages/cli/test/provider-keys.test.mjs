@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createProgram } from "../dist/commands.js";
 import { CaptureUi } from "./helpers.mjs";
-import { singleSecretLine } from "../dist/ui.js";
+import { Ui, singleSecretLine } from "../dist/ui.js";
 
 const SECRET = `sk-proj-${"s".repeat(40)}`;
 
@@ -215,4 +215,43 @@ test("piped keys must be a single line", () => {
     () => singleSecretLine(`${SECRET}\nsecond line`),
     /exactly one line/,
   );
+});
+
+test("provider-keys list prints every column for people", async () => {
+  class TableUi extends Ui {
+    tables = [];
+    constructor() {
+      super(false);
+    }
+    table(rows, keys) {
+      this.tables.push({ rows: structuredClone(rows), keys });
+    }
+  }
+  const ui = new TableUi();
+  const api = recordingApi(() => [
+    {
+      provider: "openai",
+      last4: "wxyz",
+      status: "active",
+      readable: true,
+      serviceUnavailable: true,
+      lastValidatedAt: Date.UTC(2026, 10, 2),
+      lastErrorCode: null,
+    },
+  ]);
+  await run(api, ui, ["provider-keys", "list"]);
+  assert.deepEqual(ui.tables, [
+    {
+      keys: ["provider", "key", "status", "lastChecked", "lastError"],
+      rows: [
+        {
+          provider: "openai",
+          key: "…wxyz",
+          status: "checks_unavailable",
+          lastChecked: "2026-11-02T00:00:00.000Z",
+          lastError: null,
+        },
+      ],
+    },
+  ]);
 });

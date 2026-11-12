@@ -529,7 +529,10 @@ async function checkChatQuota(
     return { allowed: false, reason: "invalid_subscription_balance" };
   }
 
-  const [chatPending, chatAmbiguous] = await Promise.all([
+  // A staged, known-billed embedding outcome from before embeddings were
+  // retired still has to be charged, so its hold keeps counting; other
+  // retired embedding holds do not.
+  const [chatPending, chatAmbiguous, ...stagedEmbedding] = await Promise.all([
     ctx.db
       .query("chatUsageReservations")
       .withIndex("by_user_key_source_and_status", (q) =>
@@ -548,15 +551,31 @@ async function checkChatQuota(
           .eq("status", "ambiguous"),
       )
       .take(CHAT_RESERVATION_CLEANUP_LIMIT + 1),
+    ...(["pending", "ambiguous"] as const).map((status) =>
+      ctx.db
+        .query("embeddingUsageReservations")
+        .withIndex("by_user_status_settlement_and_expiration", (q) =>
+          q
+            .eq("userId", args.userId)
+            .eq("status", status)
+            .eq("settlementState", "staged"),
+        )
+        .take(CHAT_RESERVATION_CLEANUP_LIMIT + 1),
+    ),
   ]);
   if (
     chatAmbiguous.length > CHAT_RESERVATION_CLEANUP_LIMIT ||
-    chatPending.length > MAX_COLLECT_LIMIT
+    chatPending.length > MAX_COLLECT_LIMIT ||
+    stagedEmbedding.some((rows) => rows.length > CHAT_RESERVATION_CLEANUP_LIMIT)
   ) {
     return { allowed: false, reason: "reservation_history_too_large" };
   }
   let reservedTokens = 0;
-  for (const reservation of [...chatPending, ...chatAmbiguous]) {
+  for (const reservation of [
+    ...chatPending,
+    ...chatAmbiguous,
+    ...stagedEmbedding.flat(),
+  ]) {
     reservedTokens += reservation.reservedTokens;
     if (!Number.isSafeInteger(reservedTokens)) {
       return { allowed: false, reason: "invalid_subscription_balance" };
