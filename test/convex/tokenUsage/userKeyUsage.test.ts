@@ -91,6 +91,13 @@ async function insertFixture(
   return await t.run(async (ctx) => {
     const now = Date.now();
     const userId = await ctx.db.insert("users", {});
+    // The one-time trial is already used, so quota checks see only the
+    // allowance each test sets up.
+    await ctx.db.insert("trialCreditGrants", {
+      userId,
+      tokens: 100_000,
+      grantedAt: 1,
+    });
     const repositoryId = await ctx.db.insert("repositories", {
       indexSyncPending: false,
       indexVersion: 1,
@@ -592,6 +599,21 @@ describe("generation on the owner's own provider key", () => {
     expect(CHAT_RESERVATION_TTL_MS).toBeGreaterThan(0);
   });
 
+  it("keeps a not-pending batched review a busy refusal, not a key error", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await insertFixture(t);
+    const reviewAction = await insertAction(t, fixture, "review");
+    await t.run(async (ctx) =>
+      ctx.db.patch(reviewAction, { status: "failed" }),
+    );
+    const result = await t.mutation(
+      internal.pullRequests.internalMutation.reserveBatchedReviewQuota,
+      { actionId: reviewAction, batches: 1, userKey: true },
+    );
+    expect(result).toMatchObject({ reserved: false, reason: "busy" });
+    expect(result).not.toHaveProperty("userKeyUnavailable");
+  });
+
   it("starts batched reviews on the owner's key without a quota hold", async () => {
     const t = convexTest(schema, modules);
     const fixture = await insertFixture(t);
@@ -606,7 +628,11 @@ describe("generation on the owner's own provider key", () => {
           userKey: true,
         },
       ),
-    ).resolves.toMatchObject({ reserved: false, reason: "unverified" });
+    ).resolves.toMatchObject({
+      reserved: false,
+      reason: "unverified",
+      userKeyUnavailable: true,
+    });
     await saveKey(t, fixture.userId, "openai", OPENAI_KEY);
     await expect(
       t.mutation(

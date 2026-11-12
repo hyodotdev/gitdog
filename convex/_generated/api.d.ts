@@ -137,6 +137,7 @@ import type * as repositoryMembers_mutation from "../repositoryMembers/mutation.
 import type * as repositoryMembers_query from "../repositoryMembers/query.js";
 import type * as subscriptions_action from "../subscriptions/action.js";
 import type * as subscriptions_billingBoundaries from "../subscriptions/billingBoundaries.js";
+import type * as subscriptions_credit from "../subscriptions/credit.js";
 import type * as subscriptions_entitlement from "../subscriptions/entitlement.js";
 import type * as subscriptions_internalMutation from "../subscriptions/internalMutation.js";
 import type * as subscriptions_internalQuery from "../subscriptions/internalQuery.js";
@@ -302,6 +303,7 @@ declare const fullApi: ApiFromModules<{
   "repositoryMembers/query": typeof repositoryMembers_query;
   "subscriptions/action": typeof subscriptions_action;
   "subscriptions/billingBoundaries": typeof subscriptions_billingBoundaries;
+  "subscriptions/credit": typeof subscriptions_credit;
   "subscriptions/entitlement": typeof subscriptions_entitlement;
   "subscriptions/internalMutation": typeof subscriptions_internalMutation;
   "subscriptions/internalQuery": typeof subscriptions_internalQuery;

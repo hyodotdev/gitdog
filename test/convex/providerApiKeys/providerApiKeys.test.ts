@@ -381,3 +381,60 @@ describe("provider key failure notices", () => {
     );
   });
 });
+
+describe("provider key notice transitions", () => {
+  it("notifies on every status change, again after a successful check, and once for an unreadable key", async () => {
+    const t = convexTest(schema, modules);
+    const { userId, as } = await signedIn(t);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("{}", { status: 200 }),
+    );
+    await as.action(api.providerApiKeys.action.save, {
+      provider: "openai",
+      apiKey: OPENAI_KEY,
+    });
+    const fail = (code: "invalid" | "out_of_credit") =>
+      t.mutation(internal.providerApiKeys.internalMutation.recordKeyFailure, {
+        userId,
+        provider: "openai",
+        code,
+      });
+    await fail("invalid");
+    await fail("out_of_credit");
+    await t.mutation(internal.providerApiKeys.internalMutation.markValidated, {
+      userId,
+      provider: "openai",
+    });
+    await fail("invalid");
+    const unreadable = () =>
+      t.mutation(internal.providerApiKeys.internalMutation.noteUnreadableKey, {
+        userId,
+        provider: "openai",
+      });
+    await unreadable();
+    await unreadable();
+
+    const notices = await t.run(async (ctx) =>
+      ctx.db.query("notifications").collect(),
+    );
+    expect(notices.map((notice) => notice.providerKey)).toEqual([
+      { provider: "openai", reason: "invalid" },
+      { provider: "openai", reason: "out_of_credit" },
+      { provider: "openai", reason: "invalid" },
+      { provider: "openai", reason: "unreadable" },
+    ]);
+
+    // Saving the key again re-arms the unreadable notice.
+    await t.mutation(internal.providerApiKeys.internalMutation.upsert, {
+      userId,
+      provider: "openai",
+      ...(await encryptProviderKey(userId, "openai", OPENAI_KEY)),
+      last4: OPENAI_KEY.slice(-4),
+    });
+    await unreadable();
+    expect(
+      (await t.run(async (ctx) => ctx.db.query("notifications").collect()))
+        .length,
+    ).toBe(5);
+  });
+});

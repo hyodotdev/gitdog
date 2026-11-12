@@ -429,7 +429,7 @@ test("generic API calls refuse to send an AI provider key", async () => {
       ],
       { from: "user" },
     ),
-    /Gitdog settings/,
+    /provider-keys set/,
   );
   assert.equal(called, false);
 });

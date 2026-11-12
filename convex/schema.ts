@@ -35,6 +35,8 @@ const applicationTables = {
       v.literal("out_of_credit"),
     ),
     lastValidatedAt: v.number(),
+    // Set once the owner was told the key can no longer be decrypted.
+    unreadableNotifiedAt: v.optional(v.number()),
     lastError: v.optional(
       v.object({
         code: v.union(
@@ -1602,6 +1604,17 @@ const applicationTables = {
       v.literal("invitation_accepted"),
       v.literal("invitation_rejected"),
       v.literal("provider_key_failed"),
+    ),
+    // Structured details so the UI can translate the notice.
+    providerKey: v.optional(
+      v.object({
+        provider: v.union(v.literal("anthropic"), v.literal("openai")),
+        reason: v.union(
+          v.literal("invalid"),
+          v.literal("out_of_credit"),
+          v.literal("unreadable"),
+        ),
+      }),
     ),
     invitationId: v.optional(v.id("invitations")),
     repositoryId: v.optional(v.id("repositories")),

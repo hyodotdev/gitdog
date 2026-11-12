@@ -309,7 +309,7 @@ export const generate = internalAction({
               "unverified",
             );
           });
-        if (!quota.reserved && usesUserKey(rawAiProvider))
+        if (!quota.reserved && quota.userKeyUnavailable)
           throw new UserApiKeyError(
             "unavailable",
             rawAiProvider.providerId === "openai" ? "openai" : "anthropic",

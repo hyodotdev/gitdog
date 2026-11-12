@@ -565,7 +565,11 @@ export function createProgram(
         status: saved.status,
       });
     },
-  ).option("--stdin", "Read the key from standard input instead of a prompt");
+  )
+    .option("--stdin", "Read the key from standard input instead of a prompt")
+    // Unknown options such as --key=... reach the handler instead of
+    // Commander's error, which would print the value.
+    .allowUnknownOption(true);
   command(
     providerKeys,
     "check <provider>",
@@ -1465,7 +1469,7 @@ export function createProgram(
         );
       if (operation.path === "providerApiKeys/action:save")
         throw new Error(
-          "Add AI provider keys in Gitdog settings so the key is never echoed or kept in shell history.",
+          "Use npx gitdog@latest provider-keys set <anthropic|openai> so the key is never echoed or kept in shell history.",
         );
       const data = await jsonArguments(text(opts.data) ?? "{}");
       if (operation.kind !== "query") {

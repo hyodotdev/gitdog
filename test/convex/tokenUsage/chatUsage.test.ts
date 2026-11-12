@@ -83,6 +83,13 @@ async function insertFixture(t: ReturnType<typeof convexTest>): Promise<{
   return await t.run(async (ctx) => {
     const now = Date.now();
     const userId = await ctx.db.insert("users", {});
+    // The one-time trial is already used, so quota checks see only the
+    // allowance each test sets up.
+    await ctx.db.insert("trialCreditGrants", {
+      userId,
+      tokens: 100_000,
+      grantedAt: 1,
+    });
     const repositoryId = await ctx.db.insert("repositories", {
       indexSyncPending: false,
       indexVersion: 1,
@@ -305,6 +312,13 @@ async function insertAdminUser(
 ): Promise<Id<"users">> {
   return await t.run(async (ctx) => {
     const userId = await ctx.db.insert("users", {});
+    // The one-time trial is already used, so quota checks see only the
+    // allowance each test sets up.
+    await ctx.db.insert("trialCreditGrants", {
+      userId,
+      tokens: 100_000,
+      grantedAt: 1,
+    });
     const now = Date.now();
     await ctx.db.insert("userProfiles", {
       userId,
@@ -582,13 +596,18 @@ describe("AI chat usage reservations", () => {
       allowed: true,
       reservationKey: chat.reservationKey,
     });
-    // A pending embedding hold from before embeddings were retired still
-    // counts against the remaining balance.
+    // A pending embedding hold from before embeddings were retired no
+    // longer counts, so a chat reservation fills the remaining balance.
     await insertLegacyEmbeddingReservation(t, fixture, {
       reservationKey: "pro-prepaid-embedding-exact",
       status: "pending",
       reservedTokens: 40,
     });
+    const fill = reservationArgs(fixture, "pro-prepaid-chat-fill", 1, {
+      inputTokenLimit: 20,
+      outputTokenLimit: 20,
+    });
+    await expect(reserve(t, fill)).resolves.toMatchObject({ allowed: true });
 
     await expect(
       reserve(
@@ -618,6 +637,7 @@ describe("AI chat usage reservations", () => {
     expect(state.subscription?.purchasedTokens).toBe(100);
     expect(state.reservations).toEqual([
       expect.objectContaining({ reservedTokens: 60 }),
+      expect.objectContaining({ reservedTokens: 40 }),
     ]);
     expect(state.embeddingReservations).toEqual([
       expect.objectContaining({ reservedTokens: 40 }),
@@ -2899,7 +2919,7 @@ describe("AI chat usage reservations", () => {
     await expect(markStarted(t, waiting)).resolves.toBe(true);
   });
 
-  it("blocks a pending chat provider start while embedding usage is ambiguous", async () => {
+  it("does not block a chat provider start on a retired ambiguous embedding hold", async () => {
     const t = convexTest(schema, modules);
     const fixture = await insertFixture(t);
     const chat = reservationArgs(fixture, "chat-waiting-on-embedding", 1, {
@@ -2916,19 +2936,9 @@ describe("AI chat usage reservations", () => {
     });
 
     await expect(markStartResult(t, chat)).resolves.toEqual({
-      started: false,
-      reason: "unresolved_provider_usage",
+      started: true,
+      alreadyStarted: false,
     });
-    const waiting = await t.run(async (ctx) =>
-      ctx.db
-        .query("chatUsageReservations")
-        .withIndex("by_reservation_key", (q) =>
-          q.eq("reservationKey", chat.reservationKey),
-        )
-        .unique(),
-    );
-    expect(waiting).toMatchObject({ status: "pending" });
-    expect(waiting?.providerStartedAt).toBeUndefined();
   });
 
   it("allows only one provider-started AI request per account", async () => {

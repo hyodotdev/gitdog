@@ -641,6 +641,12 @@ export const processNewTicket = internalAction({
       }
     }
 
+    // A free owner who never opened the web app still gets the trial.
+    if (!replayAuthorized && !usesUserKey(rawAiProvider))
+      await ctx.runMutation(
+        internal.subscriptions.internalMutation.grantTrialCredit,
+        { userId: ticket.userId },
+      );
     // Replaying an already billed checkpoint spends no new quota, and a
     // request on the owner's own key spends none of Gitdog's.
     const canPerform =

@@ -1244,7 +1244,16 @@ describe("refund settlement", () => {
     async (status) => {
       const t = convexTest(schema, modules);
       const now = Date.now();
-      const userId = await t.run(async (ctx) => ctx.db.insert("users", {}));
+      const userId = await t.run(async (ctx) => {
+        const userId = await ctx.db.insert("users", {});
+        // The trial is already used, so the refund sees only paid tokens.
+        await ctx.db.insert("trialCreditGrants", {
+          userId,
+          tokens: 100_000,
+          grantedAt: 1,
+        });
+        return userId;
+      });
       const order = await tokenOrderArgs(
         userId,
         status === "pending" ? "8184" : "8185",
@@ -1288,15 +1297,41 @@ describe("refund settlement", () => {
           createdAt: now,
           updatedAt: now,
         });
-        await ctx.db.insert("embeddingUsageReservations", {
+        const ticketId = await ctx.db.insert("tickets", {
+          repositoryId,
+          userId,
+          githubRepo: "owner/repo",
+          ticketType: "issue",
+          githubNumber: 1,
+          githubTitle: "Issue",
+          aiInputVersion: 1,
+          status: "open",
+          createdAt: now,
+        });
+        const ticketActionId = await ctx.db.insert("ticketActions", {
+          ticketId,
+          actionType: "answer",
+          chatHistory: [],
+          proposalVersion: 0,
+          status: "pending",
+          createdAt: now,
+        });
+        await ctx.db.insert("chatUsageReservations", {
           reservationKey: `refund-${status}`,
           attemptToken: `attempt-${status}`,
           userId,
           repositoryId,
-          operation: "RAG search",
-          inputCount: 1,
-          providerTokenLimit: 100,
-          reservedTokens: 1,
+          ticketActionId,
+          requirePendingTicketAction: true,
+          ticketActionProposalVersion: 0,
+          generationKey: `refund-generation-${status}`,
+          operation: "answer",
+          model: "claude-sonnet-5-5",
+          provider: "anthropic",
+          requestFingerprint: "0".repeat(64),
+          inputTokenLimit: 1,
+          outputTokenLimit: 1,
+          reservedTokens: 2,
           entitlementPlan: "free",
           includedTokens: 100_000,
           serviceFeeRate: 0.25,
@@ -1340,7 +1375,7 @@ describe("refund settlement", () => {
           )
           .unique(),
         reservation: await ctx.db
-          .query("embeddingUsageReservations")
+          .query("chatUsageReservations")
           .withIndex("by_reservation_key", (q) =>
             q.eq("reservationKey", `refund-${status}`),
           )

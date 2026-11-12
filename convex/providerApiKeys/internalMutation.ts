@@ -1,5 +1,39 @@
 import { v } from "convex/values";
-import { internalMutation } from "../_generated/server";
+import type { Id } from "../_generated/dataModel";
+import { internalMutation, type MutationCtx } from "../_generated/server";
+
+const PROVIDER_NAMES = { anthropic: "Anthropic", openai: "OpenAI" } as const;
+const FALLBACK_NOTICES = {
+  invalid: (name: string) => ({
+    title: `${name} API key rejected`,
+    message: `${name} rejected your saved API key, so Gitdog paused work that uses it. Replace or remove it in your profile.`,
+  }),
+  out_of_credit: (name: string) => ({
+    title: `${name} API key out of credit`,
+    message: `Your ${name} API key is out of credit, so Gitdog paused work that uses it. Add credit or replace the key in your profile.`,
+  }),
+  unreadable: (name: string) => ({
+    title: `${name} API key needs to be entered again`,
+    message: `Gitdog can no longer read your saved ${name} API key. Enter it again in your profile.`,
+  }),
+};
+
+async function notifyProviderKeyFailure(
+  ctx: MutationCtx,
+  userId: Id<"users">,
+  provider: "anthropic" | "openai",
+  reason: "invalid" | "out_of_credit" | "unreadable",
+) {
+  await ctx.db.insert("notifications", {
+    userId,
+    type: "provider_key_failed",
+    providerKey: { provider, reason },
+    // English fallback; the app translates from providerKey.
+    ...FALLBACK_NOTICES[reason](PROVIDER_NAMES[provider]),
+    isRead: false,
+    createdAt: Date.now(),
+  });
+}
 
 export const PROVIDER_KEY_VALIDATION_WINDOW_MS = 10 * 60 * 1_000;
 export const PROVIDER_KEY_VALIDATION_LIMIT = 5;
@@ -61,6 +95,7 @@ export const upsert = internalMutation({
       status: "active" as const,
       lastValidatedAt: now,
       lastError: undefined,
+      unreadableNotifiedAt: undefined,
       updatedAt: now,
     };
     if (existing) await ctx.db.patch(existing._id, fields);
@@ -100,23 +135,16 @@ export const recordKeyFailure = internalMutation({
         ? args.code
         : row.status;
     // Notify once per transition, not once per failed request.
-    if (nextStatus !== row.status) {
-      const name = args.provider === "anthropic" ? "Anthropic" : "OpenAI";
-      await ctx.db.insert("notifications", {
-        userId: args.userId,
-        type: "provider_key_failed",
-        title:
-          nextStatus === "invalid"
-            ? `${name} API key rejected`
-            : `${name} API key out of credit`,
-        message:
-          nextStatus === "invalid"
-            ? `${name} rejected your saved API key, so Gitdog paused work that uses it. Replace or remove it in your profile.`
-            : `Your ${name} API key is out of credit, so Gitdog paused work that uses it. Add credit or replace the key in your profile.`,
-        isRead: false,
-        createdAt: now,
-      });
-    }
+    if (
+      nextStatus !== row.status &&
+      (nextStatus === "invalid" || nextStatus === "out_of_credit")
+    )
+      await notifyProviderKeyFailure(
+        ctx,
+        args.userId,
+        args.provider,
+        nextStatus,
+      );
     await ctx.db.patch(row._id, {
       status: nextStatus,
       lastError: { code: args.code, httpStatus: args.httpStatus, at: now },
@@ -139,8 +167,30 @@ export const markValidated = internalMutation({
     await ctx.db.patch(row._id, {
       status: "active",
       lastError: undefined,
+      unreadableNotifiedAt: undefined,
       lastValidatedAt: now,
       updatedAt: now,
     });
+  },
+});
+
+/** Tell the owner once that a saved key can no longer be decrypted. */
+export const noteUnreadableKey = internalMutation({
+  args: { userId: v.id("users"), provider: providerValidator },
+  handler: async (ctx, args) => {
+    const row = await ctx.db
+      .query("providerApiKeys")
+      .withIndex("by_user_and_provider", (q) =>
+        q.eq("userId", args.userId).eq("provider", args.provider),
+      )
+      .unique();
+    if (!row || row.unreadableNotifiedAt !== undefined) return;
+    await notifyProviderKeyFailure(
+      ctx,
+      args.userId,
+      args.provider,
+      "unreadable",
+    );
+    await ctx.db.patch(row._id, { unreadableNotifiedAt: Date.now() });
   },
 });

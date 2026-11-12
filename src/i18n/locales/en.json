@@ -202,7 +202,8 @@
       },
       "tokensPerMonth": "{{count, number}}k tokens/month",
       "prepaidTokens": "{{count, number}}k trial and prepaid tokens left",
-      "usingOwnKey": "Using your {{provider}} key"
+      "usingOwnKey": "Using your {{provider}} key",
+      "monthlyUntil": "{{count, number}}k free monthly tokens until Dec 1"
     }
   },
   "repositories": {
@@ -545,7 +546,7 @@
       "title": "Upgrade to Pro",
       "description": "Get 2.4M tokens included and priority processing with Pro subscription at $9.99/month",
       "button": "View plans",
-      "inlineTitle": "Need a higher monthly allowance?",
+      "inlineTitle": "Need more than your trial?",
       "inlineDescription": "Pro includes 2.4M tokens each month. Additional usage still requires prepaid token packs."
     },
     "userKey": {
@@ -701,8 +702,8 @@
     "title": "Upgrade Your Plan",
     "message": "Get 2.4M included tokens each month and priority processing with Pro",
     "limitReached": {
-      "title": "Monthly Limit Reached",
-      "message": "You've reached your token limit. Buy a token pack or upgrade to continue using AI automation."
+      "title": "Trial tokens used up",
+      "message": "You've used your available tokens. Add your own API key in your profile, buy a token pack or upgrade to Pro to continue."
     },
     "approachingLimit": {
       "title": "Approaching Limit",
@@ -832,7 +833,21 @@
   "notifications": {
     "title": "Notifications",
     "markAllRead": "Mark all as read",
-    "noNotifications": "No notifications"
+    "noNotifications": "No notifications",
+    "providerKey": {
+      "invalid": {
+        "title": "{{provider}} API key rejected",
+        "message": "{{provider}} rejected your saved API key, so Gitdog paused work that uses it. Replace or remove it in your profile."
+      },
+      "out_of_credit": {
+        "title": "{{provider}} API key out of credit",
+        "message": "Your {{provider}} API key is out of credit, so Gitdog paused work that uses it. Add credit or replace the key in your profile."
+      },
+      "unreadable": {
+        "title": "Enter your {{provider}} API key again",
+        "message": "Gitdog can no longer read your saved {{provider}} API key. Enter it again in your profile."
+      }
+    }
   },
   "notFound": {
     "title": "Page Not Found - Gitdog",
@@ -862,7 +877,7 @@
       "commentFailed": "Failed to add comment. Please check your permissions."
     },
     "tokenLimit": {
-      "limitReached": "Monthly token limit reached. Please upgrade your plan to continue using AI automation."
+      "limitReached": "Your available tokens are used up. Add your own API key in your profile, buy a token pack or upgrade to Pro to continue."
     },
     "generic": {
       "permissionDenied": "Permission denied. Please check your GitHub App permissions.",
@@ -1282,6 +1297,7 @@
     "usingKeyBody": "Issue, discussion and review work runs on your saved key and doesn't use your Gitdog tokens.",
     "addKey": "Add your own key",
     "manageKeys": "Manage your keys",
-    "viewPro": "View Pro"
+    "viewPro": "View Pro",
+    "monthlyUntil": "Plus {{tokens}} free monthly tokens until {{date}}. Trial tokens never reset."
   }
 }

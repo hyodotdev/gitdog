@@ -228,11 +228,25 @@ export const cleanupEmbeddingUsageReservations = internalMutation({
           .lte("expiresAt", now),
       )
       .take(USAGE_RESERVATION_CLEANUP_LIMIT);
+    // Nothing can finish an unstaged embedding call anymore, so it is
+    // released rather than left ambiguous. Staged outcomes settle through
+    // recoverStagedEmbeddingOutcomes.
     for (const reservation of expiredPending) {
-      const ambiguous = reservation.providerStartedAt !== undefined;
       await ctx.db.patch(reservation._id, {
-        status: ambiguous ? "ambiguous" : "released",
-        releaseReason: ambiguous ? "ambiguous_provider_attempt" : "expired",
+        status: "released",
+        releaseReason: "embeddings_retired",
+        updatedAt: now,
+      });
+    }
+    const ambiguous = await ctx.db
+      .query("embeddingUsageReservations")
+      .withIndex("by_status_and_expiration", (q) => q.eq("status", "ambiguous"))
+      .take(USAGE_RESERVATION_CLEANUP_LIMIT);
+    for (const reservation of ambiguous) {
+      if (reservation.settlementState === "staged") continue;
+      await ctx.db.patch(reservation._id, {
+        status: "released",
+        releaseReason: "embeddings_retired",
         updatedAt: now,
       });
     }
@@ -259,6 +273,7 @@ export const cleanupEmbeddingUsageReservations = internalMutation({
 
     const continuationScheduled =
       expiredPending.length === USAGE_RESERVATION_CLEANUP_LIMIT ||
+      ambiguous.length === USAGE_RESERVATION_CLEANUP_LIMIT ||
       retainedHistoryProcessed === USAGE_RESERVATION_CLEANUP_LIMIT;
     if (continuationScheduled) {
       await ctx.scheduler.runAfter(

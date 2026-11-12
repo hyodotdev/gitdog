@@ -44,6 +44,13 @@ async function fixture() {
   const t = convexTest(schema, modules);
   const ids = await t.run(async (ctx) => {
     const userId = await ctx.db.insert("users", {});
+    // The one-time trial is already used, so quota checks see only the
+    // allowance each test sets up.
+    await ctx.db.insert("trialCreditGrants", {
+      userId,
+      tokens: 100_000,
+      grantedAt: 1,
+    });
     await ctx.db.insert("userProfiles", {
       userId,
       githubUsername: "owner",

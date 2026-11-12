@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createProgram } from "../dist/commands.js";
 import { CaptureUi } from "./helpers.mjs";
+import { singleSecretLine } from "../dist/ui.js";
 
 const SECRET = `sk-proj-${"s".repeat(40)}`;
 
@@ -187,4 +188,31 @@ test("provider-keys check and remove call the public operations", async () => {
     "Remove your Anthropic API key from Gitdog?",
     "Remove your Anthropic API key from Gitdog?",
   ]);
+});
+
+test("provider-keys set never echoes a key passed through an unknown option", async () => {
+  const api = recordingApi();
+  for (const argv of [
+    ["provider-keys", "set", "anthropic", `--key=${SECRET}`],
+    ["provider-keys", "set", "anthropic", "--key", SECRET],
+  ]) {
+    await assert.rejects(
+      createProgram({ api, ui: new KeyUi({ secret: SECRET }) })
+        .exitOverride()
+        .parseAsync(argv, { from: "user" }),
+      (error) =>
+        /Never pass an API key/.test(error.message) &&
+        !error.message.includes(SECRET),
+    );
+  }
+  assert.deepEqual(api.calls, []);
+});
+
+test("piped keys must be a single line", () => {
+  assert.equal(singleSecretLine(`\n  ${SECRET}  \n\n`), SECRET);
+  assert.equal(singleSecretLine(""), "");
+  assert.throws(
+    () => singleSecretLine(`${SECRET}\nsecond line`),
+    /exactly one line/,
+  );
 });

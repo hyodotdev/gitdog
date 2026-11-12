@@ -220,7 +220,8 @@ export class Ui {
                 value = value.slice(0, -1);
                 break;
               default:
-                value += char;
+                // Drop other control characters such as Ctrl-D or escapes.
+                if (char >= " ") value += char;
             }
           }
         };
@@ -232,14 +233,14 @@ export class Ui {
     }
   }
 
-  /** Read all of standard input, for piping a secret non-interactively. */
+  /** Read one secret line from standard input for non-interactive use. */
   async readStdin(): Promise<string> {
     if (process.stdin.isTTY)
       throw new Error("--stdin expects the key to be piped in.");
     let value = "";
     process.stdin.setEncoding("utf8");
     for await (const chunk of process.stdin) value += chunk;
-    return value.trim();
+    return singleSecretLine(value);
   }
 
   async confirm(message: string, yes = false): Promise<void> {
@@ -247,6 +248,17 @@ export class Ui {
     const answer = await this.ask(`${message} [y/N]`, "n");
     if (!/^y(es)?$/i.test(answer)) throw new Error("Cancelled.");
   }
+}
+
+/** The one non-empty line of piped input; anything more is refused. */
+export function singleSecretLine(input: string): string {
+  const lines = input
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  if (lines.length > 1)
+    throw new Error("--stdin expects exactly one line containing the key.");
+  return lines[0] ?? "";
 }
 
 export function asRecord(value: unknown): Record<string, unknown> | undefined {

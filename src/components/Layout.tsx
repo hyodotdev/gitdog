@@ -42,8 +42,18 @@ export function Layout({ children }: { children: React.ReactNode }) {
     api.subscriptions.mutation.claimTrialCredit,
   );
   const signedInUserId = currentUser?._id;
+  // One attempt per session: the server also grants it when quota is first
+  // checked, so a failed claim is not retried on every page.
   useEffect(() => {
-    if (signedInUserId) void claimTrialCredit({}).catch(() => undefined);
+    if (!signedInUserId) return;
+    const marker = `gitdog:trial-claimed:${signedInUserId}`;
+    try {
+      if (sessionStorage.getItem(marker)) return;
+      sessionStorage.setItem(marker, "1");
+    } catch {
+      // Storage can be unavailable; the server-side grant still applies.
+    }
+    void claimTrialCredit({}).catch(() => undefined);
   }, [signedInUserId, claimTrialCredit]);
 
   const navItems = currentUser

@@ -11,7 +11,11 @@ import {
   internalQuery,
 } from "../../../convex/_generated/server";
 import { EMBEDDING_DIMENSIONS } from "../../../convex/_ai/legacyEmbeddings";
-import { getUtf8ByteLength } from "../../../convex/ragV2/chunkBudget";
+import {
+  getUtf8ByteLength,
+  MAX_RAG_CHUNK_CODE_BYTES,
+  MAX_RAG_SEARCHABLE_TEXT_BYTES,
+} from "../../../convex/ragV2/chunkBudget";
 import { stableChunkId } from "../../../convex/ragV2/parser";
 import schema from "../../../convex/schema";
 import { readRepositoryAiAccessSnapshot } from "../../../convex/repositories/aiReadiness";
@@ -104,12 +108,18 @@ const getById = internalQuery({
   handler: async (ctx, args) => await ctx.db.get(args.repositoryId),
 });
 
+// Lets a test end repository access between keyword search and the final
+// access check of the same search.
+const accessGate = { endAfterKeywordSearch: false, keywordSearchDone: false };
+
 const getAiAccessSnapshot = internalQuery({
   args: {
     repositoryId: v.id("repositories"),
     expectedIndexVersion: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
+    if (accessGate.endAfterKeywordSearch && accessGate.keywordSearchDone)
+      return null;
     const snapshot = await readRepositoryAiAccessSnapshot(
       ctx,
       args.repositoryId,
@@ -454,6 +464,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  accessGate.endAfterKeywordSearch = false;
+  accessGate.keywordSearchDone = false;
   if (originalPaidApiKey === undefined) {
     delete process.env.OPENAI_API_KEY;
   } else {
@@ -1334,6 +1346,213 @@ describe("RAG embedding work continuations", () => {
       chunkId: "keyword-result",
       path: "src/keyword.ts",
     });
+  });
+
+  it("bounds oversized chunks without truncating stored code", async () => {
+    const t = convexTest(schema, modules);
+    const repositoryId = await insertRepository(t, "pending", 3, "oversized");
+    globalThis.fetch = vi.fn(async (input: string | URL | Request) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      if (url === "https://storage.test/oversized.ts")
+        return new Response(oversizedFileContent, { status: 200 });
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as unknown as typeof fetch;
+
+    const result = await t.action(
+      internal.ragV2.action.generateChunkEmbeddings,
+      { repositoryId },
+    );
+    expect(result.totalChunks).toBeGreaterThan(1);
+    await drainScheduledFunctions(t);
+    const chunks = await t.run(async (ctx) =>
+      ctx.db
+        .query("repoChunks")
+        .withIndex("by_index_version", (q) =>
+          q.eq("repositoryId", repositoryId).eq("indexVersion", 3),
+        )
+        .collect(),
+    );
+    expect(chunks.map((chunk) => chunk.code).join("")).toBe(
+      oversizedFileContent,
+    );
+    expect(
+      chunks.every(
+        (chunk) =>
+          getUtf8ByteLength(chunk.code) <= MAX_RAG_CHUNK_CODE_BYTES &&
+          getUtf8ByteLength(chunk.searchableText) <=
+            MAX_RAG_SEARCHABLE_TEXT_BYTES,
+      ),
+    ).toBe(true);
+  });
+
+  it("indexes a near-limit multibyte long line in bounded chunks", async () => {
+    const t = convexTest(schema, modules);
+    const repositoryId = await insertRepository(
+      t,
+      "pending",
+      3,
+      "multibyte-long-line",
+    );
+    globalThis.fetch = vi.fn(async (input: string | URL | Request) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      if (url === "https://storage.test/multibyte-long-line.ts")
+        return new Response(multibyteLongLineFileContent, { status: 200 });
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as unknown as typeof fetch;
+
+    const result = await t.action(
+      internal.ragV2.action.generateChunkEmbeddings,
+      { repositoryId },
+    );
+    expect(result.totalChunks).toBeGreaterThan(1);
+    await drainScheduledFunctions(t);
+    const state = await t.run(async (ctx) => ({
+      repository: await ctx.db.get(repositoryId),
+      chunks: await ctx.db
+        .query("repoChunks")
+        .withIndex("by_index_version", (q) =>
+          q.eq("repositoryId", repositoryId).eq("indexVersion", 3),
+        )
+        .collect(),
+    }));
+    expect(state.repository).toMatchObject({
+      ragStatus: "completed",
+      ragTotalChunks: result.totalChunks,
+      ragIndexedChunks: result.totalChunks,
+      ragFailedChunks: 0,
+    });
+    expect(
+      state.chunks.reduce(
+        (total, chunk) => total + getUtf8ByteLength(chunk.code),
+        0,
+      ),
+    ).toBe(getUtf8ByteLength(multibyteLongLineFileContent));
+    expect(
+      state.chunks.every(
+        (chunk) =>
+          getUtf8ByteLength(chunk.code) <= MAX_RAG_CHUNK_CODE_BYTES &&
+          getUtf8ByteLength(chunk.searchableText) <=
+            MAX_RAG_SEARCHABLE_TEXT_BYTES,
+      ),
+    ).toBe(true);
+    expect(
+      state.chunks.some((chunk) => chunk.code.includes("다국어-tail")),
+    ).toBe(true);
+  }, 15_000);
+
+  it("replays partial progress from the durable pre-work checkpoint when an embedding index is retired", async () => {
+    const t = convexTest(schema, modules);
+    const repositoryId = await insertRepository(t, "indexing", 3, "chunked");
+    await t.run(async (ctx) =>
+      ctx.db.patch(repositoryId, { ragEmbeddingMode: "openai" }),
+    );
+    await seedContinuation(t, repositoryId, {
+      phase: "files",
+      token: "retired-embedding-claim",
+      totalChunks: 7,
+      successCount: 7,
+      processedFiles: 169,
+    });
+    globalThis.fetch = vi.fn(async (input: string | URL | Request) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      if (url === "https://storage.test/chunked.ts")
+        return new Response(chunkedFileContent, { status: 200 });
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as unknown as typeof fetch;
+
+    const result = await t.action(
+      internal.ragV2.action.generateChunkEmbeddings,
+      {
+        repositoryId,
+        indexVersion: 3,
+        phase: "files",
+        fileOffset: 0,
+        chunkOffset: 0,
+        claimToken: "retired-embedding-claim",
+      },
+    );
+    expect(result).toEqual({
+      success: true,
+      totalChunks: 7,
+      successCount: 7,
+      errorCount: 0,
+    });
+    expect(await t.run(async (ctx) => ctx.db.get(repositoryId))).toMatchObject({
+      ragStatus: "indexing",
+      ragEmbeddingMode: "keyword_only",
+      ragIndexFileOffset: 0,
+      ragIndexChunkOffset: 0,
+      ragTotalChunks: 7,
+      ragIndexedChunks: 7,
+      ragProcessedFiles: 169,
+      ragContinuationToken: expect.any(String),
+      ragEmbeddingError: expect.stringContaining("embeddings are retired"),
+    });
+
+    await finishPendingRagContinuations(t);
+    expect(await t.run(async (ctx) => ctx.db.get(repositoryId))).toMatchObject({
+      ragStatus: "completed",
+      ragEmbeddingMode: "keyword_only",
+    });
+  });
+
+  it("drops search results when access ends after keyword search", async () => {
+    const t = convexTest(schema, modules);
+    const repositoryId = await insertRepository(t, "pending", 3, "revoked");
+    await t.run(async (ctx) => {
+      const now = Date.now();
+      await ctx.db.patch(repositoryId, {
+        ragStatus: "completed",
+        ragEmbeddingMode: "keyword_only",
+      });
+      await ctx.db.insert("repoChunks", {
+        repositoryId,
+        repositoryIndexKey: `${repositoryId}:3`,
+        chunkId: "revoked-result",
+        path: "src/revoked.ts",
+        language: "typescript",
+        code: "export const revokedSearchNeedle = true;",
+        startLine: 1,
+        endLine: 1,
+        symbols: ["revokedSearchNeedle"],
+        searchableText: "revokedSearchNeedle export const true",
+        contentHash: "revoked-hash",
+        indexVersion: 3,
+        createdAt: now,
+        updatedAt: now,
+      });
+    });
+    const search = () =>
+      t.action(internal.ragV2.action.hybridSearch, {
+        repositoryId,
+        indexVersion: 3,
+        query: "revokedSearchNeedle",
+        topK: 5,
+      });
+    await expect(search()).resolves.toHaveLength(1);
+
+    accessGate.endAfterKeywordSearch = true;
+    vi.spyOn(console, "log").mockImplementation((message: unknown) => {
+      if (String(message).includes("BM25 search found"))
+        accessGate.keywordSearchDone = true;
+    });
+    await expect(search()).resolves.toEqual([]);
+    expect(accessGate.keywordSearchDone).toBe(true);
   });
 
   it("rejects more than eight unique language filters before searching", async () => {

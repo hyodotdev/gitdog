@@ -2,8 +2,11 @@ import { convexTest } from "convex-test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { api, internal } from "../../../convex/_generated/api";
+import type { ActionCtx } from "../../../convex/_generated/server";
+import { createMeteredProvider } from "../../../convex/_ai/chatBilling";
 import {
   FREE_MONTHLY_ALLOWANCE_ENDS_AT,
+  GENERATION_MODELS,
   getFreeIncludedTokens,
   LEGACY_FREE_MONTHLY_TOKENS,
   PRICING,
@@ -132,5 +135,202 @@ describe("one-time trial credit", () => {
       vi.useRealTimers();
     }
     expect(await wallet(t)).toBe(PRICING.TRIAL_TOKENS);
+  });
+});
+
+async function insertTicketFixture(
+  t: ReturnType<typeof convexTest>,
+  options: { trialUsed: boolean },
+) {
+  return await t.run(async (ctx) => {
+    const now = Date.now();
+    const userId = await ctx.db.insert("users", {});
+    if (options.trialUsed)
+      await ctx.db.insert("trialCreditGrants", {
+        userId,
+        tokens: PRICING.TRIAL_TOKENS,
+        grantedAt: 1,
+      });
+    const repositoryId = await ctx.db.insert("repositories", {
+      indexSyncPending: false,
+      indexVersion: 1,
+      indexStatus: "completed",
+      indexProgressAt: now,
+      ragStatus: "completed",
+      ragTotalChunks: 0,
+      ragIndexedChunks: 0,
+      ragFailedChunks: 0,
+      userId,
+      installationId: 1,
+      githubRepositoryId: 1,
+      githubRepo: "owner/repo",
+      githubRepoKey: "owner/repo",
+      name: "repo",
+      githubUrl: "https://github.com/owner/repo",
+      isActive: true,
+      settings: {
+        issueAssistantEnabled: true,
+        autoFormatIssue: true,
+        autoAnswerQuestions: true,
+        tagMaintainersForCodeChanges: true,
+        discussionAssistantEnabled: true,
+        autoFormatDiscussion: true,
+        autoAnswerDiscussionQuestions: true,
+        tagMaintainersForDiscussionCodeChanges: true,
+        requireApproval: false,
+        requireApprovalForDiscussions: false,
+      },
+      monthlyActions: 0,
+      lastResetAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const ticketId = await ctx.db.insert("tickets", {
+      repositoryId,
+      userId,
+      githubRepo: "owner/repo",
+      ticketType: "issue",
+      githubNumber: 1,
+      githubTitle: "Issue",
+      aiInputVersion: 1,
+      status: "open",
+      createdAt: now,
+    });
+    const ticketActionId = await ctx.db.insert("ticketActions", {
+      ticketId,
+      actionType: "answer",
+      chatHistory: [],
+      proposalVersion: 0,
+      status: "pending",
+      createdAt: now,
+    });
+    return { userId, repositoryId, ticketActionId };
+  });
+}
+
+function reservationArgs(
+  fixture: Awaited<ReturnType<typeof insertTicketFixture>>,
+  key: string,
+) {
+  return {
+    ...fixture,
+    reservationKey: key,
+    attemptToken: `${key}:1`,
+    requirePendingTicketAction: true,
+    generationKey: `generation:${key}`,
+    operation: "answer",
+    model: GENERATION_MODELS.anthropic.modelId,
+    provider: "anthropic" as const,
+    requestFingerprint: "0".repeat(64),
+    inputTokenLimit: 2_000,
+    outputTokenLimit: 2_000,
+  };
+}
+
+describe("trial grant rules", () => {
+  it("does not grant the trial to a Pro account", async () => {
+    const t = convexTest(schema, modules);
+    const { userId, as } = await signedIn(t);
+    const now = Date.now();
+    await t.run(async (ctx) =>
+      ctx.db.insert("subscriptions", {
+        userId,
+        plan: "pro",
+        status: "active",
+        includedTokens: PRICING.PRO_INCLUDED_TOKENS,
+        purchasedTokens: 0,
+        serviceFeeRate: PRICING.PLATFORM_FEE_PRO,
+        periodStart: now - 60_000,
+        periodEnd: now + 86_400_000,
+        proEntitlementProvenance: {
+          source: "admin_override",
+          verifiedAt: now - 1_000,
+        },
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
+    await expect(
+      as.mutation(api.subscriptions.mutation.claimTrialCredit, {}),
+    ).resolves.toEqual({ granted: false, tokens: 0 });
+    await expect(
+      t.run(async (ctx) => ctx.db.query("trialCreditGrants").collect()),
+    ).resolves.toEqual([]);
+  });
+
+  it("grants once when the claim races the consent-scheduled grant", async () => {
+    const t = convexTest(schema, modules);
+    const { userId, as } = await signedIn(t);
+    await Promise.all([
+      as.mutation(api.subscriptions.mutation.claimTrialCredit, {}),
+      t.mutation(internal.subscriptions.internalMutation.grantTrialCredit, {
+        userId,
+      }),
+      as.mutation(api.subscriptions.mutation.claimTrialCredit, {}),
+    ]);
+    const grants = await t.run(async (ctx) =>
+      ctx.db.query("trialCreditGrants").collect(),
+    );
+    expect(grants).toHaveLength(1);
+    expect(await wallet(t)).toBe(PRICING.TRIAL_TOKENS);
+  });
+
+  it("grants the trial when a free owner's quota is first checked", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(AFTER_CUTOFF);
+    const t = convexTest(schema, modules);
+    const fixture = await insertTicketFixture(t, { trialUsed: false });
+    await expect(
+      t.mutation(
+        internal._ai.chatBilling.reserveChatUsage,
+        reservationArgs(fixture, "first-webhook"),
+      ),
+    ).resolves.toMatchObject({ allowed: true });
+    await expect(
+      t.run(async (ctx) => ctx.db.query("trialCreditGrants").collect()),
+    ).resolves.toEqual([expect.objectContaining({ userId: fixture.userId })]);
+    expect(await wallet(t)).toBe(PRICING.TRIAL_TOKENS);
+  });
+
+  it("settles a free reservation started in November after the cutoff", async () => {
+    const reservedAt = FREE_MONTHLY_ALLOWANCE_ENDS_AT - 5_000;
+    const clock = vi.spyOn(Date, "now").mockReturnValue(reservedAt);
+    const t = convexTest(schema, modules);
+    const fixture = await insertTicketFixture(t, { trialUsed: true });
+    const provider = createMeteredProvider(
+      { runMutation: t.mutation.bind(t) } as unknown as ActionCtx,
+      {
+        ...fixture,
+        generationKey: "cutoff-span",
+        operation: "answer",
+        requirePendingTicketAction: true,
+        provider: {
+          name: "test",
+          modelId: GENERATION_MODELS.anthropic.modelId,
+          providerId: "anthropic",
+          chat: async () => {
+            // The provider answers after the free allowance has ended.
+            clock.mockReturnValue(FREE_MONTHLY_ALLOWANCE_ENDS_AT + 30_000);
+            return {
+              content: "Answer",
+              finishReason: "stop" as const,
+              usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+              provider: "anthropic",
+            };
+          },
+        },
+      },
+    );
+    await expect(
+      provider.chat([{ role: "user", content: "Question" }], {
+        maxTokens: 16,
+        billingLabel: "answer",
+      }),
+    ).resolves.toMatchObject({ content: "Answer" });
+    const usage = await t.run(async (ctx) =>
+      ctx.db.query("tokenUsage").collect(),
+    );
+    expect(usage).toEqual([
+      expect.objectContaining({ totalTokens: 15, purchasedTokensDebited: 0 }),
+    ]);
   });
 });

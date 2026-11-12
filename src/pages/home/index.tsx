@@ -56,7 +56,7 @@ export function HomePage() {
     {
       question: "Is Gitdog free to use?",
       answer:
-        "Yes. Free includes 100,000 tokens per month, and Pro is $9.99/month with 2.4M tokens. Prepaid token packs are available when you need more, with no automatic overage charges.",
+        "Yes. Free starts with 100,000 one-time trial tokens. After that, use your own Anthropic or OpenAI API key, or Pro at $9.99/month with 2.4M tokens. Prepaid token packs are available when you need more, with no automatic overage charges.",
     },
     {
       question: "What languages does Gitdog support?",
@@ -123,6 +123,13 @@ export function HomePage() {
                           (subscription?.purchasedTokens ?? 0) / 1000,
                         ),
                       })}
+                  {subscription?.plan !== "pro" &&
+                    (subscription?.includedTokens ?? 0) > 0 &&
+                    ` · ${t("home.workspace.monthlyUntil", {
+                      count: Math.floor(
+                        (subscription?.includedTokens ?? 0) / 1000,
+                      ),
+                    })}`}
                 </span>
               </div>
               <Link

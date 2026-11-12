@@ -202,7 +202,8 @@
       },
       "tokensPerMonth": "月 {{count, number}}kトークン",
       "prepaidTokens": "体験・プリペイドトークン残り {{count, number}}k",
-      "usingOwnKey": "{{provider}}キーを使用中"
+      "usingOwnKey": "{{provider}}キーを使用中",
+      "monthlyUntil": "12月1日まで月間無料トークン{{count, number}}k"
     }
   },
   "repositories": {
@@ -544,7 +545,7 @@
       "title": "Proにアップグレード",
       "description": "月額$9.99のProサブスクリプションで2.4Mトークン含むと優先処理を獲得",
       "button": "プランを見る",
-      "inlineTitle": "より多い月間枠が必要ですか？",
+      "inlineTitle": "体験トークンでは足りませんか？",
       "inlineDescription": "Proには毎月2.4Mトークンが含まれます。追加利用にはプリペイドトークンパックが必要です。"
     },
     "userKey": {
@@ -700,8 +701,8 @@
     "title": "プランをアップグレード",
     "message": "Proで毎月2.4Mトークンと優先処理を利用",
     "limitReached": {
-      "title": "月間制限に達しました",
-      "message": "トークン上限に達しました。AI自動化を続けるには、トークンパックを購入するかアップグレードしてください。"
+      "title": "体験トークンを使い切りました",
+      "message": "利用可能なトークンを使い切りました。続けるには、プロフィールで自分のAPIキーを追加するか、トークンパックを購入するか、Proにアップグレードしてください。"
     },
     "approachingLimit": {
       "title": "制限に近づいています",
@@ -831,7 +832,21 @@
   "notifications": {
     "title": "通知",
     "markAllRead": "すべて既読にする",
-    "noNotifications": "通知はありません"
+    "noNotifications": "通知はありません",
+    "providerKey": {
+      "invalid": {
+        "title": "{{provider}} APIキーが拒否されました",
+        "message": "{{provider}}が保存済みのAPIキーを拒否したため、このキーを使う処理を停止しました。プロフィールでキーを置き換えるか削除してください。"
+      },
+      "out_of_credit": {
+        "title": "{{provider}} APIキーのクレジットが不足しています",
+        "message": "{{provider}} APIキーのクレジットが不足しているため、このキーを使う処理を停止しました。クレジットを追加するか、プロフィールでキーを置き換えてください。"
+      },
+      "unreadable": {
+        "title": "{{provider}} APIキーを再入力してください",
+        "message": "保存済みの{{provider}} APIキーを読み取れなくなりました。プロフィールでもう一度入力してください。"
+      }
+    }
   },
   "notFound": {
     "title": "ページが見つかりません - Gitdog",
@@ -861,7 +876,7 @@
       "commentFailed": "コメントの追加に失敗しました。権限を確認してください。"
     },
     "tokenLimit": {
-      "limitReached": "月間トークン制限に達しました。AI自動化を継続するには、プランをアップグレードしてください。"
+      "limitReached": "利用可能なトークンを使い切りました。続けるには、プロフィールで自分のAPIキーを追加するか、トークンパックを購入するか、Proにアップグレードしてください。"
     },
     "generic": {
       "permissionDenied": "権限がありません。GitHub Appの権限を確認してください。",
@@ -1274,6 +1289,7 @@
     "usingKeyBody": "Issue・Discussion・レビューの処理は保存したキーで実行され、Gitdogのトークンを使いません。",
     "addKey": "自分のキーを追加",
     "manageKeys": "キーを管理",
-    "viewPro": "Proを見る"
+    "viewPro": "Proを見る",
+    "monthlyUntil": "{{date}}まで月間無料トークン{{tokens}}も利用できます。体験トークンはリセットされません。"
   }
 }

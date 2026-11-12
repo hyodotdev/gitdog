@@ -3,7 +3,7 @@ import { ConvexError } from "convex/values";
 import { useEffect, useState } from "react";
 import { useLocation } from "react-router";
 import { useTranslation } from "react-i18next";
-import { Check, ExternalLink, KeyRound } from "lucide-react";
+import { AlertTriangle, Check, ExternalLink, KeyRound } from "lucide-react";
 import { api } from "../../../convex/_generated/api";
 import { LoadingIndicator } from "../../components/uis/LoadingIndicator";
 import { cn } from "../../utils/cn";
@@ -382,11 +382,17 @@ function ProviderKeyCard({
         <div
           role="alert"
           className={cn(
-            "p-3 text-sm",
-            "bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-400",
+            "flex items-start gap-2 p-3 text-sm",
+            "border border-black text-black",
+            "dark:border-white dark:text-white",
           )}
         >
-          {error}
+          <AlertTriangle
+            size={16}
+            className="mt-0.5 shrink-0"
+            aria-hidden="true"
+          />
+          <span>{error}</span>
         </div>
       )}
     </div>

@@ -2,6 +2,7 @@ import { useQuery } from "convex/react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router";
 import { api } from "../../convex/_generated/api";
+import { AlertTriangle } from "lucide-react";
 import { cn } from "../utils/cn";
 
 const PROVIDER_NAMES = { anthropic: "Anthropic", openai: "OpenAI" } as const;
@@ -27,7 +28,12 @@ export function ProviderKeyAlert() {
   return (
     <div
       role="alert"
-      className={cn("py-3", "bg-red-600 text-white", "dark:bg-red-700")}
+      // Same treatment as the repository connection banner.
+      className={cn(
+        "py-3",
+        "bg-black text-white",
+        "dark:bg-white dark:text-black",
+      )}
     >
       <div
         className={cn(
@@ -36,7 +42,10 @@ export function ProviderKeyAlert() {
           "px-4 sm:px-6",
         )}
       >
-        <p className={cn("text-sm")}>{message}</p>
+        <p className={cn("flex items-center gap-2 text-sm")}>
+          <AlertTriangle size={16} className="shrink-0" aria-hidden="true" />
+          {message}
+        </p>
         <button
           onClick={() => navigate("/profile")}
           className={cn("text-sm font-medium underline", "hover:no-underline")}

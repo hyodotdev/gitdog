@@ -441,42 +441,40 @@ async function checkChatProviderHolds(
   );
 }
 
+/**
+ * Embeddings are retired: an unsettled embedding hold can no longer finish,
+ * so it is released instead of blocking renewal. Only a staged, known-billed
+ * outcome waits for its settlement cron.
+ */
 async function checkEmbeddingProviderHolds(
   ctx: MutationCtx,
   subscription: Doc<"subscriptions">,
   boundary: Doc<"subscriptionBillingBoundaries">,
   now: number,
 ): Promise<ProviderHoldDecision> {
-  const ambiguous = await ctx.db
-    .query("embeddingUsageReservations")
-    .withIndex("by_subscription_status_and_period_start", (q) =>
-      q.eq("subscriptionId", subscription._id).eq("status", "ambiguous"),
-    )
-    .take(MAX_PROVIDER_HOLDS_PER_SCOPE + 1);
-  if (ambiguous.length > MAX_PROVIDER_HOLDS_PER_SCOPE) return "ambiguous";
-  if (
-    ambiguous.some((reservation) =>
-      reservationBelongsToBoundary(reservation, subscription, boundary),
-    )
-  ) {
-    return "ambiguous";
+  let staged = false;
+  for (const status of ["pending", "ambiguous"] as const) {
+    const reservations = await ctx.db
+      .query("embeddingUsageReservations")
+      .withIndex("by_subscription_status_and_period_start", (q) =>
+        q.eq("subscriptionId", subscription._id).eq("status", status),
+      )
+      .take(MAX_PROVIDER_HOLDS_PER_SCOPE);
+    for (const reservation of reservations) {
+      if (!reservationBelongsToBoundary(reservation, subscription, boundary))
+        continue;
+      if (reservation.settlementState === "staged") {
+        staged = true;
+        continue;
+      }
+      await ctx.db.patch(reservation._id, {
+        status: "released",
+        releaseReason: "embeddings_retired",
+        updatedAt: now,
+      });
+    }
   }
-
-  const pending = await ctx.db
-    .query("embeddingUsageReservations")
-    .withIndex("by_subscription_status_and_period_start", (q) =>
-      q.eq("subscriptionId", subscription._id).eq("status", "pending"),
-    )
-    .take(MAX_PROVIDER_HOLDS_PER_SCOPE + 1);
-  if (pending.length > MAX_PROVIDER_HOLDS_PER_SCOPE) return "ambiguous";
-  return await classifyPendingProviderHolds(
-    ctx,
-    pending.filter((reservation) =>
-      reservationBelongsToBoundary(reservation, subscription, boundary),
-    ),
-    boundary,
-    now,
-  );
+  return staged ? "in_progress" : "clear";
 }
 
 export async function checkBillingBoundaryProviderHolds(

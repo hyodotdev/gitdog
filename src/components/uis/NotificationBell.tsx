@@ -33,6 +33,27 @@ export function NotificationBell() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  // Provider key notices carry structured details so they can be
+  // translated; other types store their text.
+  const notificationText = (
+    notification: NonNullable<typeof unreadNotifications>[0],
+  ) => {
+    if (
+      notification.type === "provider_key_failed" &&
+      notification.providerKey
+    ) {
+      const { provider, reason } = notification.providerKey;
+      const params = {
+        provider: provider === "anthropic" ? "Anthropic" : "OpenAI",
+      };
+      return {
+        title: t(`notifications.providerKey.${reason}.title`, params),
+        message: t(`notifications.providerKey.${reason}.message`, params),
+      };
+    }
+    return { title: notification.title, message: notification.message };
+  };
+
   const handleNotificationClick = async (
     notification: NonNullable<typeof unreadNotifications>[0],
   ) => {
@@ -134,7 +155,7 @@ export function NotificationBell() {
                   )}
                 >
                   <p className={cn("text-sm font-medium mb-1")}>
-                    {notification.title}
+                    {notificationText(notification).title}
                   </p>
                   <p
                     className={cn(
@@ -142,7 +163,7 @@ export function NotificationBell() {
                       "line-clamp-2",
                     )}
                   >
-                    {notification.message}
+                    {notificationText(notification).message}
                   </p>
                 </button>
               ))

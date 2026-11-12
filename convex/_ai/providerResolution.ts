@@ -138,9 +138,17 @@ async function userKeyLeaf(
     apiKey = await decryptProviderKey(row);
   } catch (error) {
     // A server-side encryption problem says nothing about the provider key,
-    // so the saved status is left unchanged.
-    if (error instanceof ProviderKeyEncryptionError) return "unreadable";
-    throw error;
+    // so the saved status is left unchanged; the owner is told once.
+    if (!(error instanceof ProviderKeyEncryptionError)) throw error;
+    try {
+      await ctx.runMutation(
+        internal.providerApiKeys.internalMutation.noteUnreadableKey,
+        { userId: row.userId, provider: row.provider },
+      );
+    } catch {
+      /* Best effort: the request still fails with an actionable error. */
+    }
+    return "unreadable";
   }
   return new UserKeyProvider(
     ctx,

@@ -84,11 +84,18 @@ export function ProfilePage() {
     purchasedTokensDebited: usedFromPurchased,
   });
 
-  // Free accounts only have trial and prepaid tokens, which never reset.
+  // Free accounts spend the monthly allowance (only until it is retired)
+  // first, then trial and prepaid tokens, which never reset.
   const tokensLeft = Math.max(
     0,
     availability.totalAvailableTokens - (tokenUsage?.totalTokens ?? 0),
   );
+  const monthlyTokensLeft = Math.max(
+    0,
+    includedTokens -
+      Math.max(0, (tokenUsage?.totalTokens ?? 0) - purchasedTokensDebited),
+  );
+  const trialTokensLeft = isPro ? 0 : purchasedTokens;
 
   const formatTokens = (tokens: number) => {
     if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(2)}M`;
@@ -289,11 +296,16 @@ export function ProfilePage() {
               >
                 {isPro
                   ? `${formatTokens(tokenUsage?.totalTokens ?? 0)} ${t("usage.tokens")}`
-                  : `${formatTokens(tokensLeft)} ${t("usage.tokens")}`}
+                  : `${formatTokens(trialTokensLeft)} ${t("usage.tokens")}`}
               </div>
               <p className={cn("text-sm text-gray-500 mt-1")}>
                 {!isPro
-                  ? t("trial.tokensLeftNote")
+                  ? includedTokens > 0
+                    ? t("trial.monthlyUntil", {
+                        tokens: formatTokens(monthlyTokensLeft),
+                        date: formatDate(periodEnd),
+                      })
+                    : t("trial.tokensLeftNote")
                   : purchasedTokens + purchasedTokensDebited > 0
                     ? t("usage.stats.allowanceWithPurchased", {
                         included: formatTokens(includedTokens),

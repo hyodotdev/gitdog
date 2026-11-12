@@ -52,8 +52,10 @@ export const TOKEN_PRICING = {
 
 export const TOKEN_LIMITS = {
   // One-time trial credit granted on sign-in (stored as prepaid tokens).
-  // The smallest amount that still covers one batched pull request review
-  // (REVIEW_BATCH_TOKEN_ESTIMATE) so every feature can be tried once.
+  // Enough for several issue and discussion replies and small pull request
+  // reviews. Large PRs are reviewed in batches that each hold
+  // REVIEW_BATCH_TOKEN_ESTIMATE up front, so a trial alone may not start one;
+  // the owner's own key has no such limit.
   TRIAL_TOKENS: 100_000,
 
   // Pro tier: monthly allowance plus prepaid token packs

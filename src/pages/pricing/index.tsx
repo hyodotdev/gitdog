@@ -121,7 +121,7 @@ export function PricingPage() {
     {
       question: "What is the difference between Free and Pro plans?",
       answer:
-        "Free includes 100,000 tokens per month, and Pro ($9.99/month) includes 2.4M. Both plans stop at their token limit, and prepaid token packs are available for additional usage without automatic overage charges.",
+        "Free starts with 100,000 one-time trial tokens; after that, use your own Anthropic or OpenAI API key. Pro ($9.99/month) includes 2.4M tokens each month. Gitdog-paid usage stops at the token limit, and prepaid token packs are available without automatic overage charges.",
     },
     {
       question: "Do token packs expire?",
