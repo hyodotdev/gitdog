@@ -786,3 +786,54 @@ describe("staged embedding charges in chat quota", () => {
     ).resolves.toEqual({ allowed: false, reason: "limit_reached" });
   });
 });
+
+describe("wallet spread across rows", () => {
+  it("credits the trial once to a multi-row wallet after a Free period expired", async () => {
+    const t = convexTest(schema, modules);
+    const { userId, as } = await signedIn(t);
+    const now = Date.now();
+    const july = { start: Date.UTC(2026, 6, 1), end: Date.UTC(2026, 7, 1) };
+    await t.run(async (ctx) => {
+      // Older row that still holds part of the wallet, then the latest,
+      // expired Free row holding the rest and some unspent trial.
+      await ctx.db.insert("subscriptions", {
+        userId,
+        plan: "free",
+        status: "active",
+        includedTokens: 0,
+        purchasedTokens: 300,
+        serviceFeeRate: PRICING.PLATFORM_FEE_FREE,
+        periodStart: july.start - 31 * 86_400_000,
+        periodEnd: july.start,
+        createdAt: now - 2_000,
+        updatedAt: now - 2_000,
+      });
+      await ctx.db.insert("subscriptions", {
+        userId,
+        plan: "free",
+        status: "active",
+        includedTokens: 0,
+        purchasedTokens: 700,
+        trialTokens: 50,
+        serviceFeeRate: PRICING.PLATFORM_FEE_FREE,
+        periodStart: july.start,
+        periodEnd: july.end,
+        createdAt: now - 1_000,
+        updatedAt: now - 1_000,
+      });
+    });
+
+    await as.mutation(api.subscriptions.mutation.claimTrialCredit, {});
+
+    const rows = await t.run(async (ctx) =>
+      ctx.db.query("subscriptions").collect(),
+    );
+    expect(rows.reduce((total, row) => total + row.purchasedTokens, 0)).toBe(
+      1_000 + PRICING.TRIAL_TOKENS,
+    );
+    expect(rows.reduce((total, row) => total + (row.trialTokens ?? 0), 0)).toBe(
+      50 + PRICING.TRIAL_TOKENS,
+    );
+    expect(rows.filter((row) => row.purchasedTokens > 0)).toHaveLength(1);
+  });
+});

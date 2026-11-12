@@ -9,7 +9,10 @@ import {
   hasUnsettledEndedTrustedProQuota,
   settleAllEndedTrustedProQuotas,
 } from "./billingBoundaries";
-import { readPurchasedTokenWalletBalance } from "./wallet";
+import {
+  consolidatePurchasedTokenWallet,
+  readPurchasedTokenWalletBalance,
+} from "./wallet";
 
 type SubscriptionQuotaReadCtx = Pick<MutationCtx | QueryCtx, "db">;
 
@@ -77,12 +80,19 @@ export async function refreshFreeSubscriptionPeriod(
     return quota.entitlement;
   }
 
+  // Move the whole wallet (and its unspent trial) into this row and zero the
+  // others. Writing the aggregate here without clearing the other rows
+  // would count those balances twice on the next consolidation.
+  await consolidatePurchasedTokenWallet(ctx, {
+    userId: subscription.userId,
+    targetSubscriptionId: subscription._id,
+    now,
+  });
   await ctx.db.patch(subscription._id, {
     plan: "free",
     status: "active",
     includedTokens: quota.entitlement.includedTokens,
     serviceFeeRate: PRICING.PLATFORM_FEE_FREE,
-    purchasedTokens: quota.entitlement.purchasedTokens,
     periodStart: quota.entitlement.periodStart,
     periodEnd: quota.entitlement.periodEnd,
     updatedAt: now,
