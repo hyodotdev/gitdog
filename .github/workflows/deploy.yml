@@ -1,0 +1,134 @@
+name: Deploy on merge to main
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "convex/**"
+      - "src/**"
+      - "public/**"
+      - "index.html"
+      - "firebase.json"
+      - ".firebaserc"
+      - "bun.lock"
+      - "package.json"
+      - "vite.config.ts"
+      - "postcss.config.js"
+      - "tsconfig.json"
+      - ".github/scripts/**"
+      - ".github/workflows/deploy.yml"
+      - ".github/workflows/deploy-convex.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  build_frontend:
+    name: Build frontend before production changes
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "26.13.0"
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.4
+
+      - name: Verify frontend runtime configuration
+        shell: bash
+        env:
+          VITE_CONVEX_URL: ${{ secrets.VITE_CONVEX_URL }}
+        run: |
+          set -euo pipefail
+          if ! DEPLOY_URL_TO_VALIDATE="$VITE_CONVEX_URL" bun run .github/scripts/validateDeployUrl.ts; then
+            echo "::error::VITE_CONVEX_URL must exactly match a public HTTPS origin without a trailing slash."
+            exit 1
+          fi
+
+      - run: bun install --frozen-lockfile
+
+      - run: bun run build
+        env:
+          VITE_CONVEX_URL: ${{ secrets.VITE_CONVEX_URL }}
+
+      - name: Upload production frontend artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: production-frontend
+          path: dist
+          if-no-files-found: error
+          retention-days: 1
+
+  deploy_convex:
+    name: Deploy Convex after frontend build
+    if: ${{ github.ref == 'refs/heads/main' }}
+    needs: build_frontend
+    uses: ./.github/workflows/deploy-convex.yml
+    secrets:
+      CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+
+  deploy_frontend:
+    name: Publish prebuilt frontend after Convex
+    if: ${{ github.ref == 'refs/heads/main' }}
+    needs:
+      - build_frontend
+      - deploy_convex
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Download production frontend artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: production-frontend
+          path: dist
+
+      - uses: FirebaseExtended/action-hosting-deploy@500ac625ca2dd40cbd15f7659af953801858032a # v0.11.0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_CODEYOU_DF251 }}
+          channelId: live
+          projectId: codeyou-df251
+
+  verify_convex:
+    name: Verify deployed Convex configuration
+    if: ${{ github.ref == 'refs/heads/main' }}
+    needs: deploy_convex
+    runs-on: ubuntu-latest
+    env:
+      CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "26.13.0"
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.4
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Verify immutable settlement configuration
+        run: |
+          set -euo pipefail
+
+          if ! bunx convex run paymentLogs/privacy:verifySettlementConfiguration '{}' --prod >/dev/null; then
+            echo "::error::Settlement fingerprint key differs from production's pinned configuration or could not be verified."
+            exit 1
+          fi

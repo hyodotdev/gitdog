@@ -1,0 +1,4 @@
+interface:
+  display_name: "Gitdog Audit"
+  short_description: "Audit Gitdog replies and improve the app"
+  default_prompt: "Use $gitdog-audit to review the latest Gitdog issue comment, improve gitdog.dev if the reply is wrong, and record the audit checkpoint."

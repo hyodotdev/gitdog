@@ -1,0 +1,45 @@
+# Robots.txt for Gitdog
+
+User-agent: *
+Allow: /
+
+# Disallow private/admin pages
+Disallow: /admin
+Disallow: /admin/*
+Disallow: /profile
+Disallow: /invitations
+Disallow: /repositories/connect
+Disallow: /repositories/
+Disallow: /tickets
+Disallow: /tickets/*
+Disallow: /usage
+Disallow: /cli/
+
+# AI Crawlers - Allow access for AEO
+User-agent: GPTBot
+Allow: /
+Allow: /llms.txt
+Allow: /llms-full.txt
+
+User-agent: ChatGPT-User
+Allow: /
+Allow: /llms.txt
+Allow: /llms-full.txt
+
+User-agent: PerplexityBot
+Allow: /
+Allow: /llms.txt
+Allow: /llms-full.txt
+
+User-agent: Bingbot
+Allow: /
+Allow: /llms.txt
+Allow: /llms-full.txt
+
+User-agent: Google-Extended
+Allow: /
+Allow: /llms.txt
+Allow: /llms-full.txt
+
+# Sitemap and LLMs.txt
+Sitemap: https://gitdog.dev/sitemap.xml

@@ -1,0 +1,45 @@
+# Gitdog - AI GitHub Assistant
+
+> AI-powered assistant for GitHub repositories. Automates issue responses and discussion replies with intelligent codebase-aware answers.
+
+## About Gitdog
+
+Gitdog is an AI automation platform for GitHub that helps developers automate repetitive tasks. When users mention @gitdogbot in issues or discussions, the AI assistant analyzes the codebase context and provides intelligent, relevant responses.
+
+## Core Features
+
+- **Issue Automation**: AI responds to issues with codebase-aware answers
+- **Discussion Assistant**: Intelligent replies in GitHub Discussions
+- **Context-Aware Answers**: Repository-specific guidance grounded in indexed code
+- **Codebase Indexing**: Full repository understanding for accurate responses
+
+## Pricing
+
+- **Free Plan**: $0/month - 100,000 tokens/month with a hard limit; prepaid token packs are available for additional usage
+- **Pro Plan**: $9.99/month - 2.4M tokens/month; prepaid token packs are available for additional usage, with no automatic overage charges
+
+## Technical Details
+
+- Platform: Web application (SaaS)
+- Integration: GitHub App
+- Languages Supported: All programming languages
+- Authentication: GitHub OAuth
+
+## Company
+
+- Website: https://gitdog.dev
+- Contact: https://gitdog.dev/contact
+- Documentation: https://gitdog.dev/about
+
+## Pages
+
+- Home: https://gitdog.dev/
+- Pricing: https://gitdog.dev/pricing
+- About: https://gitdog.dev/about
+- Contact: https://gitdog.dev/contact
+- Terms of Service: https://gitdog.dev/legal/terms-of-service
+- Privacy Policy: https://gitdog.dev/legal/privacy-policy
+
+## Keywords
+
+GitHub automation, AI code assistant, GitHub bot, AI developer tools, GitHub integration, issue automation, discussion assistant, developer productivity
