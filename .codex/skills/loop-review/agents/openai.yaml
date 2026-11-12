@@ -1,4 +1,0 @@
-interface:
-  display_name: "Loop Review"
-  short_description: "Review, merge and deploy a clean Gitdog change"
-  default_prompt: "Use $loop-review to start from the latest origin/main, stabilize the change, open or reuse a PR, address reviews, merge it, and verify the production deployment."

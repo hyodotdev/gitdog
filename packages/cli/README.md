@@ -1,5 +1,8 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/hyodotdev/gitdog/main/.github/assets/gitdog-logo.png" alt="Gitdog" width="112" height="112">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/hyodotdev/gitdog/main/.github/assets/gitdog-logo.png">
+    <img src="https://raw.githubusercontent.com/hyodotdev/gitdog/main/.github/assets/gitdog-logo-dark.png" alt="Gitdog" width="112" height="112">
+  </picture>
 </p>
 
 <h1 align="center">Gitdog CLI</h1>
