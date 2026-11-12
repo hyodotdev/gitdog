@@ -3,17 +3,7 @@ name: CLI CI
 on:
   push:
     branches: [main]
-    paths:
-      - "packages/cli/**"
-      - "convex/**"
-      - "bun.lock"
-      - ".github/workflows/cli-ci.yml"
   pull_request:
-    paths:
-      - "packages/cli/**"
-      - "convex/**"
-      - "bun.lock"
-      - ".github/workflows/cli-ci.yml"
 
 permissions:
   contents: read
