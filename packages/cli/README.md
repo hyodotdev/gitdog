@@ -52,14 +52,15 @@ repository to Gitdog.
 
 ## Everyday commands
 
-| Task                     | Command                                 |
-| ------------------------ | --------------------------------------- |
-| List projects            | `npx gitdog@latest projects list`       |
-| Read automation settings | `npx gitdog@latest config get --remote` |
-| Review pending actions   | `npx gitdog@latest tickets pending`     |
-| Check code indexing      | `npx gitdog@latest index status`        |
-| List team members        | `npx gitdog@latest team members`        |
-| Check usage              | `npx gitdog@latest usage summary`       |
+| Task                     | Command                                         |
+| ------------------------ | ----------------------------------------------- |
+| List projects            | `npx gitdog@latest projects list`               |
+| Read automation settings | `npx gitdog@latest config get --remote`         |
+| Review pending actions   | `npx gitdog@latest tickets pending`             |
+| Check code indexing      | `npx gitdog@latest index status`                |
+| List team members        | `npx gitdog@latest team members`                |
+| Check usage              | `npx gitdog@latest usage summary`               |
+| Use your own AI key      | `npx gitdog@latest provider-keys set anthropic` |
 
 Use `npx gitdog@latest --help` to explore commands. Add `--json` for scripts.
 

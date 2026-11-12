@@ -129,6 +129,27 @@ ticket (100 pending actions), with separate 4 MB ticket and 6 MB action read
 budgets; over-limit requests fail explicitly. Advanced `api call` secret issuance
 is disabled: use `keys create` for secure file output. Custom backends must include the companion `apiKeys` functions, schema and HTTP route.
 
+## Your own AI provider keys
+
+Run generation for the projects you own on your own Anthropic or OpenAI API
+key. That usage is billed by your provider and does not use Gitdog tokens.
+
+```sh
+gitdog provider-keys list
+gitdog provider-keys set anthropic           # prompts without echoing the key
+printf %s "$OPENAI_API_KEY" | gitdog provider-keys set openai --stdin
+gitdog provider-keys check openai
+gitdog provider-keys remove openai --yes
+```
+
+`ai-keys` is an alias. Keys are never accepted as arguments, so they stay out
+of shell history; in scripts pipe them with `--stdin`. `list` shows only the
+provider, the last four characters, status (`active`, `invalid`,
+`out_of_credit` or `unreadable`) and when the key was last checked. `check`
+asks the provider again, for example after adding credit. Key checks are
+limited to five per account every ten minutes. Advanced `api call` refuses
+`providerApiKeys/action:save` for the same reason.
+
 ## Configure every automation setting
 
 ```sh

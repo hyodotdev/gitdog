@@ -187,6 +187,61 @@ export class Ui {
     }
   }
 
+  /** Read a secret from the terminal without echoing it. */
+  async secret(question: string): Promise<string> {
+    if (!process.stdin.isTTY || !process.stderr.isTTY)
+      throw new Error(
+        "This command needs a terminal to read the key. Pipe it with --stdin instead.",
+      );
+    process.stderr.write(`${clean(question)}: `);
+    const stdin = process.stdin;
+    stdin.setRawMode(true);
+    stdin.resume();
+    stdin.setEncoding("utf8");
+    try {
+      return await new Promise<string>((resolve, reject) => {
+        let value = "";
+        const onData = (chunk: string) => {
+          for (const char of chunk) {
+            switch (char) {
+              case "\r":
+              case "\n":
+                stdin.off("data", onData);
+                process.stderr.write("\n");
+                resolve(value.trim());
+                return;
+              case "\u0003":
+                stdin.off("data", onData);
+                process.stderr.write("\n");
+                reject(new Error("Cancelled."));
+                return;
+              case "\u007f":
+              case "\b":
+                value = value.slice(0, -1);
+                break;
+              default:
+                value += char;
+            }
+          }
+        };
+        stdin.on("data", onData);
+      });
+    } finally {
+      stdin.setRawMode(false);
+      stdin.pause();
+    }
+  }
+
+  /** Read all of standard input, for piping a secret non-interactively. */
+  async readStdin(): Promise<string> {
+    if (process.stdin.isTTY)
+      throw new Error("--stdin expects the key to be piped in.");
+    let value = "";
+    process.stdin.setEncoding("utf8");
+    for await (const chunk of process.stdin) value += chunk;
+    return value.trim();
+  }
+
   async confirm(message: string, yes = false): Promise<void> {
     if (yes) return;
     const answer = await this.ask(`${message} [y/N]`, "n");
