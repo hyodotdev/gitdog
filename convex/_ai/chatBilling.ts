@@ -460,12 +460,9 @@ async function checkChatQuota(
   const chatState = await expireChatReservations(ctx, args.userId, args.now);
   if (chatState) return chatState;
   // Accounts that never opened the web app still get their one-time trial.
-  // A Pro boundary still settling is reported below, so it is skipped here.
-  try {
-    await grantTrialCreditOnce(ctx, args.userId, args.now);
-  } catch (error) {
-    if (!(error instanceof TerminalProQuotaUnavailableError)) throw error;
-  }
+  // Skipped without writes when Pro history or the wallet needs attention;
+  // the checks below then refuse as usual.
+  await grantTrialCreditOnce(ctx, args.userId, args.now);
 
   try {
     await settleAllEndedTrustedProQuotas(ctx, args.userId, args.now);

@@ -1,3 +1,4 @@
+import { getUserWalletRows } from "./wallet";
 import { query } from "../_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { PRICING, CLAUDE_API_ENDS_AT, GENERATION_MODELS } from "../_ai/config";
@@ -69,6 +70,7 @@ export const getCurrent = query({
         includedTokens: entitlement.includedTokens,
         purchasedTokens: entitlement.purchasedTokens,
         purchasedTokensDebited: 0,
+        trialTokens: 0,
         serviceFeeRate: entitlement.serviceFeeRate,
         periodStart: entitlement.periodStart,
         periodEnd: entitlement.periodEnd,
@@ -104,6 +106,11 @@ export const getCurrent = query({
       includedTokens: entitlement.includedTokens,
       purchasedTokens: entitlement.purchasedTokens,
       purchasedTokensDebited,
+      // Unspent trial inside purchasedTokens, summed across wallet rows.
+      trialTokens: (await getUserWalletRows(ctx, userId)).reduce(
+        (total, row) => total + (row.trialTokens ?? 0),
+        0,
+      ),
       serviceFeeRate: entitlement.serviceFeeRate,
       periodStart: entitlement.periodStart,
       periodEnd: entitlement.periodEnd,

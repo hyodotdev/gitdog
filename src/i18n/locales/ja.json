@@ -592,7 +592,8 @@
         "invalid": "拒否",
         "out_of_credit": "クレジット不足",
         "notSet": "未設定",
-        "unreadable": "再入力が必要"
+        "unreadable": "再入力が必要",
+        "serviceUnavailable": "確認できません"
       },
       "errors": {
         "format": "{{provider}} の API キーの形式ではありません。",
@@ -601,7 +602,7 @@
         "reenter": "この API キーは読み取れなくなりました。もう一度入力してください。",
         "unavailable": "{{provider}} が現在この API キーを確認できません。しばらくしてからお試しください。",
         "rateLimited": "API キーの確認が多すぎます。数分後にもう一度お試しください。",
-        "notConfigured": "現在 API キーを保存できません。サポートにお問い合わせください。",
+        "notConfigured": "現在キーを確認できません。しばらくしてからお試しください。",
         "wrongProvider": "{{other}}のキーのようです。{{other}}のカードに貼り付けてください。"
       },
       "valueProp": "自分のAnthropicまたはOpenAIキーでGitdogを実行 — その利用分はGitdogのトークンを使いません。",
@@ -891,7 +892,8 @@
       "unreadable": "{{provider}} APIキーを読み取れなくなりました。プロフィールでもう一度入力してください。",
       "removed": "このリクエストは自分のAPIキーで開始されましたが、キーが削除されました。プロフィールでキーを再度追加してください。",
       "yourProvider": "AIプロバイダー",
-      "openSettings": "設定を開く"
+      "openSettings": "設定を開く",
+      "serviceUnavailable": "現在、保存済みのAPIキーを使用できません。しばらくしてからお試しください。"
     }
   },
   "admin": {
@@ -1290,6 +1292,7 @@
     "addKey": "自分のキーを追加",
     "manageKeys": "キーを管理",
     "viewPro": "Proを見る",
-    "monthlyUntil": "{{date}}まで月間無料トークン{{tokens}}も利用できます。体験トークンはリセットされません。"
+    "monthlyUntil": "{{date}}まで月間無料トークン{{tokens}}も利用できます。体験トークンはリセットされません。",
+    "prepaidLeft": "プリペイドトークン{{tokens}}も利用できます。"
   }
 }

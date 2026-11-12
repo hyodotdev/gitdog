@@ -150,6 +150,12 @@ export const revalidate = action({
       apiKey = await decryptProviderKey(row);
     } catch (error) {
       if (!(error instanceof ProviderKeyEncryptionError)) throw error;
+      if (error.kind === "not_configured")
+        keyError(
+          "UNSUPPORTED_OPERATION",
+          "not_configured",
+          "Key checks are temporarily unavailable.",
+        );
       // A server-side key problem says nothing about the provider key, so
       // its status is left as it is.
       keyError(

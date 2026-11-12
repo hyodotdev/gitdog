@@ -200,3 +200,24 @@ describe("retired embedding reservations", () => {
     ]);
   });
 });
+
+describe("retired embedding cleanup scheduling", () => {
+  it("does not reschedule itself for a full page of staged rows", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await insertOwner(t);
+    const now = Date.now();
+    for (let index = 0; index < 100; index++)
+      await insertReservation(t, owner, `staged-${index}`, {
+        status: "ambiguous",
+        providerStartedAt: now - 120_000,
+        expiresAt: now + 60_000,
+        settlementTokens: 1,
+      });
+    await expect(
+      t.mutation(
+        internal._ai.embeddingBilling.cleanupEmbeddingUsageReservations,
+        {},
+      ),
+    ).resolves.toMatchObject({ continuationScheduled: false });
+  });
+});

@@ -79,7 +79,8 @@ export type ProviderKeyFailure =
   | "rateLimited"
   | "unavailable"
   | "unreadable"
-  | "removed";
+  | "removed"
+  | "serviceUnavailable";
 
 const PROVIDER_KEY_FAILURES: Array<[RegExp, ProviderKeyFailure]> = [
   [/^Your (Anthropic|OpenAI) API key was rejected/, "invalid"],
@@ -89,6 +90,7 @@ const PROVIDER_KEY_FAILURES: Array<[RegExp, ProviderKeyFailure]> = [
   [/^Your (Anthropic|OpenAI) API key is no longer available/, "unavailable"],
   [/^Your AI provider API key is no longer available/, "unavailable"],
   [/^This request started on your own API key/, "removed"],
+  [/^Gitdog can't use saved API keys right now/, "serviceUnavailable"],
 ];
 
 /**

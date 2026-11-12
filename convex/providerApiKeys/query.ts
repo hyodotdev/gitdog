@@ -12,9 +12,12 @@ export const list = query({
       .withIndex("by_user_and_provider", (q) => q.eq("userId", userId))
       .collect();
     const keyId = rows.length > 0 ? await currentEncryptionKeyId() : null;
+    // A missing server key is a configuration problem, not the user's.
+    const serviceUnavailable = rows.length > 0 && keyId === null;
     return rows.map((row) => ({
+      serviceUnavailable,
       // False when the server can no longer decrypt this key.
-      readable: row.encryptionKeyId === keyId,
+      readable: serviceUnavailable || row.encryptionKeyId === keyId,
       provider: row.provider,
       last4: row.last4,
       status: row.status,

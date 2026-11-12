@@ -194,3 +194,26 @@ export const noteUnreadableKey = internalMutation({
     await ctx.db.patch(row._id, { unreadableNotifiedAt: Date.now() });
   },
 });
+
+/** A request on the key just worked: clear a stale failure, once. */
+export const markKeyWorking = internalMutation({
+  args: { userId: v.id("users"), provider: providerValidator },
+  handler: async (ctx, args) => {
+    const row = await ctx.db
+      .query("providerApiKeys")
+      .withIndex("by_user_and_provider", (q) =>
+        q.eq("userId", args.userId).eq("provider", args.provider),
+      )
+      .unique();
+    if (!row || (row.status === "active" && row.lastError === undefined))
+      return;
+    if (row.status === "invalid") return;
+    const now = Date.now();
+    await ctx.db.patch(row._id, {
+      status: "active",
+      lastError: undefined,
+      lastValidatedAt: now,
+      updatedAt: now,
+    });
+  },
+});

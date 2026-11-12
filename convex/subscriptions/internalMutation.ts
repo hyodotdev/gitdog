@@ -28,6 +28,7 @@ import { creditPurchasedTokens, grantTrialCreditOnce } from "./credit";
 import {
   consolidatePurchasedTokenWallet,
   debitPurchasedTokenWallet,
+  readTrialTokens,
   getUserWalletRows,
 } from "./wallet";
 
@@ -1068,6 +1069,16 @@ export const processTokenPackRefund = internalMutation({
       now,
     });
     if (walletBalance < tokensToClawBack) {
+      return await recordManualReview(
+        "Token-pack refund balance was already consumed.",
+      );
+    }
+    // The trial is spent before paid tokens, so a refund may only take back
+    // what is left beyond the unspent trial.
+    if (
+      walletBalance - tokensToClawBack <
+      (await readTrialTokens(ctx, subscription._id))
+    ) {
       return await recordManualReview(
         "Token-pack refund balance was already consumed.",
       );

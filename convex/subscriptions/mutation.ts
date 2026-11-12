@@ -8,6 +8,7 @@ export const claimTrialCredit = mutation({
   handler: async (ctx) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) return { granted: false, tokens: 0 };
-    return await grantTrialCreditOnce(ctx, userId);
+    const result = await grantTrialCreditOnce(ctx, userId);
+    return { granted: result.status === "granted", tokens: result.tokens };
   },
 });

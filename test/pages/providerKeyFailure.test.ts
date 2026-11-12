@@ -14,6 +14,7 @@ describe("provider key failure recognition", () => {
       removed: "removed",
       unavailable: "unavailable",
       unreadable: "unreadable",
+      service_unavailable: "serviceUnavailable",
     };
     for (const [code, kind] of Object.entries(expected)) {
       const error = new UserApiKeyError(code as UserApiKeyErrorCode, "openai");

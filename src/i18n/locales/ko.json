@@ -592,7 +592,8 @@
         "invalid": "거부됨",
         "out_of_credit": "크레딧 없음",
         "notSet": "설정 안 됨",
-        "unreadable": "다시 입력 필요"
+        "unreadable": "다시 입력 필요",
+        "serviceUnavailable": "확인 일시 불가"
       },
       "errors": {
         "format": "{{provider}} API 키 형식이 아닙니다.",
@@ -601,7 +602,7 @@
         "reenter": "이 API 키를 더 이상 읽을 수 없습니다. 다시 입력해 주세요.",
         "unavailable": "{{provider}}에서 지금 이 API 키를 확인할 수 없습니다. 잠시 후 다시 시도해 주세요.",
         "rateLimited": "API 키 확인 요청이 너무 많습니다. 몇 분 후 다시 시도해 주세요.",
-        "notConfigured": "지금은 API 키를 저장할 수 없습니다. 지원팀에 문의해 주세요.",
+        "notConfigured": "지금은 키를 확인할 수 없습니다. 잠시 후 다시 시도해 주세요.",
         "wrongProvider": "{{other}} 키로 보입니다. {{other}} 카드에 붙여 넣어 주세요."
       },
       "valueProp": "내 Anthropic 또는 OpenAI 키로 Gitdog를 실행하세요 — 이 사용량은 Gitdog 토큰을 쓰지 않습니다.",
@@ -891,7 +892,8 @@
       "unreadable": "{{provider}} API 키를 더 이상 읽을 수 없습니다. 프로필에서 다시 입력하세요.",
       "removed": "이 요청은 내 API 키로 시작됐지만 키가 삭제되었습니다. 프로필에서 키를 다시 추가하세요.",
       "yourProvider": "AI 제공자",
-      "openSettings": "설정 열기"
+      "openSettings": "설정 열기",
+      "serviceUnavailable": "지금은 저장된 API 키를 사용할 수 없습니다. 잠시 후 다시 시도해 주세요."
     }
   },
   "admin": {
@@ -1282,6 +1284,7 @@
     "addKey": "내 키 추가하기",
     "manageKeys": "내 키 관리",
     "viewPro": "Pro 보기",
-    "monthlyUntil": "{{date}}까지 월 무료 토큰 {{tokens}}도 남아 있습니다. 체험 토큰은 초기화되지 않습니다."
+    "monthlyUntil": "{{date}}까지 월 무료 토큰 {{tokens}}도 남아 있습니다. 체험 토큰은 초기화되지 않습니다.",
+    "prepaidLeft": "선불 토큰 {{tokens}}도 남아 있습니다."
   }
 }

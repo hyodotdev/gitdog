@@ -95,7 +95,8 @@ export function ProfilePage() {
     includedTokens -
       Math.max(0, (tokenUsage?.totalTokens ?? 0) - purchasedTokensDebited),
   );
-  const trialTokensLeft = isPro ? 0 : purchasedTokens;
+  const trialTokensLeft = isPro ? 0 : (subscription?.trialTokens ?? 0);
+  const prepaidTokensLeft = Math.max(0, purchasedTokens - trialTokensLeft);
 
   const formatTokens = (tokens: number) => {
     if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(2)}M`;
@@ -299,6 +300,13 @@ export function ProfilePage() {
                   : `${formatTokens(trialTokensLeft)} ${t("usage.tokens")}`}
               </div>
               <p className={cn("text-sm text-gray-500 mt-1")}>
+                {!isPro && prepaidTokensLeft > 0 && (
+                  <span className="block">
+                    {t("trial.prepaidLeft", {
+                      tokens: formatTokens(prepaidTokensLeft),
+                    })}
+                  </span>
+                )}
                 {!isPro
                   ? includedTokens > 0
                     ? t("trial.monthlyUntil", {

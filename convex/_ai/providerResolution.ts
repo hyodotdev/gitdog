@@ -32,7 +32,8 @@ export type UserApiKeyErrorCode =
   | "rate_limited"
   | "removed"
   | "unavailable"
-  | "unreadable";
+  | "unreadable"
+  | "service_unavailable";
 
 function userKeyMessage(code: UserApiKeyErrorCode, provider: KeyProvider) {
   const name = PROVIDER_NAMES[provider];
@@ -49,6 +50,8 @@ function userKeyMessage(code: UserApiKeyErrorCode, provider: KeyProvider) {
       return `Your ${name} API key is no longer available. Add it again in Gitdog settings.`;
     case "unreadable":
       return `Your ${name} API key can no longer be read. Enter it again in Gitdog settings.`;
+    case "service_unavailable":
+      return "Gitdog can't use saved API keys right now. Try again shortly.";
   }
 }
 
@@ -78,6 +81,8 @@ class UserKeyProvider implements AiProvider {
     private readonly userId: Id<"users">,
     private readonly keyProvider: KeyProvider,
     private readonly inner: AiProvider,
+    // The saved key last failed, so a success should clear that state.
+    private needsRecovery: boolean = false,
   ) {}
   get name() {
     return this.inner.name;
@@ -108,7 +113,19 @@ class UserKeyProvider implements AiProvider {
     options?: ChatCompletionOptions,
   ): Promise<ChatCompletionResult> {
     try {
-      return await this.inner.chat(messages, options);
+      const result = await this.inner.chat(messages, options);
+      if (this.needsRecovery) {
+        this.needsRecovery = false;
+        try {
+          await this.ctx.runMutation(
+            internal.providerApiKeys.internalMutation.markKeyWorking,
+            { userId: this.userId, provider: this.keyProvider },
+          );
+        } catch {
+          /* Best effort: the next success tries again. */
+        }
+      }
+      return result;
     } catch (error) {
       if (!(error instanceof ChatProviderRequestError)) throw error;
       const status = error.httpStatus;
@@ -129,10 +146,19 @@ class UserKeyProvider implements AiProvider {
   }
 }
 
+let missingEncryptionKeyLogged = false;
+function logMissingEncryptionKeyOnce() {
+  if (missingEncryptionKeyLogged) return;
+  missingEncryptionKeyLogged = true;
+  console.error(
+    "[ProviderKeys] BYOK_ENCRYPTION_KEY is missing or invalid; saved keys cannot be used",
+  );
+}
+
 async function userKeyLeaf(
   ctx: ActionCtx,
   row: Doc<"providerApiKeys">,
-): Promise<AiProvider | "unreadable"> {
+): Promise<AiProvider | "unreadable" | "service_unavailable"> {
   let apiKey: string;
   try {
     apiKey = await decryptProviderKey(row);
@@ -140,6 +166,10 @@ async function userKeyLeaf(
     // A server-side encryption problem says nothing about the provider key,
     // so the saved status is left unchanged; the owner is told once.
     if (!(error instanceof ProviderKeyEncryptionError)) throw error;
+    if (error.kind === "not_configured") {
+      logMissingEncryptionKeyOnce();
+      return "service_unavailable";
+    }
     try {
       await ctx.runMutation(
         internal.providerApiKeys.internalMutation.noteUnreadableKey,
@@ -157,6 +187,7 @@ async function userKeyLeaf(
     row.provider === "anthropic"
       ? new ClaudeProvider(apiKey, undefined, { enforceAccessDeadline: false })
       : new OpenAIProvider(apiKey),
+    row.status !== "active" || row.lastError !== undefined,
   );
 }
 
@@ -187,10 +218,12 @@ export async function resolveGenerationProvider(
   const now = Date.now();
   const leaves = new Map<KeyProvider, AiProvider>();
   let unreadable: KeyProvider | undefined;
+  let serviceUnavailable = false;
   for (const row of rows) {
     if (!isUsableProviderKey(row, now)) continue;
     const leaf = await userKeyLeaf(ctx, row);
     if (leaf === "unreadable") unreadable = row.provider;
+    else if (leaf === "service_unavailable") serviceUnavailable = true;
     else leaves.set(row.provider, leaf);
   }
   const anthropic = leaves.get("anthropic");
@@ -201,6 +234,8 @@ export async function resolveGenerationProvider(
     });
   const only = anthropic ?? openai;
   if (only) return only;
+  if (serviceUnavailable)
+    throw new UserApiKeyError("service_unavailable", rows[0].provider);
   if (unreadable) throw new UserApiKeyError("unreadable", unreadable);
   const outOfCredit = rows.find((row) => row.status === "out_of_credit");
   if (outOfCredit)

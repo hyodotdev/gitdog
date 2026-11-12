@@ -933,3 +933,49 @@ describe("usage reporting for user keys", () => {
     ]);
   });
 });
+
+describe("user key recovery and server key problems", () => {
+  it("marks an out-of-credit key active again after a successful call", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await insertFixture(t);
+    await saveKey(t, fixture.userId, "anthropic", ANTHROPIC_KEY);
+    await t.mutation(
+      internal.providerApiKeys.internalMutation.recordKeyFailure,
+      {
+        userId: fixture.userId,
+        provider: "anthropic",
+        code: "out_of_credit",
+      },
+    );
+    vi.spyOn(Date, "now").mockReturnValue(
+      Date.now() + OUT_OF_CREDIT_RETRY_MS + 1_000,
+    );
+    const provider = await resolveGenerationProvider(actionCtx(t), {
+      userId: fixture.userId,
+    });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(claudeResponse());
+    await provider.chat(question);
+    const [key] = await t.run(async (ctx) =>
+      ctx.db.query("providerApiKeys").collect(),
+    );
+    expect(key).toMatchObject({ status: "active" });
+    expect(key.lastError).toBeUndefined();
+  });
+
+  it("treats a missing server encryption key as a service problem, not the user's", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await insertFixture(t);
+    await saveKey(t, fixture.userId, "anthropic", ANTHROPIC_KEY);
+    delete process.env.BYOK_ENCRYPTION_KEY;
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await expect(
+      resolveGenerationProvider(actionCtx(t), { userId: fixture.userId }),
+    ).rejects.toMatchObject({ code: "service_unavailable" });
+    const state = await t.run(async (ctx) => ({
+      notifications: await ctx.db.query("notifications").collect(),
+      keys: await ctx.db.query("providerApiKeys").collect(),
+    }));
+    expect(state.notifications).toEqual([]);
+    expect(state.keys[0].unreadableNotifiedAt).toBeUndefined();
+  });
+});

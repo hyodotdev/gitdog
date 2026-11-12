@@ -133,6 +133,7 @@ describe("trusted Pro entitlement provenance", () => {
       includedTokens: getFreeIncludedTokens(Date.now()),
       purchasedTokens: 0,
       purchasedTokensDebited: 0,
+      trialTokens: 0,
       serviceFeeRate: PRICING.PLATFORM_FEE_FREE,
       periodStart: Date.UTC(2026, 6, 1),
       periodEnd: Date.UTC(2026, 7, 1),

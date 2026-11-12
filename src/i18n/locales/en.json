@@ -593,7 +593,8 @@
         "invalid": "Rejected",
         "out_of_credit": "Out of credit",
         "notSet": "Not set",
-        "unreadable": "Re-enter key"
+        "unreadable": "Re-enter key",
+        "serviceUnavailable": "Checks unavailable"
       },
       "errors": {
         "format": "This does not look like an {{provider}} API key.",
@@ -602,7 +603,7 @@
         "reenter": "This API key can no longer be read. Enter it again.",
         "unavailable": "{{provider}} could not check this API key right now. Try again shortly.",
         "rateLimited": "Too many API key checks. Try again in a few minutes.",
-        "notConfigured": "Saving API keys is not available right now. Please contact support.",
+        "notConfigured": "Key checks are temporarily unavailable. Try again later.",
         "wrongProvider": "This looks like an {{other}} key. Paste it into the {{other}} card."
       },
       "valueProp": "Run Gitdog on your own Anthropic or OpenAI key — that usage never touches your Gitdog tokens.",
@@ -892,7 +893,8 @@
       "unreadable": "Gitdog can no longer read your {{provider}} API key. Enter it again in your profile.",
       "removed": "This request started on your own API key, which was removed. Add a key again in your profile.",
       "yourProvider": "AI provider",
-      "openSettings": "Open settings"
+      "openSettings": "Open settings",
+      "serviceUnavailable": "Gitdog can't use saved API keys right now. Try again shortly."
     }
   },
   "admin": {
@@ -1298,6 +1300,7 @@
     "addKey": "Add your own key",
     "manageKeys": "Manage your keys",
     "viewPro": "View Pro",
-    "monthlyUntil": "Plus {{tokens}} free monthly tokens until {{date}}. Trial tokens never reset."
+    "monthlyUntil": "Plus {{tokens}} free monthly tokens until {{date}}. Trial tokens never reset.",
+    "prepaidLeft": "Plus {{tokens}} prepaid tokens."
   }
 }

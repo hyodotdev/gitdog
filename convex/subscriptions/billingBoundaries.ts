@@ -680,6 +680,50 @@ export async function settleEndedTrustedProSubscriptionQuota(
   return { status: "settled", boundariesSettled };
 }
 
+/**
+ * True while any Pro row of the user still needs boundary settlement or an
+ * operator. Read-only, so callers can skip optional writes such as the trial
+ * grant instead of tripping the settlement errors.
+ */
+export async function hasUnsettledProHistory(
+  ctx: BoundaryReadCtx,
+  userId: Id<"users">,
+  now: number,
+): Promise<boolean> {
+  const rows = await ctx.db
+    .query("subscriptions")
+    .withIndex("by_user", (q) => q.eq("userId", userId))
+    .take(101);
+  if (rows.length > 100) return true;
+  for (const row of rows) {
+    if (row.plan !== "pro" || row.proEntitlementProvenance === undefined)
+      continue;
+    if (hasTrustedProEntitlement(row, now)) continue;
+    if (
+      row.periodEnd > now ||
+      row.billingBoundaryReconciliationRequired ||
+      row.billingBoundaryManualReviewReason !== undefined
+    )
+      return true;
+    const exact = await getExactBoundary(ctx, row);
+    if (exact?.status !== "settled") return true;
+    const open = await ctx.db
+      .query("subscriptionBillingBoundaries")
+      .withIndex("by_subscription_status_and_period_end", (q) =>
+        q.eq("subscriptionId", row._id).eq("status", "pending"),
+      )
+      .first();
+    const review = await ctx.db
+      .query("subscriptionBillingBoundaries")
+      .withIndex("by_subscription_status_and_period_end", (q) =>
+        q.eq("subscriptionId", row._id).eq("status", "manual_review"),
+      )
+      .first();
+    if (open || review) return true;
+  }
+  return false;
+}
+
 export async function settleAllEndedTrustedProQuotas(
   ctx: MutationCtx,
   userId: Id<"users">,

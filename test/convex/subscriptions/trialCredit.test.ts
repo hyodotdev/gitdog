@@ -334,3 +334,139 @@ describe("trial grant rules", () => {
     ]);
   });
 });
+
+describe("trial grant with Pro history", () => {
+  async function insertProHistory(
+    t: ReturnType<typeof convexTest>,
+    userId: Awaited<ReturnType<typeof insertTicketFixture>>["userId"],
+    state: "unsettled" | "manual_review" | "expired_before_period_end",
+  ) {
+    const now = Date.now();
+    await t.run(async (ctx) =>
+      ctx.db.insert("subscriptions", {
+        userId,
+        plan: "pro",
+        status: state === "expired_before_period_end" ? "expired" : "canceled",
+        includedTokens: PRICING.PRO_INCLUDED_TOKENS,
+        purchasedTokens: 0,
+        serviceFeeRate: PRICING.PLATFORM_FEE_PRO,
+        periodStart: now - 40 * 86_400_000,
+        periodEnd:
+          state === "expired_before_period_end"
+            ? now + 86_400_000
+            : now - 86_400_000,
+        proEntitlementProvenance: {
+          source: "lemon_squeezy_webhook",
+          verifiedAt: now - 40 * 86_400_000,
+        },
+        ...(state === "manual_review"
+          ? { billingBoundaryManualReviewReason: "Needs an operator." }
+          : {}),
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
+  }
+
+  for (const state of [
+    "unsettled",
+    "manual_review",
+    "expired_before_period_end",
+  ] as const) {
+    it(`skips the grant without writes or errors for ${state} Pro history`, async () => {
+      const t = convexTest(schema, modules);
+      const fixture = await insertTicketFixture(t, { trialUsed: false });
+      await insertProHistory(t, fixture.userId, state);
+      const before = await t.run(async (ctx) =>
+        ctx.db.query("subscriptions").collect(),
+      );
+
+      await expect(
+        t.mutation(internal.subscriptions.internalMutation.grantTrialCredit, {
+          userId: fixture.userId,
+        }),
+      ).resolves.toEqual({ status: "pro_settling", tokens: 0 });
+      // The chat path refuses as before instead of throwing.
+      await expect(
+        t.mutation(
+          internal._ai.chatBilling.reserveChatUsage,
+          reservationArgs(fixture, `chat-${state}`),
+        ),
+      ).resolves.toMatchObject({ allowed: false });
+
+      const after = await t.run(async (ctx) => ({
+        grants: await ctx.db.query("trialCreditGrants").collect(),
+        subscriptions: await ctx.db.query("subscriptions").collect(),
+      }));
+      expect(after.grants).toEqual([]);
+      expect(after.subscriptions.map((row) => row.purchasedTokens)).toEqual(
+        before.map((row) => row.purchasedTokens),
+      );
+    });
+  }
+
+  it("leaves a batched review refusal intact for an owner with unsettled Pro history", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await insertTicketFixture(t, { trialUsed: false });
+    await insertProHistory(t, fixture.userId, "unsettled");
+    const reviewAction = await t.run(async (ctx) => {
+      const action = await ctx.db.get(fixture.ticketActionId);
+      return await ctx.db.insert("ticketActions", {
+        ticketId: action!.ticketId,
+        actionType: "review",
+        chatHistory: [],
+        proposalVersion: 0,
+        status: "pending",
+        createdAt: Date.now(),
+      });
+    });
+    await expect(
+      t.mutation(
+        internal.pullRequests.internalMutation.reserveBatchedReviewQuota,
+        { actionId: reviewAction, batches: 1 },
+      ),
+    ).resolves.toMatchObject({ reserved: false });
+    await expect(
+      t.run(async (ctx) => ctx.db.query("trialCreditGrants").collect()),
+    ).resolves.toEqual([]);
+  });
+});
+
+describe("trial tokens in the wallet", () => {
+  it("spends the trial before paid tokens and keeps it out of refunds", async () => {
+    const t = convexTest(schema, modules);
+    const { userId, as } = await signedIn(t);
+    await as.mutation(api.subscriptions.mutation.claimTrialCredit, {});
+    const { consolidatePurchasedTokenWallet, debitPurchasedTokenWallet } =
+      await import("../../../convex/subscriptions/wallet");
+    const state = await t.run(async (ctx) => {
+      const [row] = await ctx.db.query("subscriptions").collect();
+      const now = Date.now();
+      // A 200-token pack on top of the trial, then 150 tokens of usage.
+      await consolidatePurchasedTokenWallet(ctx, {
+        userId,
+        targetSubscriptionId: row._id,
+        tokensToAdd: 200,
+        now,
+      });
+      await debitPurchasedTokenWallet(ctx, {
+        userId,
+        targetSubscriptionId: row._id,
+        tokensToDebit: 150,
+        now,
+      });
+      return await ctx.db.get(row._id);
+    });
+    expect(state).toMatchObject({
+      purchasedTokens: PRICING.TRIAL_TOKENS + 50,
+      trialTokens: PRICING.TRIAL_TOKENS - 150,
+    });
+    // All 200 paid tokens are still refundable.
+    expect(
+      (state?.purchasedTokens ?? 0) - 200 >= (state?.trialTokens ?? 0),
+    ).toBe(true);
+    await expect(
+      as.query(api.subscriptions.query.getCurrent, {}),
+    ).resolves.toMatchObject({ trialTokens: PRICING.TRIAL_TOKENS - 150 });
+  });
+});

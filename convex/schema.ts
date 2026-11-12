@@ -124,11 +124,15 @@ const applicationTables = {
     ),
 
     // Token limits per plan
-    // Free: 100k/month; Pro: 2.4M/billing period. Both may use prepaid packs.
+    // Free: none from December 2026 (100k/month before); Pro: 2.4M per
+    // billing period. Both may use prepaid packs and the one-time trial.
     includedTokens: v.number(),
 
     // Purchased token balance (for token pack purchases)
     purchasedTokens: v.number(),
+    // Part of purchasedTokens that is the unspent one-time trial. Spent
+    // before paid tokens and never taken back by a token-pack refund.
+    trialTokens: v.optional(v.number()),
 
     // Internal service-cost allocation rate (25% free, 18% Pro)
     serviceFeeRate: v.number(), // 0.25 or 0.18

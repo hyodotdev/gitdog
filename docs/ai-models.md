@@ -94,7 +94,12 @@ never expire. Work that runs on your own provider key never uses these tokens.
 | Token Pack (Large) | 7.5M                       | $29.99 one-time purchase                   |
 
 The trial is added to the prepaid wallet once per account and recorded in
-`trialCreditGrants`, so it is never granted again. Free periods that started
+`trialCreditGrants`, so it is never granted again. It is granted on first
+sign-in, on consent, or the first time a free account's quota is checked;
+accounts on Pro (or with Pro history still being settled) are skipped and get
+it once they are on Free, including former Pro owners. Usage spends included
+tokens, then the trial, then paid tokens, and a token-pack refund never takes
+back trial tokens. Free periods that started
 before December 2026 keep the former 100K monthly allowance; later free
 periods include no tokens.
 

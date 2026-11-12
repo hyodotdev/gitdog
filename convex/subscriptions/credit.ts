@@ -5,7 +5,11 @@ import {
   getSubscriptionForEntitlement,
   hasTrustedProEntitlement,
 } from "./entitlement";
-import { refreshFreeSubscriptionPeriod } from "./quotaEntitlement";
+import { hasUnsettledProHistory } from "./billingBoundaries";
+import {
+  readEffectiveSubscriptionQuota,
+  refreshFreeSubscriptionPeriod,
+} from "./quotaEntitlement";
 import { consolidatePurchasedTokenWallet } from "./wallet";
 
 function getCurrentUtcMonthBounds(now: number): {
@@ -21,7 +25,12 @@ function getCurrentUtcMonthBounds(now: number): {
 
 export async function creditPurchasedTokens(
   ctx: MutationCtx,
-  args: { userId: Id<"users">; tokensToAdd: number; now: number },
+  args: {
+    userId: Id<"users">;
+    tokensToAdd: number;
+    now: number;
+    trial?: boolean;
+  },
 ): Promise<Id<"subscriptions">> {
   if (!Number.isSafeInteger(args.tokensToAdd) || args.tokensToAdd <= 0) {
     throw new Error("Invalid purchased token amount");
@@ -36,6 +45,7 @@ export async function creditPurchasedTokens(
       serviceFeeRate: PRICING.PLATFORM_FEE_FREE,
       includedTokens: getFreeIncludedTokens(period.periodStart),
       purchasedTokens: args.tokensToAdd,
+      ...(args.trial ? { trialTokens: args.tokensToAdd } : {}),
       periodStart: period.periodStart,
       periodEnd: period.periodEnd,
       createdAt: args.now,
@@ -49,39 +59,55 @@ export async function creditPurchasedTokens(
     userId: args.userId,
     targetSubscriptionId: subscription._id,
     tokensToAdd: args.tokensToAdd,
+    trialTokensToAdd: args.trial ? args.tokensToAdd : 0,
     now: args.now,
   });
   return subscription._id;
 }
 
+export type TrialGrantStatus =
+  "granted" | "already_granted" | "pro" | "pro_settling" | "wallet_unverified";
+
 /**
  * Grant the one-time trial credit as prepaid tokens to a free account. The
  * grant row is the idempotency record, written in the same transaction as
- * the credit and never deleted, so the trial is never granted twice. Pro
- * accounts get it later if they are ever on Free.
+ * the credit and never deleted, so the trial is never granted twice.
+ *
+ * Best effort and never throws for account state: Pro accounts, Pro history
+ * still being settled and unverifiable wallets are skipped without writes so
+ * the regular quota checks report them as usual. Former Pro owners get the
+ * trial once they are on Free.
  */
 export async function grantTrialCreditOnce(
   ctx: MutationCtx,
   userId: Id<"users">,
   now: number = Date.now(),
-): Promise<{ granted: boolean; tokens: number }> {
+): Promise<{ status: TrialGrantStatus; tokens: number }> {
   const existing = await ctx.db
     .query("trialCreditGrants")
     .withIndex("by_user", (q) => q.eq("userId", userId))
     .first();
-  if (existing) return { granted: false, tokens: existing.tokens };
+  if (existing) return { status: "already_granted", tokens: existing.tokens };
   const subscription = await getSubscriptionForEntitlement(ctx, userId, now);
   if (hasTrustedProEntitlement(subscription, now))
-    return { granted: false, tokens: 0 };
+    return { status: "pro", tokens: 0 };
+  if (await hasUnsettledProHistory(ctx, userId, now))
+    return { status: "pro_settling", tokens: 0 };
+  if (
+    subscription &&
+    !(await readEffectiveSubscriptionQuota(ctx, subscription, now)).verified
+  )
+    return { status: "wallet_unverified", tokens: 0 };
   await creditPurchasedTokens(ctx, {
     userId,
     tokensToAdd: PRICING.TRIAL_TOKENS,
     now,
+    trial: true,
   });
   await ctx.db.insert("trialCreditGrants", {
     userId,
     tokens: PRICING.TRIAL_TOKENS,
     grantedAt: now,
   });
-  return { granted: true, tokens: PRICING.TRIAL_TOKENS };
+  return { status: "granted", tokens: PRICING.TRIAL_TOKENS };
 }

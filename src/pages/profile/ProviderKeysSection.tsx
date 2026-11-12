@@ -17,6 +17,7 @@ type SavedKey = {
   last4: string;
   status: "active" | "invalid" | "out_of_credit";
   readable: boolean;
+  serviceUnavailable?: boolean;
   lastValidatedAt: number;
 };
 
@@ -170,9 +171,11 @@ function ProviderKeyCard({
 
   const status = !saved
     ? "notSet"
-    : !saved.readable
-      ? "unreadable"
-      : saved.status;
+    : saved.serviceUnavailable
+      ? "serviceUnavailable"
+      : !saved.readable
+        ? "unreadable"
+        : saved.status;
   const healthy = status === "active";
   const showForm = !saved || editing;
 
@@ -356,7 +359,7 @@ function ProviderKeyCard({
           >
             {t("profile.providerKeys.replace")}
           </button>
-          {saved?.readable && (
+          {saved?.readable && !saved.serviceUnavailable && (
             <button
               type="button"
               onClick={() => void run(() => revalidateKey({ provider }))}

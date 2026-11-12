@@ -242,6 +242,7 @@ export const cleanupEmbeddingUsageReservations = internalMutation({
       .query("embeddingUsageReservations")
       .withIndex("by_status_and_expiration", (q) => q.eq("status", "ambiguous"))
       .take(USAGE_RESERVATION_CLEANUP_LIMIT);
+    let releasedAmbiguous = 0;
     for (const reservation of ambiguous) {
       if (reservation.settlementState === "staged") continue;
       await ctx.db.patch(reservation._id, {
@@ -249,6 +250,7 @@ export const cleanupEmbeddingUsageReservations = internalMutation({
         releaseReason: "embeddings_retired",
         updatedAt: now,
       });
+      releasedAmbiguous++;
     }
 
     const retentionCutoff = now - USAGE_RESERVATION_RETENTION_MS;
@@ -273,7 +275,10 @@ export const cleanupEmbeddingUsageReservations = internalMutation({
 
     const continuationScheduled =
       expiredPending.length === USAGE_RESERVATION_CLEANUP_LIMIT ||
-      ambiguous.length === USAGE_RESERVATION_CLEANUP_LIMIT ||
+      // A full page of staged rows made no progress; their settlement cron
+      // handles them, so rescheduling would only loop.
+      (ambiguous.length === USAGE_RESERVATION_CLEANUP_LIMIT &&
+        releasedAmbiguous > 0) ||
       retainedHistoryProcessed === USAGE_RESERVATION_CLEANUP_LIMIT;
     if (continuationScheduled) {
       await ctx.scheduler.runAfter(
