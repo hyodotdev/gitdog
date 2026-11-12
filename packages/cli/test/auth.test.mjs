@@ -497,7 +497,7 @@ test("a lock left by a dead process is recovered; a live owner is respected", as
   await writeFile(lock, String(process.ppid));
   await assert.rejects(
     store.locked(async () => "ran", Date.now() + 300),
-    /another Gitdog process|lock timed out/i,
+    /Authentication lock timed out/,
   );
   assert.equal(await readFile(lock, "utf8"), String(process.ppid));
 });
@@ -519,7 +519,7 @@ test("stale recovery respects another cleaner and keeps waiting callbacks exclus
       async () => assert.fail("another cleaner owns recovery"),
       Date.now() + 150,
     ),
-    /another Gitdog process|lock timed out/i,
+    /Authentication lock timed out/,
   );
   assert.equal(await readFile(lock, "utf8"), String(child.pid));
   await rmdir(`${lock}.recovery`);
