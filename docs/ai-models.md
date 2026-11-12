@@ -19,6 +19,26 @@ CLI never hold provider keys.
   switch.
 - `AI_GENERATION_ROUTE=claude-openai` is the only supported route.
 
+## Your own provider keys
+
+Users can add their own Anthropic and/or OpenAI API key under **Profile → Your
+AI provider keys**. Generation for repositories they own (issue and discussion
+replies, follow-ups, pull request reviews and learning extraction) then runs on
+those keys instead of Gitdog's:
+
+- Claude runs on the user's Anthropic key and is not affected by Gitdog's
+  Claude deadline. The user's OpenAI key is used if only it is saved, if the
+  Anthropic key is rejected, or if Claude reports exhausted credit.
+- A failing user key never falls back to Gitdog's keys. The request fails with
+  an actionable message, and the key is marked as rejected or out of credit.
+- An action that started on a user key cannot be finished on Gitdog's key.
+- This usage is recorded with `keySource: "user"`. It does not consume
+  included or prepaid tokens and is shown separately on the Usage page.
+- Repository embeddings stay on Gitdog's OpenAI key and quota; when that quota
+  is exhausted, search falls back to keyword retrieval.
+- Keys are validated against the generation model on save, encrypted with
+  AES-256-GCM using `BYOK_ENCRYPTION_KEY`, and never returned to clients.
+
 ## Authentication
 
 - OpenAI uses a restricted API key per environment (`OPENAI_API_KEY`).
