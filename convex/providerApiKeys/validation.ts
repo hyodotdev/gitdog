@@ -44,6 +44,10 @@ export async function validateProviderKey(
   switch (true) {
     case response.ok:
       return { ok: true };
+    // Restricted OpenAI project keys may lack Models:read; a 403 still
+    // proves the key authenticated.
+    case provider === "openai" && response.status === 403:
+      return { ok: true };
     case response.status === 401 || response.status === 403:
       return { ok: false, code: "invalid", httpStatus: response.status };
     case response.status === 404:

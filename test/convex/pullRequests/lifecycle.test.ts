@@ -13,6 +13,7 @@ import {
 } from "../../../convex/users/legal";
 import { drainScheduledFunctions } from "../scheduling";
 import { PRICING } from "../../../convex/_ai/config";
+import { encryptProviderKey } from "../../../convex/providerApiKeys/crypto";
 const modules = import.meta.glob("../../../convex/**/*.ts");
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => {
@@ -1383,6 +1384,49 @@ describe("batched PR reviews", () => {
     });
     expect((await f.getAction())?.status).toBe("pending");
     expect(f.fetch).not.toHaveBeenCalled();
+  });
+
+  it("runs every batch on the owner's own key without a quota hold", async () => {
+    const previousKey = process.env.BYOK_ENCRYPTION_KEY;
+    process.env.BYOK_ENCRYPTION_KEY = btoa("k".repeat(32));
+    try {
+      const f = await batchFixture(undefined, 2, 0, [], 3);
+      const apiKey = `sk-proj-${"b".repeat(40)}`;
+      await f.t.mutation(internal.providerApiKeys.internalMutation.upsert, {
+        userId: f.userId,
+        provider: "openai",
+        ...(await encryptProviderKey(f.userId, "openai", apiKey)),
+        last4: apiKey.slice(-4),
+      });
+      await f.generate();
+      expect(await f.getAction()).toMatchObject({
+        status: "pending",
+        reviewBatch: { page: 1, group: 1, claimed: false },
+      });
+      expect(await f.getAction()).not.toHaveProperty("reviewQuotaHold");
+      await f.generate(1, 1);
+      await drainScheduledFunctions(f.t);
+      expect(f.batches.map((key) => key.split("/batch/")[1])).toEqual([
+        "1/1",
+        "1/2",
+        "1/3",
+      ]);
+      const billing = await import("../../../convex/_ai/chatBilling");
+      expect(
+        vi
+          .mocked(billing.createMeteredProvider)
+          .mock.calls.every(([, args]) => args.provider.keySource === "user"),
+      ).toBe(true);
+      const action = await f.getAction();
+      expect(action).toMatchObject({
+        status: "completed",
+        executionResult: { published: true, reviewId: 87 },
+      });
+      expect(action).not.toHaveProperty("reviewQuotaUserId");
+    } finally {
+      if (previousKey === undefined) delete process.env.BYOK_ENCRYPTION_KEY;
+      else process.env.BYOK_ENCRYPTION_KEY = previousKey;
+    }
   });
 
   it("refuses a batched review the remaining tokens cannot cover before any model call", async () => {

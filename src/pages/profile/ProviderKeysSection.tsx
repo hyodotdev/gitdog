@@ -25,16 +25,14 @@ const PROVIDERS: Array<{
     provider: "openai",
     label: "OpenAI",
     placeholder: "sk-...",
-    pattern: /^sk-[A-Za-z0-9_-]{20,500}$/,
+    pattern: /^sk-(?!ant-)[A-Za-z0-9_-]{20,500}$/,
   },
 ];
 
-function serverMessage(error: unknown): string {
-  if (error instanceof ConvexError) {
-    const data = error.data as { message?: unknown };
-    if (typeof data?.message === "string") return data.message;
-  }
-  return error instanceof Error ? error.message : "";
+function serverReason(error: unknown): string | null {
+  if (!(error instanceof ConvexError)) return null;
+  const data = error.data as { reason?: unknown };
+  return typeof data?.reason === "string" ? data.reason : null;
 }
 
 function ProviderKeyCard({
@@ -62,22 +60,31 @@ function ProviderKeyCard({
   const [error, setError] = useState<string | null>(null);
 
   const translateError = (cause: unknown) => {
-    const message = serverMessage(cause).toLowerCase();
-    switch (true) {
-      case message.includes("rejected"):
+    switch (serverReason(cause)) {
+      case "invalid_key":
         return t("profile.providerKeys.errors.rejected", { provider: label });
-      case message.includes("no access"):
+      case "no_model_access":
         return t("profile.providerKeys.errors.noModelAccess", {
           provider: label,
         });
-      case message.includes("wait a few seconds"):
-        return t("profile.providerKeys.errors.throttled");
-      case message.includes("enter this api key again"):
+      case "wrong_provider":
+        return t("profile.providerKeys.errors.wrongProvider", {
+          provider: label,
+        });
+      case "malformed":
+        return t("profile.providerKeys.errors.format", { provider: label });
+      case "rate_limited":
+        return t("profile.providerKeys.errors.rateLimited");
+      case "not_configured":
+        return t("profile.providerKeys.errors.notConfigured");
+      case "unreadable":
         return t("profile.providerKeys.errors.reenter");
-      default:
+      case "validation_unavailable":
         return t("profile.providerKeys.errors.unavailable", {
           provider: label,
         });
+      default:
+        return t("common.error");
     }
   };
 
@@ -99,7 +106,14 @@ function ProviderKeyCard({
     event.preventDefault();
     const trimmed = apiKey.trim();
     if (!pattern.test(trimmed)) {
-      setError(t("profile.providerKeys.errors.format", { provider: label }));
+      const other = PROVIDERS.find(
+        (entry) => entry.provider !== provider && entry.pattern.test(trimmed),
+      );
+      setError(
+        other
+          ? t("profile.providerKeys.errors.wrongProvider", { provider: label })
+          : t("profile.providerKeys.errors.format", { provider: label }),
+      );
       return;
     }
     if (await run(() => saveKey({ provider, apiKey: trimmed }))) {

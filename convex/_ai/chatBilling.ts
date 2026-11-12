@@ -2,6 +2,8 @@ import { internal } from "../_generated/api";
 import { chatRequestBytes } from "./requestSize";
 import { ChatProviderRequestError } from "./providerErrors";
 import { CreditFallbackProvider } from "./providers";
+import { UserApiKeyError } from "./providerResolution";
+import { isUsableProviderKey } from "../providerApiKeys/usability";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { ActionCtx, MutationCtx } from "../_generated/server";
 import { internalMutation, internalQuery } from "../_generated/server";
@@ -664,15 +666,6 @@ async function checkKeySource(
     : { allowed: false, reason: "user_key_unavailable" };
 }
 
-async function pinUserKeySource(
-  ctx: MutationCtx,
-  args: { keySource?: "user" },
-  action: Doc<"ticketActions">,
-): Promise<void> {
-  if (args.keySource === "user" && action.aiKeySource !== "user")
-    await ctx.db.patch(action._id, { aiKeySource: "user" });
-}
-
 // Calls on the user's own provider key hold no Gitdog quota. The snapshot has
 // no subscription, so Pro boundary settlement never sees these reservations.
 function userKeyQuotaSnapshot(now: number): ChatQuotaSnapshot {
@@ -697,7 +690,7 @@ async function hasUsableUserKey(
       q.eq("userId", userId).eq("provider", provider),
     )
     .unique();
-  return key !== null && key.status !== "invalid";
+  return key !== null && isUsableProviderKey(key, Date.now());
 }
 
 async function checkReservationQuota(
@@ -883,7 +876,17 @@ export const reserveChatUsage = internalMutation({
           reason: "provider_attempt_in_progress" as const,
         };
       }
+      // Gitdog has no billing exposure for an unresolved call on the user's
+      // own key, so a retry may take the reservation over instead of
+      // waiting for a reconciliation that never happens.
+      const abandonedUserKeyAttempt =
+        existing.keySource === "user" &&
+        (existing.status === "ambiguous" ||
+          (existing.status === "pending" &&
+            existing.expiresAt <= now &&
+            existing.providerStartedAt !== undefined));
       if (
+        !abandonedUserKeyAttempt &&
         existing.status === "pending" &&
         existing.expiresAt <= now &&
         existing.providerStartedAt !== undefined
@@ -909,7 +912,7 @@ export const reserveChatUsage = internalMutation({
         existing.status === "pending" &&
         existing.expiresAt <= now &&
         existing.providerStartedAt === undefined;
-      if (safelyReleased || safelyExpired) {
+      if (safelyReleased || safelyExpired || abandonedUserKeyAttempt) {
         const quota = await checkReservationQuota(ctx, {
           userId: args.userId,
           keySource: args.keySource,
@@ -917,7 +920,6 @@ export const reserveChatUsage = internalMutation({
           now,
         });
         if (!quota.allowed) return quota;
-        await pinUserKeySource(ctx, args, action);
         await ctx.db.patch(existing._id, {
           attemptToken: args.attemptToken,
           model: args.model,
@@ -976,7 +978,7 @@ export const reserveChatUsage = internalMutation({
       now,
     });
     if (!quota.allowed) return quota;
-    await pinUserKeySource(ctx, args, action);
+
     await ctx.db.insert("chatUsageReservations", {
       ...args,
       requirePendingTicketAction: args.requirePendingTicketAction,
@@ -1054,6 +1056,17 @@ export const markChatProviderStarted = internalMutation({
     // Calls on the user's own key spend nothing of Gitdog's, so they neither
     // wait for nor block Gitdog-paid work on the account.
     if (reservation.keySource === "user") {
+      if (!(await hasUsableUserKey(ctx, args.userId, reservation.provider))) {
+        return {
+          started: false as const,
+          reason: "user_key_unavailable" as const,
+        };
+      }
+      // Pin only once a request really goes out on the user's key, so a
+      // retry can never finish this action on Gitdog's key.
+      const action = await ctx.db.get(reservation.ticketActionId);
+      if (action && action.aiKeySource !== "user")
+        await ctx.db.patch(action._id, { aiKeySource: "user" });
       await ctx.db.patch(reservation._id, {
         providerStartedAt: now,
         updatedAt: now,
@@ -2624,8 +2637,26 @@ type ChatProviderStartResult =
         | "provider_attempt_in_progress"
         | "reservation_history_too_large"
         | "reservation_closed"
-        | "unresolved_provider_usage";
+        | "unresolved_provider_usage"
+        | "user_key_unavailable";
     };
+
+// A user-key refusal is the user's to fix, so it surfaces as the same
+// actionable not-billed error the provider itself would raise.
+function reservationRefusal(
+  reason: ReservationFailureReason,
+  providerId: string,
+): Error {
+  const keyProvider = providerId === "openai" ? "openai" : "anthropic";
+  switch (reason) {
+    case "user_key_unavailable":
+      return new UserApiKeyError("unavailable", keyProvider);
+    case "user_key_required":
+      return new UserApiKeyError("removed", keyProvider);
+    default:
+      return new ChatBillingError(reservationErrorMessage(reason), reason);
+  }
+}
 
 async function markChatProviderStartedWithMutationRetry(
   ctx: ActionCtx,
@@ -2763,10 +2794,7 @@ export function createMeteredProvider(
         if (reservation.resultCheckpointJson) {
           return parseChatResultCheckpoint(reservation.resultCheckpointJson);
         }
-        throw new ChatBillingError(
-          reservationErrorMessage(reservation.reason),
-          reservation.reason,
-        );
+        throw reservationRefusal(reservation.reason, provider);
       }
 
       const identity = {
@@ -2801,10 +2829,7 @@ export function createMeteredProvider(
             ...identity,
             confirmedNotBilled: true,
           });
-          throw new ChatBillingError(
-            reservationErrorMessage(providerStart.reason),
-            providerStart.reason,
-          );
+          throw reservationRefusal(providerStart.reason, provider);
         }
 
         const result = await args.provider.chat(messages, options);

@@ -2,7 +2,7 @@ import { internalAction } from "../_generated/server";
 import type { ActionCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { v } from "convex/values";
-import type { AiProvider } from "../_ai/model";
+import { getDefaultAiModel, type AiProvider } from "../_ai/model";
 import {
   resolveGenerationProvider,
   UserApiKeyError,
@@ -608,8 +608,13 @@ export const regenerateWithFeedback = internalAction({
       });
     } catch (error) {
       if (!(error instanceof UserApiKeyError)) throw error;
-      await failPendingGeneration(error.message);
-      return;
+      // A checkpointed result replays without calling any provider, so a
+      // removed or failing key must not block it.
+      if (!replayAuthorized) {
+        await failPendingGeneration(error.message);
+        return;
+      }
+      rawAiProvider = getDefaultAiModel();
     }
     // Replaying an already billed checkpoint spends no new quota, and a
     // request on the owner's own key spends none of Gitdog's.
@@ -1461,8 +1466,13 @@ export const processFollowUp = internalAction({
       });
     } catch (error) {
       if (!(error instanceof UserApiKeyError)) throw error;
-      await failPendingGeneration(error.message);
-      return;
+      // A checkpointed result replays without calling any provider, so a
+      // removed or failing key must not block it.
+      if (!replayAuthorized) {
+        await failPendingGeneration(error.message);
+        return;
+      }
+      rawAiProvider = getDefaultAiModel();
     }
     // Replaying an already billed checkpoint spends no new quota, and a
     // request on the owner's own key spends none of Gitdog's.

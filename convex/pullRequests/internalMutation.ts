@@ -8,6 +8,7 @@ import {
 } from "../github/installationAccess";
 import { hasCurrentLegalAttestation } from "../users/legal";
 import { checkAccountTokenAllowance } from "../subscriptions/internalQuery";
+import { isUsableProviderKey } from "../providerApiKeys/usability";
 import type { ReviewQuotaRefusal } from "./errors";
 import {
   combinedReviewBody,
@@ -550,7 +551,8 @@ export const reserveBatchedReviewQuota = internalMutation({
         .query("providerApiKeys")
         .withIndex("by_user_and_provider", (q) => q.eq("userId", ticket.userId))
         .collect();
-      return keys.some((key) => key.status !== "invalid")
+      const now = Date.now();
+      return keys.some((key) => isUsableProviderKey(key, now))
         ? { reserved: true }
         : {
             reserved: false,

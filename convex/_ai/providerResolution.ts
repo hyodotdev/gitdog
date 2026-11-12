@@ -13,6 +13,7 @@ import {
   type ChatCompletionResult,
   type ChatMessage,
 } from "./model";
+import { isUsableProviderKey } from "../providerApiKeys/usability";
 import { ChatProviderRequestError } from "./providerErrors";
 import {
   ClaudeProvider,
@@ -26,7 +27,12 @@ const PROVIDER_NAMES: Record<KeyProvider, string> = {
 };
 
 export type UserApiKeyErrorCode =
-  "invalid" | "out_of_credit" | "rate_limited" | "removed";
+  | "invalid"
+  | "out_of_credit"
+  | "rate_limited"
+  | "removed"
+  | "unavailable"
+  | "unreadable";
 
 function userKeyMessage(code: UserApiKeyErrorCode, provider: KeyProvider) {
   const name = PROVIDER_NAMES[provider];
@@ -39,6 +45,10 @@ function userKeyMessage(code: UserApiKeyErrorCode, provider: KeyProvider) {
       return `Your ${name} API key hit its rate limit. Try again shortly.`;
     case "removed":
       return "This request started on your own API key, which has been removed. Add a key again in Gitdog settings.";
+    case "unavailable":
+      return `Your ${name} API key is no longer available. Add it again in Gitdog settings.`;
+    case "unreadable":
+      return `Your ${name} API key can no longer be read. Enter it again in Gitdog settings.`;
   }
 }
 
@@ -52,8 +62,8 @@ export class UserApiKeyError extends ChatProviderRequestError {
     super(
       userKeyMessage(code, keyProvider),
       base?.billingOutcome ?? "not_billed",
-      // An invalid key may still fall back to the user's other key.
-      code === "invalid"
+      // A rejected or missing key may still fall back to the user's other key.
+      code === "invalid" || code === "unavailable"
         ? { ...base?.options, unavailable: true }
         : (base?.options ?? {}),
     );
@@ -122,17 +132,15 @@ class UserKeyProvider implements AiProvider {
 async function userKeyLeaf(
   ctx: ActionCtx,
   row: Doc<"providerApiKeys">,
-): Promise<AiProvider | null> {
+): Promise<AiProvider | "unreadable"> {
   let apiKey: string;
   try {
     apiKey = await decryptProviderKey(row);
   } catch (error) {
-    if (!(error instanceof ProviderKeyEncryptionError)) throw error;
-    await ctx.runMutation(
-      internal.providerApiKeys.internalMutation.recordKeyFailure,
-      { userId: row.userId, provider: row.provider, code: "invalid" },
-    );
-    return null;
+    // A server-side encryption problem says nothing about the provider key,
+    // so the saved status is left unchanged.
+    if (error instanceof ProviderKeyEncryptionError) return "unreadable";
+    throw error;
   }
   return new UserKeyProvider(
     ctx,
@@ -168,11 +176,14 @@ export async function resolveGenerationProvider(
       throw new UserApiKeyError("removed", "anthropic");
     return getDefaultAiModel();
   }
+  const now = Date.now();
   const leaves = new Map<KeyProvider, AiProvider>();
+  let unreadable: KeyProvider | undefined;
   for (const row of rows) {
-    if (row.status === "invalid") continue;
+    if (!isUsableProviderKey(row, now)) continue;
     const leaf = await userKeyLeaf(ctx, row);
-    if (leaf) leaves.set(row.provider, leaf);
+    if (leaf === "unreadable") unreadable = row.provider;
+    else leaves.set(row.provider, leaf);
   }
   const anthropic = leaves.get("anthropic");
   const openai = leaves.get("openai");
@@ -182,6 +193,10 @@ export async function resolveGenerationProvider(
     });
   const only = anthropic ?? openai;
   if (only) return only;
+  if (unreadable) throw new UserApiKeyError("unreadable", unreadable);
+  const outOfCredit = rows.find((row) => row.status === "out_of_credit");
+  if (outOfCredit)
+    throw new UserApiKeyError("out_of_credit", outOfCredit.provider);
   throw new UserApiKeyError("invalid", rows[0].provider);
 }
 

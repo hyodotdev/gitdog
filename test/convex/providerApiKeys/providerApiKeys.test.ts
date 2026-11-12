@@ -35,7 +35,6 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
-  vi.useRealTimers();
   if (originalEncryptionKey === undefined)
     delete process.env.BYOK_ENCRYPTION_KEY;
   else process.env.BYOK_ENCRYPTION_KEY = originalEncryptionKey;
@@ -155,15 +154,13 @@ describe("provider key management", () => {
         provider: "openai",
         apiKey: OPENAI_KEY,
       }),
-    ).rejects.toThrow("rejected");
-    vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(Date.now() + 60_000);
+    ).rejects.toMatchObject({ data: { reason: "invalid_key" } });
     await expect(
       as.action(api.providerApiKeys.action.save, {
         provider: "openai",
         apiKey: OPENAI_KEY,
       }),
-    ).rejects.toThrow("no access");
+    ).rejects.toMatchObject({ data: { reason: "no_model_access" } });
     await expect(
       t.run(async (ctx) => ctx.db.query("providerApiKeys").collect()),
     ).resolves.toEqual([]);
@@ -178,17 +175,121 @@ describe("provider key management", () => {
         provider: "anthropic",
         apiKey: OPENAI_KEY,
       }),
-    ).rejects.toThrow("does not look like");
+    ).rejects.toMatchObject({ data: { reason: "wrong_provider" } });
+    await expect(
+      as.action(api.providerApiKeys.action.save, {
+        provider: "openai",
+        apiKey: ANTHROPIC_KEY,
+      }),
+    ).rejects.toMatchObject({
+      data: {
+        reason: "wrong_provider",
+        message: "This looks like an Anthropic API key.",
+      },
+    });
+    await expect(
+      as.action(api.providerApiKeys.action.save, {
+        provider: "openai",
+        apiKey: "not-a-key",
+      }),
+    ).rejects.toMatchObject({ data: { reason: "malformed" } });
     await expect(
       t.action(api.providerApiKeys.action.save, {
         provider: "anthropic",
         apiKey: ANTHROPIC_KEY,
       }),
-    ).rejects.toThrow("Sign in");
+    ).rejects.toMatchObject({ data: { reason: "unauthorized" } });
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it("throttles repeated validation and removes a saved key", async () => {
+  it("limits key checks per user across providers, even before a key is saved", async () => {
+    const t = convexTest(schema, modules);
+    const { as } = await signedIn(t);
+    const fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response("{}", { status: 401 }));
+    for (const [provider, apiKey] of [
+      ["anthropic", ANTHROPIC_KEY],
+      ["openai", OPENAI_KEY],
+      ["anthropic", ANTHROPIC_KEY],
+      ["openai", OPENAI_KEY],
+      ["anthropic", ANTHROPIC_KEY],
+    ] as const) {
+      await expect(
+        as.action(api.providerApiKeys.action.save, { provider, apiKey }),
+      ).rejects.toMatchObject({ data: { reason: "invalid_key" } });
+    }
+    await expect(
+      as.action(api.providerApiKeys.action.save, {
+        provider: "openai",
+        apiKey: OPENAI_KEY,
+      }),
+    ).rejects.toMatchObject({ data: { reason: "rate_limited" } });
+    expect(fetch).toHaveBeenCalledTimes(5);
+
+    // Another user has an independent allowance.
+    const other = await signedIn(t);
+    fetch.mockResolvedValue(new Response("{}", { status: 200 }));
+    await expect(
+      other.as.action(api.providerApiKeys.action.save, {
+        provider: "openai",
+        apiKey: OPENAI_KEY,
+      }),
+    ).resolves.toMatchObject({ status: "active" });
+  });
+
+  it("accepts a restricted OpenAI key that cannot list models", async () => {
+    const t = convexTest(schema, modules);
+    const { as } = await signedIn(t);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("{}", { status: 403 }),
+    );
+    await expect(
+      as.action(api.providerApiKeys.action.save, {
+        provider: "openai",
+        apiKey: OPENAI_KEY,
+      }),
+    ).resolves.toMatchObject({ status: "active" });
+    await expect(
+      as.action(api.providerApiKeys.action.save, {
+        provider: "anthropic",
+        apiKey: ANTHROPIC_KEY,
+      }),
+    ).rejects.toMatchObject({ data: { reason: "invalid_key" } });
+  });
+
+  it("reports configuration problems without touching saved key status", async () => {
+    const t = convexTest(schema, modules);
+    const { userId, as } = await signedIn(t);
+    const fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response("{}", { status: 200 }));
+    await as.action(api.providerApiKeys.action.save, {
+      provider: "openai",
+      apiKey: OPENAI_KEY,
+    });
+    process.env.BYOK_ENCRYPTION_KEY = btoa("z".repeat(32));
+    await expect(
+      as.action(api.providerApiKeys.action.revalidate, { provider: "openai" }),
+    ).rejects.toMatchObject({ data: { reason: "unreadable" } });
+    delete process.env.BYOK_ENCRYPTION_KEY;
+    await expect(
+      as.action(api.providerApiKeys.action.save, {
+        provider: "anthropic",
+        apiKey: ANTHROPIC_KEY,
+      }),
+    ).rejects.toMatchObject({ data: { reason: "not_configured" } });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const rows = await t.run(async (ctx) =>
+      ctx.db.query("providerApiKeys").collect(),
+    );
+    expect(rows).toEqual([
+      expect.objectContaining({ userId, provider: "openai", status: "active" }),
+    ]);
+    expect(rows[0].lastError).toBeUndefined();
+  });
+
+  it("records failures and removes a saved key", async () => {
     const t = convexTest(schema, modules);
     const { userId, as } = await signedIn(t);
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
@@ -198,13 +299,6 @@ describe("provider key management", () => {
       provider: "openai",
       apiKey: OPENAI_KEY,
     });
-    await expect(
-      as.action(api.providerApiKeys.action.save, {
-        provider: "openai",
-        apiKey: OPENAI_KEY,
-      }),
-    ).rejects.toThrow("Wait a few seconds");
-
     await t.mutation(
       internal.providerApiKeys.internalMutation.recordKeyFailure,
       { userId, provider: "openai", code: "out_of_credit", httpStatus: 429 },
@@ -217,6 +311,9 @@ describe("provider key management", () => {
         }),
       ],
     );
+    await expect(
+      as.action(api.providerApiKeys.action.revalidate, { provider: "openai" }),
+    ).resolves.toEqual({ provider: "openai", status: "active" });
 
     await expect(
       as.mutation(api.providerApiKeys.mutation.remove, { provider: "openai" }),

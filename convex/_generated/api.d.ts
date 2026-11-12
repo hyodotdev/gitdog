@@ -31,6 +31,7 @@ import type * as _ai_learning_prompts from "../_ai/learning/prompts.js";
 import type * as _ai_legalAttestation from "../_ai/legalAttestation.js";
 import type * as _ai_model from "../_ai/model.js";
 import type * as _ai_providerErrors from "../_ai/providerErrors.js";
+import type * as _ai_providerResolution from "../_ai/providerResolution.js";
 import type * as _ai_providers from "../_ai/providers.js";
 import type * as _ai_requestSize from "../_ai/requestSize.js";
 import type * as _ai_responseValidation from "../_ai/responseValidation.js";
@@ -91,6 +92,7 @@ import type * as providerApiKeys_internalMutation from "../providerApiKeys/inter
 import type * as providerApiKeys_internalQuery from "../providerApiKeys/internalQuery.js";
 import type * as providerApiKeys_mutation from "../providerApiKeys/mutation.js";
 import type * as providerApiKeys_query from "../providerApiKeys/query.js";
+import type * as providerApiKeys_usability from "../providerApiKeys/usability.js";
 import type * as providerApiKeys_validation from "../providerApiKeys/validation.js";
 import type * as pullRequests_action from "../pullRequests/action.js";
 import type * as pullRequests_context from "../pullRequests/context.js";
@@ -194,6 +196,7 @@ declare const fullApi: ApiFromModules<{
   "_ai/legalAttestation": typeof _ai_legalAttestation;
   "_ai/model": typeof _ai_model;
   "_ai/providerErrors": typeof _ai_providerErrors;
+  "_ai/providerResolution": typeof _ai_providerResolution;
   "_ai/providers": typeof _ai_providers;
   "_ai/requestSize": typeof _ai_requestSize;
   "_ai/responseValidation": typeof _ai_responseValidation;
@@ -254,6 +257,7 @@ declare const fullApi: ApiFromModules<{
   "providerApiKeys/internalQuery": typeof providerApiKeys_internalQuery;
   "providerApiKeys/mutation": typeof providerApiKeys_mutation;
   "providerApiKeys/query": typeof providerApiKeys_query;
+  "providerApiKeys/usability": typeof providerApiKeys_usability;
   "providerApiKeys/validation": typeof providerApiKeys_validation;
   "pullRequests/action": typeof pullRequests_action;
   "pullRequests/context": typeof pullRequests_context;

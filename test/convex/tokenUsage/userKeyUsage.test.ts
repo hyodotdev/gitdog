@@ -21,6 +21,7 @@ import {
 } from "../../../convex/_ai/providerResolution";
 import { CreditFallbackProvider } from "../../../convex/_ai/providers";
 import { encryptProviderKey } from "../../../convex/providerApiKeys/crypto";
+import { OUT_OF_CREDIT_RETRY_MS } from "../../../convex/providerApiKeys/usability";
 import {
   getUsageHourStart,
   insertTokenUsage,
@@ -316,7 +317,7 @@ describe("generation on the owner's own provider key", () => {
     ).resolves.toEqual({ allowed: false, reason: "limit_reached" });
   });
 
-  it("refuses a user-key reservation without a usable key and pins started actions", async () => {
+  it("refuses a user-key reservation without a usable key and pins only started actions", async () => {
     const t = convexTest(schema, modules);
     const fixture = await insertFixture(t);
     await expect(
@@ -327,12 +328,53 @@ describe("generation on the owner's own provider key", () => {
     ).resolves.toEqual({ allowed: false, reason: "user_key_unavailable" });
 
     await saveKey(t, fixture.userId, "anthropic", ANTHROPIC_KEY);
+    const userArgs = reservation(
+      fixture,
+      "with-key",
+      fixture.ticketActionId,
+      "user",
+    );
+    await expect(
+      t.mutation(internal._ai.chatBilling.reserveChatUsage, userArgs),
+    ).resolves.toMatchObject({ allowed: true });
+    // A reservation that never reaches the provider does not pin the action.
+    await t.mutation(internal._ai.chatBilling.releaseChatUsage, {
+      reservationKey: userArgs.reservationKey,
+      attemptToken: userArgs.attemptToken,
+      userId: fixture.userId,
+      repositoryId: fixture.repositoryId,
+      ticketActionId: fixture.ticketActionId,
+      confirmedNotBilled: true,
+    });
+    expect(
+      (await t.run(async (ctx) => ctx.db.get(fixture.ticketActionId)))
+        ?.aiKeySource,
+    ).toBeUndefined();
     await expect(
       t.mutation(
         internal._ai.chatBilling.reserveChatUsage,
-        reservation(fixture, "with-key", fixture.ticketActionId, "user"),
+        reservation(fixture, "gitdog-before-start"),
       ),
     ).resolves.toMatchObject({ allowed: true });
+
+    const started = reservation(
+      fixture,
+      "started",
+      fixture.ticketActionId,
+      "user",
+    );
+    await t.mutation(internal._ai.chatBilling.reserveChatUsage, started);
+    await t.mutation(internal._ai.chatBilling.markChatProviderStarted, {
+      reservationKey: started.reservationKey,
+      attemptToken: started.attemptToken,
+      userId: fixture.userId,
+      repositoryId: fixture.repositoryId,
+      ticketActionId: fixture.ticketActionId,
+    });
+    expect(
+      (await t.run(async (ctx) => ctx.db.get(fixture.ticketActionId)))
+        ?.aiKeySource,
+    ).toBe("user");
     await expect(
       t.mutation(
         internal._ai.chatBilling.reserveChatUsage,
@@ -355,6 +397,127 @@ describe("generation on the owner's own provider key", () => {
         reservation(fixture, "invalid-key", fixture.ticketActionId, "user"),
       ),
     ).resolves.toEqual({ allowed: false, reason: "user_key_unavailable" });
+  });
+
+  it("refuses to start a user-key call whose key was removed after reserving", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await insertFixture(t);
+    await saveKey(t, fixture.userId, "anthropic", ANTHROPIC_KEY);
+    const args = reservation(fixture, "race", fixture.ticketActionId, "user");
+    await t.mutation(internal._ai.chatBilling.reserveChatUsage, args);
+    await t.run(async (ctx) => {
+      for (const key of await ctx.db.query("providerApiKeys").collect())
+        await ctx.db.delete(key._id);
+    });
+    await expect(
+      t.mutation(internal._ai.chatBilling.markChatProviderStarted, {
+        reservationKey: args.reservationKey,
+        attemptToken: args.attemptToken,
+        userId: fixture.userId,
+        repositoryId: fixture.repositoryId,
+        ticketActionId: fixture.ticketActionId,
+      }),
+    ).resolves.toEqual({ started: false, reason: "user_key_unavailable" });
+    expect(
+      (await t.run(async (ctx) => ctx.db.get(fixture.ticketActionId)))
+        ?.aiKeySource,
+    ).toBeUndefined();
+  });
+
+  it("surfaces a key removed mid-request as an actionable provider error", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await insertFixture(t);
+    const provider = createMeteredProvider(actionCtx(t), {
+      ...fixture,
+      generationKey: "missing-key",
+      operation: "user-key-test",
+      provider: userKeyProvider(),
+      requirePendingTicketAction: true,
+    });
+    await expect(
+      provider.chat(question, { maxTokens: 16, billingLabel: "answer" }),
+    ).rejects.toMatchObject({
+      name: "UserApiKeyError",
+      code: "unavailable",
+      billingOutcome: "not_billed",
+      message: expect.stringContaining("Gitdog settings"),
+    });
+  });
+
+  it("lets a retry take over an ambiguous user-key reservation", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await insertFixture(t);
+    await saveKey(t, fixture.userId, "anthropic", ANTHROPIC_KEY);
+    const first = reservation(fixture, "retry", fixture.ticketActionId, "user");
+    await t.mutation(internal._ai.chatBilling.reserveChatUsage, first);
+    await t.mutation(internal._ai.chatBilling.markChatProviderStarted, {
+      reservationKey: first.reservationKey,
+      attemptToken: first.attemptToken,
+      userId: fixture.userId,
+      repositoryId: fixture.repositoryId,
+      ticketActionId: fixture.ticketActionId,
+    });
+    await t.mutation(internal._ai.chatBilling.markChatUsageAmbiguous, {
+      reservationKey: first.reservationKey,
+      attemptToken: first.attemptToken,
+      userId: fixture.userId,
+      repositoryId: fixture.repositoryId,
+      ticketActionId: fixture.ticketActionId,
+    });
+    expect(
+      (
+        await t.run(async (ctx) =>
+          ctx.db.query("chatUsageReservations").first(),
+        )
+      )?.status,
+    ).toBe("ambiguous");
+    const retry = {
+      ...first,
+      attemptToken: `${first.reservationKey}:attempt:2`,
+    };
+    await expect(
+      t.mutation(internal._ai.chatBilling.reserveChatUsage, retry),
+    ).resolves.toEqual({ allowed: true, reservationKey: first.reservationKey });
+    expect(
+      await t.run(async (ctx) => ctx.db.query("chatUsageReservations").first()),
+    ).toMatchObject({
+      status: "pending",
+      attemptToken: retry.attemptToken,
+      keySource: "user",
+    });
+  });
+
+  it("replays a pinned action's checkpoint after its key is removed", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await insertFixture(t);
+    await saveKey(t, fixture.userId, "anthropic", ANTHROPIC_KEY);
+    const meter = (provider: AiProvider) =>
+      createMeteredProvider(actionCtx(t), {
+        ...fixture,
+        generationKey: "replay",
+        operation: "user-key-test",
+        provider,
+        requirePendingTicketAction: true,
+      });
+    const original = await meter(userKeyProvider()).chat(question, {
+      maxTokens: 16,
+      billingLabel: "answer",
+    });
+    await t.run(async (ctx) => {
+      for (const key of await ctx.db.query("providerApiKeys").collect())
+        await ctx.db.delete(key._id);
+    });
+    const gitdogRoute = { ...userKeyProvider(), keySource: undefined };
+    await expect(
+      meter(gitdogRoute).chat(question, {
+        maxTokens: 16,
+        billingLabel: "answer",
+      }),
+    ).resolves.toMatchObject({
+      content: original.content,
+      providerRequestId: original.providerRequestId,
+    });
+    expect(gitdogRoute.chat).not.toHaveBeenCalled();
   });
 
   it("keeps in-flight user-key calls out of Gitdog quota guards", async () => {
@@ -574,6 +737,78 @@ describe("provider resolution with user keys", () => {
     await expect(
       resolveGenerationProvider(actionCtx(t), { userId: fixture.userId }),
     ).rejects.toBeInstanceOf(UserApiKeyError);
+  });
+
+  it("falls back to the owner's OpenAI key when Anthropic rejects it mid-request", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await insertFixture(t);
+    await saveKey(t, fixture.userId, "anthropic", ANTHROPIC_KEY);
+    await saveKey(t, fixture.userId, "openai", OPENAI_KEY);
+    const ctx = actionCtx(t);
+    const provider = createMeteredProvider(ctx, {
+      ...fixture,
+      generationKey: "runtime-401",
+      operation: "user-key-test",
+      provider: await resolveGenerationProvider(ctx, {
+        userId: fixture.userId,
+      }),
+      requirePendingTicketAction: true,
+    });
+    const fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response("{}", { status: 401 }))
+      .mockResolvedValueOnce(openaiResponse());
+    await expect(
+      provider.chat(question, { maxTokens: 16, billingLabel: "answer" }),
+    ).resolves.toMatchObject({ content: "OpenAI answer" });
+    expect(sentKeys(fetch)).toEqual([ANTHROPIC_KEY, `Bearer ${OPENAI_KEY}`]);
+    const { usage, keys } = await t.run(async (dbCtx) => ({
+      usage: await dbCtx.db.query("tokenUsage").collect(),
+      keys: await dbCtx.db.query("providerApiKeys").collect(),
+    }));
+    expect(usage).toEqual([
+      expect.objectContaining({ provider: "openai", keySource: "user" }),
+    ]);
+    expect(keys.find((key) => key.provider === "anthropic")?.status).toBe(
+      "invalid",
+    );
+  });
+
+  it("skips an out-of-credit key for an hour unless it is checked again", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await insertFixture(t);
+    await saveKey(t, fixture.userId, "anthropic", ANTHROPIC_KEY);
+    await t.mutation(
+      internal.providerApiKeys.internalMutation.recordKeyFailure,
+      {
+        userId: fixture.userId,
+        provider: "anthropic",
+        code: "out_of_credit",
+      },
+    );
+    await expect(
+      resolveGenerationProvider(actionCtx(t), { userId: fixture.userId }),
+    ).rejects.toMatchObject({ code: "out_of_credit" });
+    const later = Date.now() + OUT_OF_CREDIT_RETRY_MS + 1_000;
+    vi.spyOn(Date, "now").mockReturnValue(later);
+    await expect(
+      resolveGenerationProvider(actionCtx(t), { userId: fixture.userId }),
+    ).resolves.toMatchObject({ keySource: "user" });
+  });
+
+  it("does not mark keys rejected when they cannot be decrypted", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await insertFixture(t);
+    await saveKey(t, fixture.userId, "anthropic", ANTHROPIC_KEY);
+    process.env.BYOK_ENCRYPTION_KEY = btoa("z".repeat(32));
+    await expect(
+      resolveGenerationProvider(actionCtx(t), { userId: fixture.userId }),
+    ).rejects.toMatchObject({ code: "unreadable" });
+    const [key] = await t.run(async (ctx) =>
+      ctx.db.query("providerApiKeys").collect(),
+    );
+    expect(key.status).toBe("active");
+    expect(key.lastError).toBeUndefined();
   });
 
   it("refuses to finish a pinned action on Gitdog's key after the key is removed", async () => {

@@ -47,10 +47,15 @@ const applicationTables = {
         at: v.number(),
       }),
     ),
-    lastValidationAttemptAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index("by_user_and_provider", ["userId", "provider"]),
+  // Provider key validation requests per user, kept apart from the key rows
+  // so the limit also applies before a key is saved.
+  providerKeyValidationAttempts: defineTable({
+    userId: v.id("users"),
+    attemptedAt: v.number(),
+  }).index("by_user_and_attempted_at", ["userId", "attemptedAt"]),
   // ============================================
   // USER PROFILE
   // ============================================

@@ -596,9 +596,11 @@
         "format": "{{provider}} の API キーの形式ではありません。",
         "rejected": "{{provider}} がこの API キーを拒否しました。",
         "noModelAccess": "この {{provider}} API キーでは Gitdog が使うモデルにアクセスできません。",
-        "throttled": "数秒待ってからもう一度お試しください。",
-        "reenter": "この API キーをもう一度入力してください。",
-        "unavailable": "{{provider}} が現在この API キーを確認できません。しばらくしてからお試しください。"
+        "reenter": "この API キーは読み取れなくなりました。もう一度入力してください。",
+        "unavailable": "{{provider}} が現在この API キーを確認できません。しばらくしてからお試しください。",
+        "rateLimited": "API キーの確認が多すぎます。数分後にもう一度お試しください。",
+        "notConfigured": "現在 API キーを保存できません。サポートにお問い合わせください。",
+        "wrongProvider": "{{provider}} の API キーではありません。対応するプロバイダーの欄に貼り付けてください。"
       }
     }
   },

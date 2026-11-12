@@ -2,7 +2,7 @@ import { internalAction, type ActionCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import { v } from "convex/values";
-import type { AiProvider } from "../_ai/model";
+import { getDefaultAiModel, type AiProvider } from "../_ai/model";
 import {
   resolveGenerationProvider,
   UserApiKeyError,
@@ -629,12 +629,16 @@ export const processNewTicket = internalAction({
       });
     } catch (error) {
       if (!(error instanceof UserApiKeyError)) throw error;
-      if (pendingActionId) {
+      // A checkpointed result replays without calling any provider, so a
+      // removed or failing key must not block it.
+      if (replayAuthorized) rawAiProvider = getDefaultAiModel();
+      else if (pendingActionId) {
         await failPendingGeneration(pendingActionId, error.message);
         return;
+      } else {
+        await failInitialClaim(error.message);
+        return;
       }
-      await failInitialClaim(error.message);
-      return;
     }
 
     // Replaying an already billed checkpoint spends no new quota, and a

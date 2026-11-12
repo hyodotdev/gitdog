@@ -1,27 +1,37 @@
 import { v } from "convex/values";
 import { internalMutation } from "../_generated/server";
 
-export const PROVIDER_KEY_VALIDATION_INTERVAL_MS = 10_000;
+export const PROVIDER_KEY_VALIDATION_WINDOW_MS = 10 * 60 * 1_000;
+export const PROVIDER_KEY_VALIDATION_LIMIT = 5;
 
 const providerValidator = v.union(v.literal("anthropic"), v.literal("openai"));
 
+// Each validation sends the submitted key to a provider from Gitdog's
+// servers, so the limit is per user across providers and saved keys.
 export const noteValidationAttempt = internalMutation({
-  args: { userId: v.id("users"), provider: providerValidator },
+  args: { userId: v.id("users") },
   handler: async (ctx, args): Promise<{ allowed: boolean }> => {
     const now = Date.now();
-    const row = await ctx.db
-      .query("providerApiKeys")
-      .withIndex("by_user_and_provider", (q) =>
-        q.eq("userId", args.userId).eq("provider", args.provider),
+    const windowStart = now - PROVIDER_KEY_VALIDATION_WINDOW_MS;
+    const expired = await ctx.db
+      .query("providerKeyValidationAttempts")
+      .withIndex("by_user_and_attempted_at", (q) =>
+        q.eq("userId", args.userId).lt("attemptedAt", windowStart),
       )
-      .unique();
-    if (!row) return { allowed: true };
-    if (
-      row.lastValidationAttemptAt !== undefined &&
-      now - row.lastValidationAttemptAt < PROVIDER_KEY_VALIDATION_INTERVAL_MS
-    )
+      .take(20);
+    for (const attempt of expired) await ctx.db.delete(attempt._id);
+    const recent = await ctx.db
+      .query("providerKeyValidationAttempts")
+      .withIndex("by_user_and_attempted_at", (q) =>
+        q.eq("userId", args.userId).gte("attemptedAt", windowStart),
+      )
+      .take(PROVIDER_KEY_VALIDATION_LIMIT);
+    if (recent.length >= PROVIDER_KEY_VALIDATION_LIMIT)
       return { allowed: false };
-    await ctx.db.patch(row._id, { lastValidationAttemptAt: now });
+    await ctx.db.insert("providerKeyValidationAttempts", {
+      userId: args.userId,
+      attemptedAt: now,
+    });
     return { allowed: true };
   },
 });
@@ -51,7 +61,6 @@ export const upsert = internalMutation({
       status: "active" as const,
       lastValidatedAt: now,
       lastError: undefined,
-      lastValidationAttemptAt: now,
       updatedAt: now,
     };
     if (existing) await ctx.db.patch(existing._id, fields);

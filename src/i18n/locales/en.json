@@ -597,9 +597,11 @@
         "format": "This does not look like an {{provider}} API key.",
         "rejected": "{{provider}} rejected this API key.",
         "noModelAccess": "This {{provider}} API key has no access to the model Gitdog uses.",
-        "throttled": "Wait a few seconds before trying again.",
-        "reenter": "Enter this API key again.",
-        "unavailable": "{{provider}} could not check this API key right now. Try again shortly."
+        "reenter": "This API key can no longer be read. Enter it again.",
+        "unavailable": "{{provider}} could not check this API key right now. Try again shortly.",
+        "rateLimited": "Too many API key checks. Try again in a few minutes.",
+        "notConfigured": "Saving API keys is not available right now. Please contact support.",
+        "wrongProvider": "This is not an {{provider}} API key. Paste it into the matching provider instead."
       }
     }
   },

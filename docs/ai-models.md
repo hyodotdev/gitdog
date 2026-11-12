@@ -29,6 +29,8 @@ those keys instead of Gitdog's:
 - Claude runs on the user's Anthropic key and is not affected by Gitdog's
   Claude deadline. The user's OpenAI key is used if only it is saved, if the
   Anthropic key is rejected, or if Claude reports exhausted credit.
+- A key reported out of credit is skipped for an hour, or until the user
+  checks it again in settings.
 - A failing user key never falls back to Gitdog's keys. The request fails with
   an actionable message, and the key is marked as rejected or out of credit.
 - An action that started on a user key cannot be finished on Gitdog's key.
@@ -36,6 +38,7 @@ those keys instead of Gitdog's:
   included or prepaid tokens and is shown separately on the Usage page.
 - Repository embeddings stay on Gitdog's OpenAI key and quota; when that quota
   is exhausted, search falls back to keyword retrieval.
+- Key checks are limited to five per user every ten minutes.
 - Keys are validated against the generation model on save, encrypted with
   AES-256-GCM using `BYOK_ENCRYPTION_KEY`, and never returned to clients.
 

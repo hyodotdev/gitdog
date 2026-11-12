@@ -4,8 +4,15 @@ export type KeyProvider = "anthropic" | "openai";
 
 export const PROVIDER_KEY_PATTERNS: Record<KeyProvider, RegExp> = {
   anthropic: /^sk-ant-[A-Za-z0-9_-]{20,500}$/,
-  openai: /^sk-[A-Za-z0-9_-]{20,500}$/,
+  openai: /^sk-(?!ant-)[A-Za-z0-9_-]{20,500}$/,
 };
+
+/** The provider whose key format matches, or null for neither. */
+export function detectKeyProvider(apiKey: string): KeyProvider | null {
+  if (PROVIDER_KEY_PATTERNS.anthropic.test(apiKey)) return "anthropic";
+  if (PROVIDER_KEY_PATTERNS.openai.test(apiKey)) return "openai";
+  return null;
+}
 
 export class ProviderKeyEncryptionError extends Error {}
 
