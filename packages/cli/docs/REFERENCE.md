@@ -160,10 +160,9 @@ replacing local settings. No-op pushes do not write to the server.
 ## Feature inventory
 
 The implementation was compared with every public function in the companion
-Gitdog backend: **86 operations**. Friendly commands cover normal workflows;
-`api list`, `api describe` and `api call` expose the complete public inventory,
-including advanced admin operations. Internal functions are excluded. All
-authorization is enforced by the existing backend.
+Gitdog backend. Friendly commands cover normal workflows; `api list`,
+`api describe` and `api call` expose the public API catalog. Internal functions
+are excluded. All authorization is enforced by the backend.
 
 | Feature                  | Commands                                                                                                   |
 | ------------------------ | ---------------------------------------------------------------------------------------------------------- |
@@ -180,8 +179,6 @@ authorization is enforced by the existing backend.
 | Plans and token packs    | `billing status/pricing/checkout`                                                                          |
 | Account                  | `account profile/sync/consent`                                                                             |
 | GitHub App access        | `github install/installations/recover/bind/retry`                                                          |
-| Admin views              | `admin status/stats/logs/payments/subscriptions`                                                           |
-| Advanced admin writes    | `admin call <operation> --data @args.json`                                                                 |
 | Complete public API      | `api list/describe/call`                                                                                   |
 
 `repos` is an alias for `projects`. Firebase-style colon commands work too:
@@ -215,15 +212,11 @@ the provider's checkout. Account eligibility and policy consent are completed in
 the browser using `account consent`, or through an explicitly selected public
 API operation. Consent is never inferred from login.
 
-Admin token adjustments, subscription changes, payment log edits, settlement
-retries and provider usage reconciliation are available through the public API
-catalog. Inspect the validator before sending exact arguments. Billing operation
-IDs must be UUIDs and reused when retrying the same operation.
+Inspect an operation's validator before sending exact arguments.
 
 ```sh
-gitdog api list --filter admin/
-gitdog api describe admin/paymentMutation:addTokens
-gitdog admin call admin/paymentMutation:addTokens --data @adjustment.json --yes
+gitdog api list
+gitdog api describe tickets/query:list
 gitdog api call tickets/query:list --data '{"limit":10,"offset":0}' --json
 ```
 

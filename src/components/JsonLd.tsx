@@ -20,7 +20,7 @@ export function OrganizationJsonLd() {
     "@type": "Organization",
     name: "Gitdog",
     url: SITE_URL,
-    logo: `${SITE_URL}/icon.svg`,
+    logo: `${SITE_URL}/icon-bg.jpg`,
     description:
       "AI-powered assistant for GitHub repositories. Automates issue responses and discussion replies with intelligent codebase-aware answers.",
     sameAs: ["https://github.com/hyodotdev"],

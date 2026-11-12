@@ -13,7 +13,7 @@ Gitdog is an AI-powered GitHub assistant for repository automation. It is built 
 
 - Read `CLAUDE.md` first for repository rules.
 - Read `docs/convention.md` for implementation conventions.
-- For workflow-style tasks, follow `.codex/skills/gitdog-workflows/SKILL.md` and the relevant `.claude/commands/*.md` file.
+- For workflow-style tasks, follow the relevant `.claude/commands/*.md` file.
 - Do not mention internal agent files, skills, or private workflow names in user-facing GitHub issue, discussion, PR, or review comments.
 
 ## Package Manager
