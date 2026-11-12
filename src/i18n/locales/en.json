@@ -201,7 +201,8 @@
         "settings": "Settings →"
       },
       "tokensPerMonth": "{{count, number}}k tokens/month",
-      "prepaidTokens": "{{count, number}}k trial and prepaid tokens left"
+      "prepaidTokens": "{{count, number}}k trial and prepaid tokens left",
+      "usingOwnKey": "Using your {{provider}} key"
     }
   },
   "repositories": {
@@ -578,9 +579,7 @@
       "active": "{{count}} active"
     },
     "providerKeys": {
-      "title": "Your AI provider keys",
-      "description": "Add your own Anthropic or OpenAI API key and Gitdog runs issue, discussion and pull request work for repositories you own on that key. That usage is billed by your provider and does not count toward your Gitdog token quota.",
-      "note": "Claude is used first; OpenAI is used if Claude is unavailable or out of credit. If a saved key fails, Gitdog stops instead of switching to its own keys. Repository search embeddings still use Gitdog's included tokens and fall back to keyword search when they run out. Keys are encrypted and never shown again.",
+      "title": "Your own AI keys",
       "inputLabel": "{{provider}} API key",
       "save": "Save key",
       "replace": "Replace key",
@@ -593,7 +592,7 @@
         "invalid": "Rejected",
         "out_of_credit": "Out of credit",
         "notSet": "Not set",
-        "unreadable": "Unreadable"
+        "unreadable": "Re-enter key"
       },
       "errors": {
         "format": "This does not look like an {{provider}} API key.",
@@ -603,8 +602,18 @@
         "unavailable": "{{provider}} could not check this API key right now. Try again shortly.",
         "rateLimited": "Too many API key checks. Try again in a few minutes.",
         "notConfigured": "Saving API keys is not available right now. Please contact support.",
-        "wrongProvider": "This is not an {{provider}} API key. Paste it into the matching provider instead."
-      }
+        "wrongProvider": "This looks like an {{other}} key. Paste it into the {{other}} card."
+      },
+      "valueProp": "Run Gitdog on your own Anthropic or OpenAI key — that usage never touches your Gitdog tokens.",
+      "bullets": {
+        "order": "Claude runs first; OpenAI takes over if Claude is out of credit.",
+        "noFallback": "If your key fails, Gitdog pauses and tells you — it never switches to its own keys.",
+        "encrypted": "Keys are encrypted and never shown again; only the last 4 characters appear."
+      },
+      "getKey": "Get a key",
+      "checked": "Checked {{time}}",
+      "confirmRemove": "Remove your {{provider}} key? Gitdog will use its own tokens again.",
+      "moveTo": "Move to {{provider}}"
     }
   },
   "footer": {
@@ -1261,5 +1270,18 @@
         "description": "If you have questions about these terms, please contact us at:"
       }
     }
+  },
+  "trial": {
+    "tokensLeftLabel": "Trial tokens left",
+    "tokensLeftNote": "Trial and prepaid tokens never reset.",
+    "nextTitle": "When your trial runs out",
+    "nextBody": "Add your own Anthropic or OpenAI key to keep going at provider prices, or go Pro for 2.4M tokens a month.",
+    "exhaustedTitle": "Your trial tokens are used up",
+    "exhaustedBody": "Gitdog is paused for your repositories. Add your own API key to continue right away, or upgrade to Pro.",
+    "usingKeyTitle": "Running on your own key",
+    "usingKeyBody": "Issue, discussion and review work runs on your saved key and doesn't use your Gitdog tokens.",
+    "addKey": "Add your own key",
+    "manageKeys": "Manage your keys",
+    "viewPro": "View Pro"
   }
 }

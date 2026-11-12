@@ -201,7 +201,8 @@
         "settings": "設定 →"
       },
       "tokensPerMonth": "月 {{count, number}}kトークン",
-      "prepaidTokens": "体験・プリペイドトークン残り {{count, number}}k"
+      "prepaidTokens": "体験・プリペイドトークン残り {{count, number}}k",
+      "usingOwnKey": "{{provider}}キーを使用中"
     }
   },
   "repositories": {
@@ -577,9 +578,7 @@
       "active": "{{count}}アクティブ"
     },
     "providerKeys": {
-      "title": "自分の AI プロバイダーキー",
-      "description": "Anthropic または OpenAI の API キーを追加すると、自分が所有するリポジトリの Issue・Discussion・プルリクエストの処理をそのキーで実行します。この利用分はプロバイダーから直接請求され、Gitdog のトークン上限には含まれません。",
-      "note": "まず Claude を使い、Claude が使えないかクレジットがない場合は OpenAI を使います。保存したキーが失敗した場合、Gitdog のキーには切り替えず停止します。リポジトリ検索の埋め込みは引き続き Gitdog の含まれるトークンを使い、尽きるとキーワード検索に切り替わります。キーは暗号化して保存され、再表示されません。",
+      "title": "自分のAIキー",
       "inputLabel": "{{provider}} API キー",
       "save": "キーを保存",
       "replace": "キーを置き換え",
@@ -592,7 +591,7 @@
         "invalid": "拒否",
         "out_of_credit": "クレジット不足",
         "notSet": "未設定",
-        "unreadable": "読み取り不可"
+        "unreadable": "再入力が必要"
       },
       "errors": {
         "format": "{{provider}} の API キーの形式ではありません。",
@@ -602,8 +601,18 @@
         "unavailable": "{{provider}} が現在この API キーを確認できません。しばらくしてからお試しください。",
         "rateLimited": "API キーの確認が多すぎます。数分後にもう一度お試しください。",
         "notConfigured": "現在 API キーを保存できません。サポートにお問い合わせください。",
-        "wrongProvider": "{{provider}} の API キーではありません。対応するプロバイダーの欄に貼り付けてください。"
-      }
+        "wrongProvider": "{{other}}のキーのようです。{{other}}のカードに貼り付けてください。"
+      },
+      "valueProp": "自分のAnthropicまたはOpenAIキーでGitdogを実行 — その利用分はGitdogのトークンを使いません。",
+      "bullets": {
+        "order": "まずClaudeを使い、Claudeのクレジットが尽きたらOpenAIが引き継ぎます。",
+        "noFallback": "キーが失敗するとGitdogは停止してお知らせします — Gitdogのキーには切り替えません。",
+        "encrypted": "キーは暗号化され再表示されません。末尾4文字のみ表示されます。"
+      },
+      "getKey": "キーを取得",
+      "checked": "{{time}}に確認",
+      "confirmRemove": "{{provider}}キーを削除しますか？以後はGitdogのトークンを使います。",
+      "moveTo": "{{provider}}に移動"
     }
   },
   "footer": {
@@ -1253,5 +1262,18 @@
         "description": "この規約についてご質問がある場合は、以下にお問い合わせください："
       }
     }
+  },
+  "trial": {
+    "tokensLeftLabel": "残りの体験トークン",
+    "tokensLeftNote": "体験・プリペイドトークンはリセットされません。",
+    "nextTitle": "体験トークンを使い切ったら",
+    "nextBody": "自分のAnthropicまたはOpenAIキーを追加すればプロバイダー価格で続けられます。Proなら毎月2.4Mトークンを利用できます。",
+    "exhaustedTitle": "体験トークンを使い切りました",
+    "exhaustedBody": "リポジトリのGitdog処理が停止しています。自分のAPIキーを追加すればすぐに再開でき、Proへのアップグレードも可能です。",
+    "usingKeyTitle": "自分のキーで実行中",
+    "usingKeyBody": "Issue・Discussion・レビューの処理は保存したキーで実行され、Gitdogのトークンを使いません。",
+    "addKey": "自分のキーを追加",
+    "manageKeys": "キーを管理",
+    "viewPro": "Proを見る"
   }
 }

@@ -17,6 +17,7 @@ import {
 import { SiGithub } from "@icons-pack/react-simple-icons";
 import { useTranslation } from "react-i18next";
 import { cn } from "../../utils/cn";
+import { TrialNextStep } from "../../components/TrialNextStep";
 import {
   calculateEstimatedAdditionalUsageCharge,
   calculateTokenAvailability,
@@ -301,6 +302,14 @@ export function UsagePage() {
               </div>
             </div>
           </div>
+
+          {!isPro && (
+            <div className={cn("mb-8")}>
+              <TrialNextStep
+                tokensLeft={Math.max(0, totalAvailable - totalTokens)}
+              />
+            </div>
+          )}
 
           {/* Usage on the user's own provider keys (not counted in quota) */}
           {tokenUsage?.userKey && tokenUsage.userKey.totalActions > 0 && (

@@ -3,7 +3,7 @@ import { api } from "../../../convex/_generated/api";
 import { SEO } from "../../components/SEO";
 import { Layout } from "../../components/Layout";
 import { Link, useNavigate } from "react-router";
-import { Activity, Clock, Zap } from "lucide-react";
+import { Activity, Clock, KeyRound, Zap } from "lucide-react";
 import { SiGithub } from "@icons-pack/react-simple-icons";
 import { LoadingIndicator } from "../../components/uis/LoadingIndicator";
 import { useTranslation } from "react-i18next";
@@ -19,6 +19,13 @@ export function HomePage() {
   const repositories = useQuery(api.repositories.query.list);
   const currentUser = useQuery(api.users.query.getCurrentUser);
   const subscription = useQuery(api.subscriptions.query.getCurrent);
+  const providerKeys = useQuery(
+    api.providerApiKeys.query.list,
+    currentUser ? {} : "skip",
+  );
+  const activeKey = providerKeys?.find(
+    (key) => key.readable && key.status === "active",
+  );
   const navigate = useNavigate();
 
   // Show loading while checking auth
@@ -118,6 +125,20 @@ export function HomePage() {
                       })}
                 </span>
               </div>
+              <Link
+                to="/profile#ai-keys"
+                className="flex items-center gap-2 text-gray-600 underline hover:no-underline dark:text-gray-400"
+              >
+                <KeyRound size={16} aria-hidden="true" />
+                {activeKey
+                  ? t("home.workspace.usingOwnKey", {
+                      provider:
+                        activeKey.provider === "anthropic"
+                          ? "Anthropic"
+                          : "OpenAI",
+                    })
+                  : t("trial.addKey")}
+              </Link>
             </div>
           </div>
 

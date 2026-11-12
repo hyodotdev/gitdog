@@ -10,6 +10,7 @@ import { SiGithub } from "@icons-pack/react-simple-icons";
 import { useTranslation } from "react-i18next";
 import { cn } from "../../utils/cn";
 import { ProviderKeysSection } from "./ProviderKeysSection";
+import { TrialNextStep } from "../../components/TrialNextStep";
 import {
   calculateTokenAvailability,
   getUtcMonthlyPeriod,
@@ -82,6 +83,12 @@ export function ProfilePage() {
       : purchasedTokens,
     purchasedTokensDebited: usedFromPurchased,
   });
+
+  // Free accounts only have trial and prepaid tokens, which never reset.
+  const tokensLeft = Math.max(
+    0,
+    availability.totalAvailableTokens - (tokenUsage?.totalTokens ?? 0),
+  );
 
   const formatTokens = (tokens: number) => {
     if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(2)}M`;
@@ -269,7 +276,9 @@ export function ProfilePage() {
                 <span
                   className={cn("text-sm text-gray-600", "dark:text-gray-400")}
                 >
-                  {t("profile.subscription.currentBillingPeriod")}
+                  {isPro
+                    ? t("profile.subscription.currentBillingPeriod")
+                    : t("trial.tokensLeftLabel")}
                 </span>
               </div>
               <div
@@ -278,19 +287,23 @@ export function ProfilePage() {
                   "dark:text-white",
                 )}
               >
-                {formatTokens(tokenUsage?.totalTokens ?? 0)} {t("usage.tokens")}
+                {isPro
+                  ? `${formatTokens(tokenUsage?.totalTokens ?? 0)} ${t("usage.tokens")}`
+                  : `${formatTokens(tokensLeft)} ${t("usage.tokens")}`}
               </div>
               <p className={cn("text-sm text-gray-500 mt-1")}>
-                {purchasedTokens + purchasedTokensDebited > 0
-                  ? t("usage.stats.allowanceWithPurchased", {
-                      included: formatTokens(includedTokens),
-                      remaining: formatTokens(
-                        availability.remainingPurchasedTokens,
-                      ),
-                    })
-                  : t("usage.stats.includedAllowance", {
-                      included: formatTokens(includedTokens),
-                    })}
+                {!isPro
+                  ? t("trial.tokensLeftNote")
+                  : purchasedTokens + purchasedTokensDebited > 0
+                    ? t("usage.stats.allowanceWithPurchased", {
+                        included: formatTokens(includedTokens),
+                        remaining: formatTokens(
+                          availability.remainingPurchasedTokens,
+                        ),
+                      })
+                    : t("usage.stats.includedAllowance", {
+                        included: formatTokens(includedTokens),
+                      })}
               </p>
             </div>
 
@@ -327,35 +340,9 @@ export function ProfilePage() {
             </div>
           </div>
 
-          {subscription?.plan === "free" && (
-            <div
-              className={cn(
-                "mt-6 p-6",
-                "border border-gray-200",
-                "dark:border-gray-800",
-              )}
-            >
-              <h3
-                className={cn(
-                  "text-lg font-bold text-black mb-2",
-                  "dark:text-white",
-                )}
-              >
-                {t("profile.subscription.upgrade.title")}
-              </h3>
-              <p className={cn("text-gray-600 mb-4", "dark:text-gray-400")}>
-                {t("profile.subscription.upgrade.description")}
-              </p>
-              <button
-                onClick={() => navigate("/pricing")}
-                className={cn(
-                  "px-6 py-2 bg-black text-white",
-                  "hover:bg-gray-800",
-                  "dark:bg-white dark:text-black dark:hover:bg-gray-200",
-                )}
-              >
-                {t("profile.subscription.upgrade.button")}
-              </button>
+          {!isPro && (
+            <div className={cn("mt-6")}>
+              <TrialNextStep tokensLeft={tokensLeft} />
             </div>
           )}
         </section>
