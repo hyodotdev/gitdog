@@ -20,6 +20,37 @@ const applicationTables = {
     .index("by_hash", ["tokenHash"])
     .index("by_repository", ["repositoryId"])
     .index("by_repository_and_revoked", ["repositoryId", "revokedAt"]),
+  // A user's own AI provider key, encrypted at rest. Generation for the
+  // repositories the user owns runs on these keys instead of Gitdog's.
+  providerApiKeys: defineTable({
+    userId: v.id("users"),
+    provider: v.union(v.literal("anthropic"), v.literal("openai")),
+    ciphertext: v.string(),
+    iv: v.string(),
+    encryptionKeyId: v.string(),
+    last4: v.string(),
+    status: v.union(
+      v.literal("active"),
+      v.literal("invalid"),
+      v.literal("out_of_credit"),
+    ),
+    lastValidatedAt: v.number(),
+    lastError: v.optional(
+      v.object({
+        code: v.union(
+          v.literal("invalid"),
+          v.literal("out_of_credit"),
+          v.literal("rate_limited"),
+          v.literal("provider_error"),
+        ),
+        httpStatus: v.optional(v.number()),
+        at: v.number(),
+      }),
+    ),
+    lastValidationAttemptAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_user_and_provider", ["userId", "provider"]),
   // ============================================
   // USER PROFILE
   // ============================================
@@ -199,6 +230,9 @@ const applicationTables = {
     chatReservationKey: v.optional(v.string()),
     chatReservationAttemptToken: v.optional(v.string()),
     providerRequestId: v.optional(v.string()),
+    // Set when the call ran on the user's own provider key. Such rows never
+    // count toward Gitdog quota or hourly totals.
+    keySource: v.optional(v.literal("user")),
     // Amount atomically removed from the durable purchased-token wallet by
     // this write. Current-period quota checks add it back to reconstruct the
     // period's original capacity without refilling the lifetime balance.
@@ -224,6 +258,11 @@ const applicationTables = {
   })
     .index("by_user", ["userId"])
     .index("by_user_and_month", ["userId", "createdAt"])
+    .index("by_user_key_source_and_created_at", [
+      "userId",
+      "keySource",
+      "createdAt",
+    ])
     .index("by_ticket_action", ["ticketActionId"])
     .index("by_repository", ["repositoryId"])
     .index("by_embedding_reservation", ["embeddingReservationKey"])
@@ -365,6 +404,7 @@ const applicationTables = {
       v.union(v.literal("google"), v.literal("anthropic"), v.literal("openai")),
     ),
     requestFingerprint: v.string(),
+    keySource: v.optional(v.literal("user")),
     inputTokenLimit: v.number(),
     outputTokenLimit: v.number(),
     reservedTokens: v.number(),
@@ -447,6 +487,31 @@ const applicationTables = {
       "userId",
       "status",
       "providerStartedAt",
+    ])
+    .index("by_user_key_source_and_status", ["userId", "keySource", "status"])
+    .index("by_user_key_source_status_and_expiration", [
+      "userId",
+      "keySource",
+      "status",
+      "expiresAt",
+    ])
+    .index("by_user_key_source_status_settlement_and_expiration", [
+      "userId",
+      "keySource",
+      "status",
+      "settlementState",
+      "expiresAt",
+    ])
+    .index("by_user_key_source_status_and_provider_started_at", [
+      "userId",
+      "keySource",
+      "status",
+      "providerStartedAt",
+    ])
+    .index("by_key_source_status_and_expiration", [
+      "keySource",
+      "status",
+      "expiresAt",
     ])
     .index("by_subscription_status_and_period_start", [
       "subscriptionId",
@@ -773,6 +838,9 @@ const applicationTables = {
     // account so concurrent batched reviews cannot overcommit the quota.
     reviewQuotaUserId: v.optional(v.id("users")),
     reviewQuotaHold: v.optional(v.number()),
+    // Set once the action has run on the owner's own provider key, so
+    // retries never finish it on Gitdog's key.
+    aiKeySource: v.optional(v.literal("user")),
     reviewBatch: v.optional(
       v.object({
         page: v.number(),

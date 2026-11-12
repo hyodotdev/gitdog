@@ -1,5 +1,6 @@
 import { GitHubAppRateLimitError } from "../github/helpers";
 import { ChatProviderRequestError } from "../_ai/providerErrors";
+import { UserApiKeyError } from "../_ai/providerResolution";
 import { AiLegalAttestationRequiredError } from "../_ai/legalAttestation";
 
 type ReviewRequest = {
@@ -242,6 +243,8 @@ function reviewFailureReason(error: unknown): string {
       "GitHub returned a review result that could not be matched to this commit and request.";
   } else if (error instanceof AiLegalAttestationRequiredError) {
     reason = "The account needs to accept the current AI usage terms.";
+  } else if (error instanceof UserApiKeyError) {
+    reason = error.message;
   } else if (error instanceof ChatProviderRequestError) {
     const status = error.httpStatus;
     if (

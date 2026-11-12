@@ -2,7 +2,12 @@ import { internalAction, type ActionCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import { v } from "convex/values";
-import { getDefaultAiModel } from "../_ai/model";
+import type { AiProvider } from "../_ai/model";
+import {
+  resolveGenerationProvider,
+  UserApiKeyError,
+  usesUserKey,
+} from "../_ai/providerResolution";
 import { ChatProviderRequestError } from "../_ai/providerErrors";
 import { analyzeIssueFormatting } from "../_ai/issueFormatting/workflow";
 import { analyzeIssueWithTools } from "../_ai/issueAnalysis/agenticWorkflow";
@@ -616,13 +621,31 @@ export const processNewTicket = internalAction({
       return;
     }
 
-    // Replaying an already billed checkpoint spends no new quota.
-    const canPerform = replayAuthorized
-      ? { allowed: true as const }
-      : await ctx.runQuery(
-          internal.subscriptions.internalQuery.canPerformActionInternal,
-          { userId: ticket.userId },
-        );
+    let rawAiProvider: AiProvider;
+    try {
+      rawAiProvider = await resolveGenerationProvider(ctx, {
+        userId: ticket.userId,
+        ticketActionId: pendingActionId,
+      });
+    } catch (error) {
+      if (!(error instanceof UserApiKeyError)) throw error;
+      if (pendingActionId) {
+        await failPendingGeneration(pendingActionId, error.message);
+        return;
+      }
+      await failInitialClaim(error.message);
+      return;
+    }
+
+    // Replaying an already billed checkpoint spends no new quota, and a
+    // request on the owner's own key spends none of Gitdog's.
+    const canPerform =
+      replayAuthorized || usesUserKey(rawAiProvider)
+        ? { allowed: true as const }
+        : await ctx.runQuery(
+            internal.subscriptions.internalQuery.canPerformActionInternal,
+            { userId: ticket.userId },
+          );
 
     if (!canPerform.allowed) {
       console.log(
@@ -690,8 +713,6 @@ To continue using ${getConfiguredGitdogMention() ?? "the Gitdog bot"}, the repos
 
       return;
     }
-
-    const rawAiProvider = getDefaultAiModel();
 
     if (processingStage === "start" && shouldAutoFormat) {
       console.log(

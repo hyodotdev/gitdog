@@ -344,9 +344,10 @@ export const listSubscriptions = query({
         // Get token usage for this user
         const usageRecords = await ctx.db
           .query("tokenUsage")
-          .withIndex("by_user_and_month", (q) =>
+          .withIndex("by_user_key_source_and_created_at", (q) =>
             q
               .eq("userId", sub.userId)
+              .eq("keySource", undefined)
               .gte("createdAt", sub.periodStart)
               .lt("createdAt", sub.periodEnd),
           )

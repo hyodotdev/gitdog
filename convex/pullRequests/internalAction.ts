@@ -9,7 +9,11 @@ import {
 } from "../github/repositoryIdentity";
 import { requireCurrentAiLegalAttestation } from "../_ai/legalAttestation";
 import { createMeteredProvider, ChatBillingError } from "../_ai/chatBilling";
-import { getDefaultAiModel } from "../_ai/model";
+import {
+  resolveGenerationProvider,
+  UserApiKeyError,
+  usesUserKey,
+} from "../_ai/providerResolution";
 import {
   BATCH_REVIEW_THRESHOLD,
   getPullRequest,
@@ -276,6 +280,11 @@ export const generate = internalAction({
       // One action reviews one group so a page of large diffs cannot outlive
       // the action deadline and strand a started provider request.
       const selected = batched ? groups[group] : data.files;
+      stage = "Model provider selection";
+      const rawAiProvider = await resolveGenerationProvider(ctx, {
+        userId: initial.repository.userId,
+        ticketActionId: args.actionId,
+      });
       if (batched && !previous && group === 0) {
         // Refuse up front instead of spending tokens on early batches and
         // stopping at the account limit with nothing published.
@@ -285,6 +294,7 @@ export const generate = internalAction({
             internal.pullRequests.internalMutation.reserveBatchedReviewQuota,
             {
               actionId: args.actionId,
+              userKey: usesUserKey(rawAiProvider),
               // The first page is already split; later pages count one each.
               batches:
                 groups.length +
@@ -328,7 +338,7 @@ export const generate = internalAction({
             ? `${generationKey}/batch/${page}/${group + 1}`
             : generationKey,
           operation: "pull-request-review",
-          provider: getDefaultAiModel(),
+          provider: rawAiProvider,
           requirePendingTicketAction: true,
           beforeProviderStart: ensureCurrent,
           activeProviderWaitMs: REVIEW_ACTIVE_PROVIDER_WAIT_MS,
@@ -456,7 +466,8 @@ export const generate = internalAction({
                 : cause.reason === "provider_attempt_in_progress"
                   ? "Other AI work for this account did not finish in time. No review was published."
                   : "Review billing could not proceed safely; inspect pending provider usage before retrying."
-              : cause instanceof PullRequestSizeLimitError
+              : cause instanceof PullRequestSizeLimitError ||
+                  cause instanceof UserApiKeyError
                 ? cause.message
                 : reviewGenerationError(error, stage),
         reviewFailureDetails: reviewFailureDetails(

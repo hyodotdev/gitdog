@@ -174,13 +174,20 @@ export class ClaudeProvider implements AiProvider {
   constructor(
     private readonly apiKey: string,
     private readonly authorize?: () => Promise<Record<string, string>>,
+    // Gitdog's own Claude access ends at CLAUDE_API_ENDS_AT; a user's own
+    // key is not affected by that deadline.
+    private readonly routing: { enforceAccessDeadline?: boolean } = {},
   ) {}
+
+  private get enforceDeadline() {
+    return this.routing.enforceAccessDeadline !== false;
+  }
 
   async chat(
     messages: ChatMessage[],
     options?: ChatCompletionOptions,
   ): Promise<ChatCompletionResult> {
-    if (Date.now() >= CLAUDE_API_ENDS_AT)
+    if (this.enforceDeadline && Date.now() >= CLAUDE_API_ENDS_AT)
       throw unavailable("Claude API access has ended");
     if (!this.authorize && !this.apiKey.trim())
       throw unavailable("Anthropic API key is not configured");
@@ -236,7 +243,7 @@ export class ClaudeProvider implements AiProvider {
         },
         ...(options?.tools?.length ? { tools: options.tools } : {}),
       },
-      CLAUDE_API_ENDS_AT,
+      this.enforceDeadline ? CLAUDE_API_ENDS_AT : undefined,
     );
     const counts = record(data.usage) ? data.usage : {};
     // No prompt caching is requested. Reject unexpected cache billing rather
@@ -532,8 +539,21 @@ export class CreditFallbackProvider implements AiProvider {
   constructor(
     readonly primary: AiProvider,
     readonly fallback: AiProvider,
+    readonly options: { enforceClaudeDeadline?: boolean } = {},
   ) {
-    this.active = Date.now() < CLAUDE_API_ENDS_AT ? primary : fallback;
+    this.active = this.primaryEnabled() ? primary : fallback;
+  }
+  private primaryEnabled() {
+    return (
+      this.options.enforceClaudeDeadline === false ||
+      Date.now() < CLAUDE_API_ENDS_AT
+    );
+  }
+  get keySource() {
+    return this.primary.keySource === "user" &&
+      this.fallback.keySource === "user"
+      ? ("user" as const)
+      : undefined;
   }
   get name() {
     return this.active.name;
@@ -553,7 +573,7 @@ export class CreditFallbackProvider implements AiProvider {
       ...options,
       billingLabel: options?.billingLabel ?? `route/${this.callIndex++}`,
     };
-    if (Date.now() < CLAUDE_API_ENDS_AT) {
+    if (this.primaryEnabled()) {
       try {
         this.active = this.primary;
         const result = await this.primary.chat(messages, callOptions);

@@ -269,7 +269,9 @@ type ReservationFailureReason =
   | "reservation_history_too_large"
   | "terminal_settlement_pending"
   | "unresolved_provider_usage"
-  | "usage_history_too_large";
+  | "usage_history_too_large"
+  | "user_key_required"
+  | "user_key_unavailable";
 
 type ChatQuotaSnapshot = {
   subscriptionId?: Id<"subscriptions">;
@@ -383,8 +385,11 @@ async function expireChatReservations(
 ): Promise<ChatQuotaDecision | null> {
   const ambiguous = await ctx.db
     .query("chatUsageReservations")
-    .withIndex("by_user_and_status", (q) =>
-      q.eq("userId", userId).eq("status", "ambiguous"),
+    .withIndex("by_user_key_source_and_status", (q) =>
+      q
+        .eq("userId", userId)
+        .eq("keySource", undefined)
+        .eq("status", "ambiguous"),
     )
     .take(CHAT_RESERVATION_CLEANUP_LIMIT + 1);
   if (ambiguous.length > CHAT_RESERVATION_CLEANUP_LIMIT) {
@@ -396,9 +401,10 @@ async function expireChatReservations(
 
   const expired = await ctx.db
     .query("chatUsageReservations")
-    .withIndex("by_user_status_settlement_and_expiration", (q) =>
+    .withIndex("by_user_key_source_status_settlement_and_expiration", (q) =>
       q
         .eq("userId", userId)
+        .eq("keySource", undefined)
         .eq("status", "pending")
         .eq("settlementState", undefined)
         .lte("expiresAt", now),
@@ -421,9 +427,10 @@ async function expireChatReservations(
 
   const activeProviderAttempt = await ctx.db
     .query("chatUsageReservations")
-    .withIndex("by_user_status_and_provider_started_at", (q) =>
+    .withIndex("by_user_key_source_status_and_provider_started_at", (q) =>
       q
         .eq("userId", userId)
+        .eq("keySource", undefined)
         .eq("status", "pending")
         .gte("providerStartedAt", 0),
     )
@@ -582,8 +589,11 @@ async function checkChatQuota(
     await Promise.all([
       ctx.db
         .query("chatUsageReservations")
-        .withIndex("by_user_and_status", (q) =>
-          q.eq("userId", args.userId).eq("status", "pending"),
+        .withIndex("by_user_key_source_and_status", (q) =>
+          q
+            .eq("userId", args.userId)
+            .eq("keySource", undefined)
+            .eq("status", "pending"),
         )
         .take(MAX_COLLECT_LIMIT + 1),
       ctx.db
@@ -594,8 +604,11 @@ async function checkChatQuota(
         .take(MAX_COLLECT_LIMIT + 1),
       ctx.db
         .query("chatUsageReservations")
-        .withIndex("by_user_and_status", (q) =>
-          q.eq("userId", args.userId).eq("status", "ambiguous"),
+        .withIndex("by_user_key_source_and_status", (q) =>
+          q
+            .eq("userId", args.userId)
+            .eq("keySource", undefined)
+            .eq("status", "ambiguous"),
         )
         .take(CHAT_RESERVATION_CLEANUP_LIMIT + 1),
       ctx.db
@@ -635,6 +648,72 @@ async function checkChatQuota(
   return { allowed: true, snapshot };
 }
 
+// An action that ran on the owner's key must never finish on Gitdog's key.
+async function checkKeySource(
+  ctx: MutationCtx,
+  args: { userId: Id<"users">; provider?: string; keySource?: "user" },
+  action: Doc<"ticketActions">,
+): Promise<{ allowed: false; reason: ReservationFailureReason } | null> {
+  if (args.keySource !== "user") {
+    return action.aiKeySource === "user"
+      ? { allowed: false, reason: "user_key_required" }
+      : null;
+  }
+  return (await hasUsableUserKey(ctx, args.userId, args.provider))
+    ? null
+    : { allowed: false, reason: "user_key_unavailable" };
+}
+
+async function pinUserKeySource(
+  ctx: MutationCtx,
+  args: { keySource?: "user" },
+  action: Doc<"ticketActions">,
+): Promise<void> {
+  if (args.keySource === "user" && action.aiKeySource !== "user")
+    await ctx.db.patch(action._id, { aiKeySource: "user" });
+}
+
+// Calls on the user's own provider key hold no Gitdog quota. The snapshot has
+// no subscription, so Pro boundary settlement never sees these reservations.
+function userKeyQuotaSnapshot(now: number): ChatQuotaSnapshot {
+  return {
+    entitlementPlan: "free",
+    includedTokens: 0,
+    serviceFeeRate: 0,
+    quotaPeriodStart: now,
+    quotaPeriodEnd: now + CHAT_RESERVATION_TTL_MS,
+  };
+}
+
+async function hasUsableUserKey(
+  ctx: MutationCtx,
+  userId: Id<"users">,
+  provider: string | undefined,
+): Promise<boolean> {
+  if (provider !== "anthropic" && provider !== "openai") return false;
+  const key = await ctx.db
+    .query("providerApiKeys")
+    .withIndex("by_user_and_provider", (q) =>
+      q.eq("userId", userId).eq("provider", provider),
+    )
+    .unique();
+  return key !== null && key.status !== "invalid";
+}
+
+async function checkReservationQuota(
+  ctx: MutationCtx,
+  args: {
+    userId: Id<"users">;
+    keySource?: "user";
+    newReservationTokens: number;
+    now: number;
+  },
+): Promise<ChatQuotaDecision> {
+  if (args.keySource === "user")
+    return { allowed: true, snapshot: userKeyQuotaSnapshot(args.now) };
+  return await checkChatQuota(ctx, args);
+}
+
 export const reserveChatUsage = internalMutation({
   args: {
     reservationKey: v.string(),
@@ -650,6 +729,7 @@ export const reserveChatUsage = internalMutation({
       v.union(v.literal("google"), v.literal("anthropic"), v.literal("openai")),
     ),
     requestFingerprint: v.string(),
+    keySource: v.optional(v.literal("user")),
     inputTokenLimit: v.number(),
     outputTokenLimit: v.number(),
     recoveryTarget: v.optional(chatRecoveryTargetValidator),
@@ -707,7 +787,8 @@ export const reserveChatUsage = internalMutation({
     if (existing) {
       const sameProvider =
         existing.model === args.model &&
-        (existing.provider ?? "google") === (args.provider ?? "google");
+        (existing.provider ?? "google") === (args.provider ?? "google") &&
+        existing.keySource === args.keySource;
       const routeCanChange =
         existing.status === "released" &&
         (existing.releaseReason === "request_finished_without_provider_usage" ||
@@ -780,6 +861,8 @@ export const reserveChatUsage = internalMutation({
           reason: "reservation_finalized" as const,
         };
       }
+      const keyDecision = await checkKeySource(ctx, args, action);
+      if (keyDecision) return keyDecision;
       const now = Date.now();
       if (
         !sameProvider &&
@@ -827,16 +910,20 @@ export const reserveChatUsage = internalMutation({
         existing.expiresAt <= now &&
         existing.providerStartedAt === undefined;
       if (safelyReleased || safelyExpired) {
-        const quota = await checkChatQuota(ctx, {
+        const quota = await checkReservationQuota(ctx, {
           userId: args.userId,
+          keySource: args.keySource,
           newReservationTokens: reservedTokens,
           now,
         });
         if (!quota.allowed) return quota;
+        await pinUserKeySource(ctx, args, action);
         await ctx.db.patch(existing._id, {
           attemptToken: args.attemptToken,
           model: args.model,
           provider: args.provider,
+          keySource: args.keySource,
+          subscriptionId: undefined,
           requirePendingTicketAction: args.requirePendingTicketAction,
           ticketActionProposalVersion: action.proposalVersion,
           ...quota.snapshot,
@@ -879,13 +966,17 @@ export const reserveChatUsage = internalMutation({
       throw new Error("AI chat finalized reservation is missing");
     }
 
+    const keyDecision = await checkKeySource(ctx, args, action);
+    if (keyDecision) return keyDecision;
     const now = Date.now();
-    const quota = await checkChatQuota(ctx, {
+    const quota = await checkReservationQuota(ctx, {
       userId: args.userId,
+      keySource: args.keySource,
       newReservationTokens: reservedTokens,
       now,
     });
     if (!quota.allowed) return quota;
+    await pinUserKeySource(ctx, args, action);
     await ctx.db.insert("chatUsageReservations", {
       ...args,
       requirePendingTicketAction: args.requirePendingTicketAction,
@@ -960,12 +1051,24 @@ export const markChatProviderStarted = internalMutation({
     ) {
       return { started: false as const, reason: "reservation_closed" as const };
     }
+    // Calls on the user's own key spend nothing of Gitdog's, so they neither
+    // wait for nor block Gitdog-paid work on the account.
+    if (reservation.keySource === "user") {
+      await ctx.db.patch(reservation._id, {
+        providerStartedAt: now,
+        updatedAt: now,
+      });
+      return { started: true as const, alreadyStarted: false as const };
+    }
     const [ambiguousChat, ambiguousEmbedding, activeChat, activeEmbedding] =
       await Promise.all([
         ctx.db
           .query("chatUsageReservations")
-          .withIndex("by_user_and_status", (q) =>
-            q.eq("userId", args.userId).eq("status", "ambiguous"),
+          .withIndex("by_user_key_source_and_status", (q) =>
+            q
+              .eq("userId", args.userId)
+              .eq("keySource", undefined)
+              .eq("status", "ambiguous"),
           )
           .take(CHAT_RESERVATION_CLEANUP_LIMIT + 1),
         ctx.db
@@ -976,9 +1079,10 @@ export const markChatProviderStarted = internalMutation({
           .take(CHAT_RESERVATION_CLEANUP_LIMIT + 1),
         ctx.db
           .query("chatUsageReservations")
-          .withIndex("by_user_status_and_provider_started_at", (q) =>
+          .withIndex("by_user_key_source_status_and_provider_started_at", (q) =>
             q
               .eq("userId", args.userId)
+              .eq("keySource", undefined)
               .eq("status", "pending")
               .gte("providerStartedAt", 0),
           )
@@ -2326,6 +2430,23 @@ export const cleanupChatReservations = internalMutation({
       }
       if (deleted === CHAT_RESERVATION_CLEANUP_LIMIT) break;
     }
+    // Ambiguous user-key calls cost Gitdog nothing and are never
+    // reconciled, so they are dropped after the same retention period.
+    if (deleted < CHAT_RESERVATION_CLEANUP_LIMIT) {
+      const rows = await ctx.db
+        .query("chatUsageReservations")
+        .withIndex("by_key_source_status_and_expiration", (q) =>
+          q
+            .eq("keySource", "user")
+            .eq("status", "ambiguous")
+            .lte("expiresAt", retentionCutoff),
+        )
+        .take(CHAT_RESERVATION_CLEANUP_LIMIT - deleted);
+      for (const row of rows) {
+        await ctx.db.delete(row._id);
+        deleted++;
+      }
+    }
     return { expired: expired.length, deleted };
   },
 });
@@ -2341,6 +2462,10 @@ function reservationErrorMessage(reason: ReservationFailureReason): string {
       return "The ended Pro period is still settling provider usage";
     case "unresolved_provider_usage":
       return "AI usage must be reconciled before more AI work can run";
+    case "user_key_unavailable":
+      return "Your AI provider API key is no longer available. Add it again in Gitdog settings";
+    case "user_key_required":
+      return "This request started on your own API key. Add the key again in Gitdog settings to continue";
     default:
       return "AI usage could not be reserved safely";
   }
@@ -2482,6 +2607,7 @@ async function reserveChatUsageOnce(
     model: string;
     provider?: "google" | "anthropic" | "openai";
     requestFingerprint: string;
+    keySource?: "user";
     inputTokenLimit: number;
     outputTokenLimit: number;
     recoveryTarget?: ChatRecoveryTarget;
@@ -2573,6 +2699,7 @@ export function createMeteredProvider(
     return new CreditFallbackProvider(
       wrap(args.provider.primary),
       wrap(args.provider.fallback),
+      args.provider.options,
     );
   }
   let fallbackCallIndex = 0;
@@ -2584,10 +2711,12 @@ export function createMeteredProvider(
     await new Promise((resolve) => setTimeout(resolve, delay));
     return true;
   };
+  const keySource = args.provider.keySource === "user" ? "user" : undefined;
   return {
     name: args.provider.name,
     modelId: args.provider.modelId,
     providerId: args.provider.providerId,
+    keySource,
     chat: async (messages, options) => {
       const provider = args.provider.providerId;
       if (
@@ -2618,6 +2747,7 @@ export function createMeteredProvider(
           model: args.provider.modelId,
           provider,
           requestFingerprint,
+          keySource,
           recoveryTarget: args.recoveryTarget,
           ...limits,
         });
@@ -2800,14 +2930,20 @@ export async function hasOpenUsageReservation(
     await Promise.all([
       ctx.db
         .query("chatUsageReservations")
-        .withIndex("by_user_and_status", (q) =>
-          q.eq("userId", userId).eq("status", "pending"),
+        .withIndex("by_user_key_source_and_status", (q) =>
+          q
+            .eq("userId", userId)
+            .eq("keySource", undefined)
+            .eq("status", "pending"),
         )
         .first(),
       ctx.db
         .query("chatUsageReservations")
-        .withIndex("by_user_and_status", (q) =>
-          q.eq("userId", userId).eq("status", "ambiguous"),
+        .withIndex("by_user_key_source_and_status", (q) =>
+          q
+            .eq("userId", userId)
+            .eq("keySource", undefined)
+            .eq("status", "ambiguous"),
         )
         .first(),
       ctx.db

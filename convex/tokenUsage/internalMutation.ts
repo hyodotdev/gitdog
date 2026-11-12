@@ -414,7 +414,8 @@ export async function recordChatUsageInTransaction(
         existingUsage.outputTokens !== args.outputTokens ||
         existingUsage.model !== args.model ||
         existingUsage.provider !== args.provider ||
-        existingUsage.providerRequestId !== args.providerRequestId
+        existingUsage.providerRequestId !== args.providerRequestId ||
+        existingUsage.keySource !== existingReservation.keySource
       ) {
         throw new Error("AI usage reservation identity mismatch");
       }
@@ -463,7 +464,12 @@ export async function recordChatUsageInTransaction(
     ) {
       throw new Error("AI usage reservation is not finalizable");
     }
+    // Gitdog holds no billing evidence for calls on the user's own key.
+    if (reconciliation && reservation.keySource === "user") {
+      throw new Error("User-key AI usage cannot be reconciled");
+    }
   }
+  const userKey = reservation?.keySource === "user";
 
   const requestedAction = args.ticketActionId
     ? await ctx.db.get(args.ticketActionId)
@@ -486,21 +492,24 @@ export async function recordChatUsageInTransaction(
       ? requestedRepository
       : null;
 
-  const subscription = reservation?.subscriptionId
-    ? await ctx.db.get(reservation.subscriptionId)
-    : await getSubscriptionForEntitlement(ctx, args.userId, now);
-  const accounting = await applyQuotaUsageAccountingInTransaction(ctx, {
-    userId: args.userId,
-    subscription,
-    totalTokens,
-    now,
-    ...(reservation
-      ? {
-          quotaSnapshot: reservation,
-          requireFullDebit: true,
-        }
-      : {}),
-  });
+  // Usage on the user's own key is recorded for reporting only and never
+  // debits included or purchased tokens.
+  const accounting = userKey
+    ? { entitlement: { serviceFeeRate: 0 }, purchasedTokensDebited: 0 }
+    : await applyQuotaUsageAccountingInTransaction(ctx, {
+        userId: args.userId,
+        subscription: reservation?.subscriptionId
+          ? await ctx.db.get(reservation.subscriptionId)
+          : await getSubscriptionForEntitlement(ctx, args.userId, now),
+        totalTokens,
+        now,
+        ...(reservation
+          ? {
+              quotaSnapshot: reservation,
+              requireFullDebit: true,
+            }
+          : {}),
+      });
   const serviceFeeRate = accounting.entitlement.serviceFeeRate;
   const costs = calculateChatCost(
     args.inputTokens,
@@ -535,6 +544,7 @@ export async function recordChatUsageInTransaction(
     chatReservationAttemptToken: reservationAttemptToken,
     providerRequestId: args.providerRequestId,
     purchasedTokensDebited: accounting.purchasedTokensDebited,
+    ...(userKey ? { keySource: "user" as const } : {}),
     createdAt: reservation?.providerStartedAt ?? now,
   });
 
@@ -625,6 +635,9 @@ export async function reconcileChatUsageInTransaction(
     .unique();
   if (!reservation) {
     throw new Error("AI usage reservation not found");
+  }
+  if (reservation.keySource === "user") {
+    throw new Error("User-key AI usage cannot be reconciled");
   }
 
   const prior = reservation.reconciliation;
@@ -1179,8 +1192,8 @@ export const backfillUsageTotals = internalMutation({
       const after = cursor;
       const next = await ctx.db
         .query("tokenUsage")
-        .withIndex("by_user_and_month", (q) => {
-          const range = q.eq("userId", args.userId);
+        .withIndex("by_user_key_source_and_created_at", (q) => {
+          const range = q.eq("userId", args.userId).eq("keySource", undefined);
           return after === undefined ? range : range.gte("createdAt", after);
         })
         .first();

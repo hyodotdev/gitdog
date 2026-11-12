@@ -69,9 +69,10 @@ async function readBoundedQuotaRows(
 ): Promise<Doc<"tokenUsage">[] | null> {
   const quotaRange = ctx.db
     .query("tokenUsage")
-    .withIndex("by_user_and_month", (q) => {
+    .withIndex("by_user_key_source_and_created_at", (q) => {
       const range = q
         .eq("userId", args.userId)
+        .eq("keySource", undefined)
         .gte("createdAt", args.periodStart);
       return args.periodEndExclusive === undefined
         ? range
