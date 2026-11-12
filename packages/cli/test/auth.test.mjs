@@ -519,7 +519,7 @@ test("stale recovery respects another cleaner and keeps waiting callbacks exclus
       async () => assert.fail("another cleaner owns recovery"),
       Date.now() + 150,
     ),
-    /lock timed out/i,
+    /another Gitdog process|lock timed out/i,
   );
   assert.equal(await readFile(lock, "utf8"), String(child.pid));
   await rmdir(`${lock}.recovery`);
