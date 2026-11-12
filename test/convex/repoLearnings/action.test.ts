@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { internal } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
-import { PRICING } from "../../../convex/_ai/config";
+import { PRICING, getFreeIncludedTokens } from "../../../convex/_ai/config";
 import * as githubHelpers from "../../../convex/github/helpers";
 import { CODE_EMBEDDING_KEY } from "../../../convex/ragV2/action";
 import schema from "../../../convex/schema";
@@ -198,7 +198,7 @@ async function blockPaidUsage(
       userId: repository.userId,
       plan: "free",
       status: "active",
-      includedTokens: PRICING.FREE_INCLUDED_TOKENS,
+      includedTokens: getFreeIncludedTokens(Date.now()),
       purchasedTokens: 0,
       serviceFeeRate: 0.25,
       periodStart: now,
@@ -210,9 +210,9 @@ async function blockPaidUsage(
       userId: repository.userId,
       repositoryId,
       usageType: "chat",
-      inputTokens: PRICING.FREE_INCLUDED_TOKENS,
+      inputTokens: getFreeIncludedTokens(Date.now()),
       outputTokens: 0,
-      totalTokens: PRICING.FREE_INCLUDED_TOKENS,
+      totalTokens: getFreeIncludedTokens(Date.now()),
       inputCostCents: 0,
       outputCostCents: 0,
       baseCostCents: 0,

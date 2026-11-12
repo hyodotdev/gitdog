@@ -141,6 +141,7 @@ import type * as subscriptions_billingBoundaries from "../subscriptions/billingB
 import type * as subscriptions_entitlement from "../subscriptions/entitlement.js";
 import type * as subscriptions_internalMutation from "../subscriptions/internalMutation.js";
 import type * as subscriptions_internalQuery from "../subscriptions/internalQuery.js";
+import type * as subscriptions_mutation from "../subscriptions/mutation.js";
 import type * as subscriptions_query from "../subscriptions/query.js";
 import type * as subscriptions_quotaEntitlement from "../subscriptions/quotaEntitlement.js";
 import type * as subscriptions_wallet from "../subscriptions/wallet.js";
@@ -306,6 +307,7 @@ declare const fullApi: ApiFromModules<{
   "subscriptions/entitlement": typeof subscriptions_entitlement;
   "subscriptions/internalMutation": typeof subscriptions_internalMutation;
   "subscriptions/internalQuery": typeof subscriptions_internalQuery;
+  "subscriptions/mutation": typeof subscriptions_mutation;
   "subscriptions/query": typeof subscriptions_query;
   "subscriptions/quotaEntitlement": typeof subscriptions_quotaEntitlement;
   "subscriptions/wallet": typeof subscriptions_wallet;

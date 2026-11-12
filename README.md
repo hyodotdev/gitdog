@@ -74,8 +74,9 @@ flowchart LR
 ## Get started
 
 **On the web** — sign in with GitHub at [gitdog.dev](https://gitdog.dev),
-install the GitHub App and connect a repository. The Free plan includes 100K
-tokens per month; no credit card required.
+install the GitHub App and connect a repository. Try Gitdog with 100K one-time
+trial tokens, then use your own Anthropic or OpenAI API key or Pro; no credit
+card required.
 
 **From the terminal** — the [`gitdog` CLI](packages/cli) manages projects,
 settings and approvals:

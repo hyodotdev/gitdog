@@ -46,6 +46,7 @@ function ProviderKeyCard({
     | {
         last4: string;
         status: "active" | "invalid" | "out_of_credit";
+        readable: boolean;
         lastValidatedAt: number;
       }
     | undefined;
@@ -122,9 +123,11 @@ function ProviderKeyCard({
     }
   };
 
-  const statusLabel = saved
-    ? t(`profile.providerKeys.status.${saved.status}`)
-    : t("profile.providerKeys.status.notSet");
+  const statusLabel = !saved
+    ? t("profile.providerKeys.status.notSet")
+    : saved.readable
+      ? t(`profile.providerKeys.status.${saved.status}`)
+      : t("profile.providerKeys.status.unreadable");
   const showForm = !saved || editing;
 
   return (
@@ -146,7 +149,7 @@ function ProviderKeyCard({
         <span
           className={cn(
             "px-2 py-0.5 text-xs border",
-            saved?.status === "active"
+            saved?.status === "active" && saved.readable
               ? "border-black text-black dark:border-white dark:text-white"
               : saved
                 ? "border-red-500 text-red-600 dark:text-red-400"
@@ -243,7 +246,7 @@ function ProviderKeyCard({
           >
             {t("profile.providerKeys.replace")}
           </button>
-          {saved?.status !== "active" && (
+          {saved?.status !== "active" && saved?.readable && (
             <button
               type="button"
               onClick={() => void run(() => revalidateKey({ provider }))}

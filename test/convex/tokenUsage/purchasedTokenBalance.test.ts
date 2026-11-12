@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { api, internal } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
-import { PRICING } from "../../../convex/_ai/config";
+import { PRICING, getFreeIncludedTokens } from "../../../convex/_ai/config";
 import schema from "../../../convex/schema";
 
 const modules = {
@@ -52,7 +52,7 @@ async function insertFreeWallet(
       userId,
       plan: "free",
       status: "active",
-      includedTokens: PRICING.FREE_INCLUDED_TOKENS,
+      includedTokens: getFreeIncludedTokens(Date.now()),
       purchasedTokens: args.purchasedTokens,
       serviceFeeRate: PRICING.PLATFORM_FEE_FREE,
       periodStart: period.periodStart,
@@ -90,7 +90,7 @@ describe("durable purchased-token balance", () => {
     });
     const authenticated = t.withIdentity({ subject: `${userId}|session` });
 
-    await recordChatUsage(t, userId, PRICING.FREE_INCLUDED_TOKENS + 60);
+    await recordChatUsage(t, userId, getFreeIncludedTokens(Date.now()) + 60);
     await expect(
       authenticated.query(api.subscriptions.query.getCurrent, {}),
     ).resolves.toMatchObject({
@@ -107,7 +107,7 @@ describe("durable purchased-token balance", () => {
       periodStart: Date.UTC(2026, 7, 1),
       periodEnd: Date.UTC(2026, 8, 1),
     });
-    await recordChatUsage(t, userId, PRICING.FREE_INCLUDED_TOKENS + 40);
+    await recordChatUsage(t, userId, getFreeIncludedTokens(Date.now()) + 40);
 
     const state = await t.run(async (ctx) => ({
       subscription: await ctx.db.get(subscriptionId),
@@ -136,7 +136,7 @@ describe("durable purchased-token balance", () => {
     });
 
     await Promise.all([
-      recordChatUsage(t, userId, PRICING.FREE_INCLUDED_TOKENS + 50),
+      recordChatUsage(t, userId, getFreeIncludedTokens(Date.now()) + 50),
       recordChatUsage(t, userId, 25),
     ]);
 
@@ -149,7 +149,7 @@ describe("durable purchased-token balance", () => {
     }));
     expect(state.subscription?.purchasedTokens).toBe(25);
     expect(state.usage.reduce((total, row) => total + row.totalTokens, 0)).toBe(
-      PRICING.FREE_INCLUDED_TOKENS + 75,
+      getFreeIncludedTokens(Date.now()) + 75,
     );
     expect(
       state.usage.reduce((total, row) => total + row.purchasedTokensDebited, 0),
@@ -167,7 +167,7 @@ describe("durable purchased-token balance", () => {
         userId,
         plan: "free",
         status: "active",
-        includedTokens: PRICING.FREE_INCLUDED_TOKENS,
+        includedTokens: getFreeIncludedTokens(Date.now()),
         purchasedTokens: 70,
         serviceFeeRate: PRICING.PLATFORM_FEE_FREE,
         ...period,
@@ -178,7 +178,7 @@ describe("durable purchased-token balance", () => {
         userId,
         plan: "free",
         status: "active",
-        includedTokens: PRICING.FREE_INCLUDED_TOKENS,
+        includedTokens: getFreeIncludedTokens(Date.now()),
         purchasedTokens: 30,
         serviceFeeRate: PRICING.PLATFORM_FEE_FREE,
         ...period,
@@ -188,7 +188,7 @@ describe("durable purchased-token balance", () => {
       return { userId, newerSubscriptionId };
     });
 
-    await recordChatUsage(t, userId, PRICING.FREE_INCLUDED_TOKENS + 40);
+    await recordChatUsage(t, userId, getFreeIncludedTokens(Date.now()) + 40);
     const rows = await t.run(async (ctx) =>
       ctx.db
         .query("subscriptions")

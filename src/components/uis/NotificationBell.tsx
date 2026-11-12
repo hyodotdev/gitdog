@@ -40,8 +40,13 @@ export function NotificationBell() {
     await markAsRead({ notificationId: notification._id });
 
     // Navigate based on notification type
-    if (notification.type === "invitation_received") {
-      navigate("/invitations");
+    switch (notification.type) {
+      case "invitation_received":
+        navigate("/invitations");
+        break;
+      case "provider_key_failed":
+        navigate("/profile");
+        break;
     }
 
     setIsOpen(false);

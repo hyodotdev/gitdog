@@ -3178,6 +3178,22 @@ it("keeps a deadline-crossing in-flight request retryable without dispatching an
   vi.spyOn(Date, "now").mockReturnValue(now);
   const t = convexTest(schema, modules);
   const fixture = await insertFixture(t);
+  // Free periods after the monthly allowance ended need prepaid tokens.
+  await t.run(async (dbCtx) => {
+    const date = new Date(now);
+    await dbCtx.db.insert("subscriptions", {
+      userId: fixture.userId,
+      plan: "free",
+      status: "active",
+      includedTokens: 0,
+      purchasedTokens: PRICING.TRIAL_TOKENS,
+      serviceFeeRate: PRICING.PLATFORM_FEE_FREE,
+      periodStart: Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1),
+      periodEnd: Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1),
+      createdAt: now,
+      updatedAt: now,
+    });
+  });
   const ctx = { runMutation: t.mutation.bind(t) } as unknown as ActionCtx;
   const makeProvider = () =>
     createMeteredProvider(ctx, {

@@ -95,10 +95,30 @@ export const recordKeyFailure = internalMutation({
       .unique();
     if (!row) return;
     const now = Date.now();
+    const nextStatus =
+      args.code === "invalid" || args.code === "out_of_credit"
+        ? args.code
+        : row.status;
+    // Notify once per transition, not once per failed request.
+    if (nextStatus !== row.status) {
+      const name = args.provider === "anthropic" ? "Anthropic" : "OpenAI";
+      await ctx.db.insert("notifications", {
+        userId: args.userId,
+        type: "provider_key_failed",
+        title:
+          nextStatus === "invalid"
+            ? `${name} API key rejected`
+            : `${name} API key out of credit`,
+        message:
+          nextStatus === "invalid"
+            ? `${name} rejected your saved API key, so Gitdog paused work that uses it. Replace or remove it in your profile.`
+            : `Your ${name} API key is out of credit, so Gitdog paused work that uses it. Add credit or replace the key in your profile.`,
+        isRead: false,
+        createdAt: now,
+      });
+    }
     await ctx.db.patch(row._id, {
-      ...(args.code === "invalid" || args.code === "out_of_credit"
-        ? { status: args.code }
-        : {}),
+      status: nextStatus,
       lastError: { code: args.code, httpStatus: args.httpStatus, at: now },
       updatedAt: now,
     });

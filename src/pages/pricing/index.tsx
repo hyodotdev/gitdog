@@ -329,6 +329,15 @@ export function PricingPage() {
                   )}
                 >
                   <Check size={20} className={cn("shrink-0 mt-0.5")} />
+                  <span>{t("pricing.features.ownKey")}</span>
+                </li>
+                <li
+                  className={cn(
+                    "flex items-start gap-2 text-gray-600",
+                    "dark:text-gray-400",
+                  )}
+                >
+                  <Check size={20} className={cn("shrink-0 mt-0.5")} />
                   <span>{t("pricing.features.allFeatures")}</span>
                 </li>
                 <li

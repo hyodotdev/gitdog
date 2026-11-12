@@ -50,6 +50,13 @@ const applicationTables = {
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index("by_user_and_provider", ["userId", "provider"]),
+  // One row per user that ever received the sign-in trial credit. It is
+  // never deleted, so the trial cannot be granted twice.
+  trialCreditGrants: defineTable({
+    userId: v.id("users"),
+    tokens: v.number(),
+    grantedAt: v.number(),
+  }).index("by_user", ["userId"]),
   // Provider key validation requests per user, kept apart from the key rows
   // so the limit also applies before a key is saved.
   providerKeyValidationAttempts: defineTable({
@@ -1610,6 +1617,7 @@ const applicationTables = {
       v.literal("invitation_received"),
       v.literal("invitation_accepted"),
       v.literal("invitation_rejected"),
+      v.literal("provider_key_failed"),
     ),
     invitationId: v.optional(v.id("invitations")),
     repositoryId: v.optional(v.id("repositories")),

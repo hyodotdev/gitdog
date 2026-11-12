@@ -2,7 +2,7 @@ import { convexTest } from "convex-test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { api, internal } from "../../../convex/_generated/api";
-import { PRICING } from "../../../convex/_ai/config";
+import { PRICING, getFreeIncludedTokens } from "../../../convex/_ai/config";
 import { checkProSubscription } from "../../../convex/_utils/accessControl";
 import {
   getEffectiveSubscriptionEntitlement,
@@ -41,7 +41,7 @@ describe("trusted Pro entitlement provenance", () => {
 
     expect(entitlement).toMatchObject({
       plan: "free",
-      includedTokens: PRICING.FREE_INCLUDED_TOKENS,
+      includedTokens: getFreeIncludedTokens(now),
       purchasedTokens: 7_500_000,
       serviceFeeRate: PRICING.PLATFORM_FEE_FREE,
       hasProAccess: false,
@@ -102,7 +102,7 @@ describe("trusted Pro entitlement provenance", () => {
       {
         plan: "free",
         status: "active",
-        includedTokens: PRICING.FREE_INCLUDED_TOKENS,
+        includedTokens: getFreeIncludedTokens(Date.now()),
         purchasedTokens: 2_200_000,
         serviceFeeRate: PRICING.PLATFORM_FEE_FREE,
         periodStart: Date.UTC(2026, 4, 1),
@@ -130,7 +130,7 @@ describe("trusted Pro entitlement provenance", () => {
     ).resolves.toEqual({
       plan: "free",
       status: "active",
-      includedTokens: PRICING.FREE_INCLUDED_TOKENS,
+      includedTokens: getFreeIncludedTokens(Date.now()),
       purchasedTokens: 0,
       purchasedTokensDebited: 0,
       serviceFeeRate: PRICING.PLATFORM_FEE_FREE,

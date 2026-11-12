@@ -10,6 +10,13 @@ export function translateErrorMessage(
   const message = typeof error === "string" ? error : error.message;
   const lowerMessage = message.toLowerCase();
 
+  const keyFailure = getProviderKeyFailure(message);
+  if (keyFailure) {
+    return t(`errors.providerKey.${keyFailure.kind}`, {
+      provider: keyFailure.provider ?? t("errors.providerKey.yourProvider"),
+    });
+  }
+
   // Discussion errors
   if (lowerMessage.includes("failed to find discussion")) {
     return t("errors.discussion.notFound");
@@ -64,4 +71,36 @@ export function translateErrorMessage(
 
   // Return original message if no match
   return message;
+}
+
+export type ProviderKeyFailure =
+  | "invalid"
+  | "outOfCredit"
+  | "rateLimited"
+  | "unavailable"
+  | "unreadable"
+  | "removed";
+
+const PROVIDER_KEY_FAILURES: Array<[RegExp, ProviderKeyFailure]> = [
+  [/^Your (Anthropic|OpenAI) API key was rejected/, "invalid"],
+  [/^Your (Anthropic|OpenAI) API key is out of credit/, "outOfCredit"],
+  [/^Your (Anthropic|OpenAI) API key hit its rate limit/, "rateLimited"],
+  [/^Your (Anthropic|OpenAI) API key can no longer be read/, "unreadable"],
+  [/^Your (Anthropic|OpenAI) API key is no longer available/, "unavailable"],
+  [/^Your AI provider API key is no longer available/, "unavailable"],
+  [/^This request started on your own API key/, "removed"],
+];
+
+/**
+ * Recognize a failure caused by the user's own provider key, using the
+ * fixed messages the backend writes for those failures.
+ */
+export function getProviderKeyFailure(
+  message: string,
+): { kind: ProviderKeyFailure; provider?: string } | null {
+  for (const [pattern, kind] of PROVIDER_KEY_FAILURES) {
+    const match = pattern.exec(message);
+    if (match) return { kind, provider: match[1] };
+  }
+  return null;
 }

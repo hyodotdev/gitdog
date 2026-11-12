@@ -80,7 +80,7 @@ export async function refreshFreeSubscriptionPeriod(
   await ctx.db.patch(subscription._id, {
     plan: "free",
     status: "active",
-    includedTokens: PRICING.FREE_INCLUDED_TOKENS,
+    includedTokens: quota.entitlement.includedTokens,
     serviceFeeRate: PRICING.PLATFORM_FEE_FREE,
     purchasedTokens: quota.entitlement.purchasedTokens,
     periodStart: quota.entitlement.periodStart,

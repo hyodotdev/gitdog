@@ -165,7 +165,7 @@
       },
       "demoTitle": "Gitdog 데모 영상",
       "ctaBottomTitle": "오늘 자동화를 시작하세요",
-      "ctaBottomSubtitle": "무료 플랜은 월 100k 토큰을 포함합니다. 신용카드 불필요."
+      "ctaBottomSubtitle": "100k 체험 토큰으로 Gitdog를 써 보고, 이후에는 내 API 키나 Pro를 사용하세요. 신용카드 불필요."
     },
     "workspace": {
       "title": "워크스페이스",
@@ -200,7 +200,8 @@
         "actionsThisMonth": "이번 달 {{count}}개 액션",
         "settings": "설정 →"
       },
-      "tokensPerMonth": "월 {{count, number}}k 토큰"
+      "tokensPerMonth": "월 {{count, number}}k 토큰",
+      "prepaidTokens": "체험·선불 토큰 {{count, number}}k 남음"
     }
   },
   "repositories": {
@@ -511,7 +512,7 @@
       "coveredByTokens": "포함 토큰 및 구매 토큰으로 충당",
       "prepaidOnly": "자동 과금은 없습니다. 추가 사용에는 선불 토큰 팩이 필요합니다.",
       "includedAllowance": "포함 {{included}}",
-      "allowanceWithPurchased": "포함 {{included}} + 구매 잔여 {{remaining}}",
+      "allowanceWithPurchased": "포함 {{included}} + 체험·선불 잔여 {{remaining}}",
       "currentPlan": "현재 플랜",
       "active": "활성",
       "billingPeriod": "결제 기간",
@@ -519,8 +520,8 @@
     },
     "tokenUsageThisMonth": "현재 결제 기간 토큰 사용량",
     "tokensCount": "{{used}} / {{limit}} 토큰",
-    "approachingFreeLimit": "{{limit}} 토큰 한도에 가까워지고 있습니다. 중단 없이 사용하려면 선불 토큰 팩을 구매하세요.",
-    "freeLimitReached": "토큰 한도에 도달했습니다. 계속하려면 선불 토큰 팩을 구매하세요.",
+    "approachingFreeLimit": "{{limit}} 토큰 한도에 가까워지고 있습니다. 중단 없이 쓰려면 프로필에서 내 API 키를 추가하거나, 토큰 팩을 구매하거나, Pro로 업그레이드하세요.",
+    "freeLimitReached": "사용 가능한 토큰을 모두 썼습니다. 계속하려면 프로필에서 내 API 키를 추가하거나, 토큰 팩을 구매하거나, Pro로 업그레이드하세요.",
     "usageByRepository": "저장소별 사용량",
     "noRepositories": {
       "description": "아직 연결된 저장소가 없습니다",
@@ -590,7 +591,8 @@
         "active": "사용 중",
         "invalid": "거부됨",
         "out_of_credit": "크레딧 없음",
-        "notSet": "설정 안 됨"
+        "notSet": "설정 안 됨",
+        "unreadable": "읽을 수 없음"
       },
       "errors": {
         "format": "{{provider}} API 키 형식이 아닙니다.",
@@ -648,19 +650,25 @@
   },
   "banner": {
     "connectPrompt": "GitHub 저장소를 연결하여 AI 자동화를 활성화하세요",
-    "connectNow": "지금 연결"
+    "connectNow": "지금 연결",
+    "providerKey": {
+      "invalid": "{{provider}}가 저장된 API 키를 거부해서 이 키를 쓰는 작업이 중지되었습니다.",
+      "outOfCredit": "{{provider}} API 키의 크레딧이 없어 이 키를 쓰는 작업이 중지되었습니다.",
+      "unreadable": "저장된 {{provider}} API 키를 더 이상 읽을 수 없습니다. 다시 입력하면 재개됩니다.",
+      "action": "프로필에서 해결"
+    }
   },
   "billing": {
     "title": "결제 - Gitdog",
     "description": "구독 및 결제 관리",
     "heading": "플랜 & 결제",
-    "subtitle": "무료 플랜은 매월 100k 토큰을 포함합니다. 더 필요하면 토큰 팩을 구매하거나 업그레이드하세요.",
+    "subtitle": "1회 체험 토큰으로 Gitdog를 써 보고, 이후에는 내 API 키를 쓰거나 토큰 팩을 구매하거나 Pro로 업그레이드하세요.",
     "month": "월",
     "currentPlan": "현재 플랜",
     "recommended": "추천",
     "downgrade": "다운그레이드",
     "upgradeToPro": "Pro로 업그레이드",
-    "freeDescription": "월 100k 토큰, 한도 도달 시 사용 중단",
+    "freeDescription": "1회 100k 체험 토큰, 이후 내 API 키 사용",
     "proDescription": "매월 2.4M 토큰 포함, 필요할 때 선불 토큰 팩 구매 가능",
     "currentUsage": "현재 사용량",
     "usage": {
@@ -673,7 +681,7 @@
     "model": "AI 모델",
     "inputTokens": "입력 토큰",
     "outputTokens": "출력 토큰",
-    "freeTokens": "무료 토큰",
+    "freeTokens": "체험 토큰",
     "platformFee": "선불 토큰 팩",
     "proDiscount": "자동 초과 과금 없이 필요할 때 선불 토큰 팩을 구매하세요",
     "needHelp": "결제에 대한 질문이 있으신가요?",
@@ -699,14 +707,14 @@
     "prepaidTokenPackDescription": "한 번 구매하면 만료되지 않습니다. 사용 가능한 토큰 잔액을 모두 사용하면 자동화가 중지됩니다.",
     "maybeLater": "나중에",
     "viewPlans": "플랜 보기",
-    "currentlyOnFree": "현재 Free 플랜 사용 중 (월 100k 토큰, 한도 있음)",
+    "currentlyOnFree": "현재 Free 플랜 사용 중 (1회 체험 토큰 또는 내 API 키)",
     "highPerformanceNote": "최고 품질의 결과를 위해 고성능 AI 모델을 사용하고 있습니다."
   },
   "pricing": {
     "title": "요금제 - Gitdog",
     "description": "필요에 맞는 요금제를 선택하세요",
     "heading": "간단하고 투명한 요금제",
-    "subtitle": "월간 토큰 한도를 선택하고 필요할 때 선불 토큰 팩을 추가하세요. 자동 초과 과금은 없습니다.",
+    "subtitle": "체험 토큰으로 Gitdog를 써 보고, 이후에는 내 API 키나 Pro를 사용하세요. 필요하면 선불 토큰 팩을 추가하세요. 자동 초과 과금은 없습니다.",
     "month": "월",
     "currentPlan": "현재 플랜",
     "recommended": "추천",
@@ -714,7 +722,7 @@
     "upgradeToPro": "Pro로 업그레이드",
     "getStarted": "시작하기",
     "processing": "처리 중...",
-    "freeDescription": "월 100k 토큰 무료 (제한 있음)",
+    "freeDescription": "1회 100k 체험 토큰, 이후 내 API 키 사용",
     "proDescription": "매월 2.4M 토큰 포함, 추가 사용에는 선불 토큰 팩 필요",
     "loggedIn": {
       "heading": "플랜 & 결제",
@@ -726,7 +734,7 @@
       "estimatedCost": "자동 초과 과금"
     },
     "features": {
-      "freeTokens": "월 100k 토큰 무료 (제한 있음)",
+      "freeTokens": "로그인 시 100k 체험 토큰 1회 제공",
       "includedTokens": "매월 2.4M 토큰 포함",
       "basicSupport": "커뮤니티 지원",
       "prioritySupport": "우선 지원",
@@ -735,19 +743,20 @@
       "noAutomaticOverage": "자동 초과 과금 없음",
       "allFeatures": "모든 기능 포함",
       "prepaidTokens": "추가 사용을 위한 선불 토큰 팩",
-      "teamCollaboration": "팀 협업"
+      "teamCollaboration": "팀 협업",
+      "ownKey": "내 Anthropic 또는 OpenAI API 키 사용"
     },
     "tokenPack": {
       "title": "더 많은 토큰이 필요하신가요?",
-      "description": "추가 AI 사용을 위한 선불 토큰 팩을 구매하세요. 월간 포함 토큰 다음에 사용되며 만료되지 않습니다.",
+      "description": "추가 AI 사용을 위한 선불 토큰 팩을 구매하세요. 포함 토큰 다음에 사용되며 만료되지 않습니다.",
       "neverExpire": "토큰 만료 없음",
       "prepaidPurchase": "1회 선불 구매",
       "bestValue": "최고 가성비",
       "purchase": "구매"
     },
     "tokenPricing": "토큰 가격",
-    "tokenPricingDescription": "Free는 월 100k, Pro는 월 2.4M 토큰을 포함합니다. 두 플랜 모두 사용 가능한 한도에서 중지되며 선불 토큰 팩으로 늘릴 수 있습니다.",
-    "freeTokensLabel": "월 무료 토큰",
+    "tokenPricingDescription": "Free는 1회 100k 체험 토큰으로 시작하고, Pro는 매월 2.4M 토큰을 포함합니다. 두 플랜 모두 사용 가능한 한도에서 중지되며 선불 토큰 팩으로 늘릴 수 있습니다. 내 API 키로 실행되는 작업은 Gitdog 토큰을 쓰지 않습니다.",
+    "freeTokensLabel": "체험 토큰 (1회)",
     "platformFeeLabel": "선불 토큰 팩",
     "billingLabel": "결제",
     "prepaidTokensLabel": "선불 토큰 팩",
@@ -849,6 +858,16 @@
       "permissionDenied": "권한이 없습니다. GitHub App 권한을 확인해주세요.",
       "notFound": "요청한 리소스를 찾을 수 없습니다.",
       "networkError": "네트워크 오류가 발생했습니다. 다시 시도해주세요."
+    },
+    "providerKey": {
+      "invalid": "{{provider}}가 API 키를 거부했습니다. 프로필에서 키를 교체하거나 삭제하세요.",
+      "outOfCredit": "{{provider}} API 키의 크레딧이 없습니다. {{provider}}에서 크레딧을 충전하거나 프로필에서 키를 교체하세요.",
+      "rateLimited": "{{provider}} API 키가 사용량 제한에 걸렸습니다. 잠시 후 다시 시도하세요.",
+      "unavailable": "{{provider}} API 키를 더 이상 사용할 수 없습니다. 프로필에서 다시 추가하세요.",
+      "unreadable": "{{provider}} API 키를 더 이상 읽을 수 없습니다. 프로필에서 다시 입력하세요.",
+      "removed": "이 요청은 내 API 키로 시작됐지만 키가 삭제되었습니다. 프로필에서 키를 다시 추가하세요.",
+      "yourProvider": "AI 제공자",
+      "openSettings": "설정 열기"
     }
   },
   "admin": {

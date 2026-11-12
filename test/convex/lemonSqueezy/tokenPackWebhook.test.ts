@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { TOKEN_LIMITS } from "../../../convex/_ai/config";
+import {
+  TOKEN_LIMITS,
+  getFreeIncludedTokens,
+} from "../../../convex/_ai/config";
 
 /**
  * Token Pack Webhook Tests
@@ -71,7 +74,7 @@ class MockSubscriptionDb {
         userId,
         plan: "free",
         purchasedTokens: 0,
-        includedTokens: TOKEN_LIMITS.FREE_INCLUDED_TOKENS,
+        includedTokens: getFreeIncludedTokens(Date.now()),
       });
     }
     return this.subscriptions.get(userId)!;

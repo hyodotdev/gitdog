@@ -313,10 +313,12 @@ export const getPricingInfo = query({
         free: {
           name: "Free",
           price: 0,
-          includedTokens: PRICING.FREE_INCLUDED_TOKENS,
+          includedTokens: 0,
+          trialTokens: PRICING.TRIAL_TOKENS,
           serviceFeeRate: PRICING.PLATFORM_FEE_FREE,
           features: [
-            `${(PRICING.FREE_INCLUDED_TOKENS / 1000).toFixed(0)}k tokens/month (hard limit)`,
+            `${(PRICING.TRIAL_TOKENS / 1000).toFixed(0)}k one-time trial tokens`,
+            "Your own Anthropic or OpenAI API key",
             "All repositories",
             "Issue Assistant",
           ],

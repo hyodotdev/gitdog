@@ -1,5 +1,5 @@
 import { useAuthActions } from "@convex-dev/auth/react";
-import { useQuery, useAction } from "convex/react";
+import { useQuery, useAction, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Link, useNavigate, useLocation } from "react-router";
 import { User, LogOut, Moon, Sun, Languages } from "lucide-react";
@@ -11,6 +11,7 @@ import { useTranslation } from "react-i18next";
 import { cn } from "../utils/cn";
 import { Button } from "./uis/Button";
 import { NotificationBell } from "./uis/NotificationBell";
+import { ProviderKeyAlert } from "./ProviderKeyAlert";
 
 export function Layout({ children }: { children: React.ReactNode }) {
   useSignals();
@@ -35,6 +36,15 @@ export function Layout({ children }: { children: React.ReactNode }) {
       void ensureProfile();
     }
   }, [currentUser, ensureProfile]);
+
+  // Grant the one-time trial credit; the server ignores repeat claims.
+  const claimTrialCredit = useMutation(
+    api.subscriptions.mutation.claimTrialCredit,
+  );
+  const signedInUserId = currentUser?._id;
+  useEffect(() => {
+    if (signedInUserId) void claimTrialCredit({}).catch(() => undefined);
+  }, [signedInUserId, claimTrialCredit]);
 
   const navItems = currentUser
     ? [
@@ -386,6 +396,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
           </div>
         </div>
       )}
+
+      {currentUser && <ProviderKeyAlert />}
 
       {/* Main Content */}
       <main id="main" tabIndex={-1} className={cn("flex-1 outline-hidden")}>

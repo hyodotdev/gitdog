@@ -13,7 +13,6 @@ import { ProviderKeysSection } from "./ProviderKeysSection";
 import {
   calculateTokenAvailability,
   getUtcMonthlyPeriod,
-  TOKEN_LIMITS,
 } from "../../utils/pricingConfig";
 
 export function ProfilePage() {
@@ -69,8 +68,7 @@ export function ProfilePage() {
     return null;
   }
 
-  const includedTokens =
-    subscription?.includedTokens || TOKEN_LIMITS.FREE_INCLUDED_TOKENS;
+  const includedTokens = subscription?.includedTokens ?? 0;
   const purchasedTokens = subscription?.purchasedTokens ?? 0;
   const purchasedTokensDebited = subscription?.purchasedTokensDebited ?? 0;
   const isPro = subscription?.plan === "pro";

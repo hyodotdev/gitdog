@@ -28,7 +28,10 @@ import { useTranslation } from "react-i18next";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { cn } from "../../utils/cn";
 import { showToast } from "../../utils/signals/toast";
-import { translateErrorMessage } from "../../utils/errorMessages";
+import {
+  getProviderKeyFailure,
+  translateErrorMessage,
+} from "../../utils/errorMessages";
 import { useState, useMemo } from "react";
 import { parseGitdogBody } from "../../utils/parseGitdogContent";
 
@@ -1262,6 +1265,22 @@ export function TicketDetailPage() {
                                         </span>
                                       )}
                                     </span>
+                                    {/* Key failures are fixed in profile settings */}
+                                    {getProviderKeyFailure(
+                                      action.errorMessage,
+                                    ) && (
+                                      <button
+                                        onClick={() => navigate("/profile")}
+                                        className={cn(
+                                          "px-3 py-1 text-sm font-medium shrink-0",
+                                          "bg-black text-white",
+                                          "hover:bg-gray-800",
+                                          "dark:bg-white dark:text-black dark:hover:bg-gray-200",
+                                        )}
+                                      >
+                                        {t("errors.providerKey.openSettings")}
+                                      </button>
+                                    )}
                                     {/* Show upgrade button for token limit errors */}
                                     {action.errorMessage
                                       .toLowerCase()

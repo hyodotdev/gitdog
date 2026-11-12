@@ -107,9 +107,15 @@ export function HomePage() {
                   aria-hidden="true"
                 />
                 <span className="text-gray-600 dark:text-gray-400">
-                  {t("home.workspace.tokensPerMonth", {
-                    count: (subscription?.includedTokens ?? 100_000) / 1000,
-                  })}
+                  {subscription?.plan === "pro"
+                    ? t("home.workspace.tokensPerMonth", {
+                        count: subscription.includedTokens / 1000,
+                      })
+                    : t("home.workspace.prepaidTokens", {
+                        count: Math.floor(
+                          (subscription?.purchasedTokens ?? 0) / 1000,
+                        ),
+                      })}
                 </span>
               </div>
             </div>

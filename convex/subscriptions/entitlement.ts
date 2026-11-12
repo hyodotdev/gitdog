@@ -1,6 +1,6 @@
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import { PRICING } from "../_ai/config";
+import { getFreeIncludedTokens, PRICING } from "../_ai/config";
 
 export type ProEntitlementProvenance = {
   source: "lemon_squeezy_webhook" | "admin_override";
@@ -198,15 +198,16 @@ export function getEffectiveSubscriptionEntitlement(
       ? subscription.periodEnd
       : fallbackPeriod.periodStart;
 
+  const periodStart = freePeriodIsValid
+    ? subscription.periodStart
+    : endedTrustedProPeriodStart;
   return {
     plan: "free",
     status: "active",
-    includedTokens: PRICING.FREE_INCLUDED_TOKENS,
+    includedTokens: getFreeIncludedTokens(periodStart),
     purchasedTokens: subscription ? subscription.purchasedTokens : 0,
     serviceFeeRate: PRICING.PLATFORM_FEE_FREE,
-    periodStart: freePeriodIsValid
-      ? subscription.periodStart
-      : endedTrustedProPeriodStart,
+    periodStart,
     periodEnd: freePeriodIsValid
       ? subscription.periodEnd
       : fallbackPeriod.periodEnd,

@@ -309,6 +309,11 @@ export const generate = internalAction({
               "unverified",
             );
           });
+        if (!quota.reserved && usesUserKey(rawAiProvider))
+          throw new UserApiKeyError(
+            "unavailable",
+            rawAiProvider.providerId === "openai" ? "openai" : "anthropic",
+          );
         if (!quota.reserved)
           throw new ReviewQuotaError(quota.message, quota.reason);
       }

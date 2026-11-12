@@ -21,7 +21,6 @@ import {
   calculateEstimatedAdditionalUsageCharge,
   calculateTokenAvailability,
   getUtcMonthlyPeriod,
-  TOKEN_LIMITS,
 } from "../../utils/pricingConfig";
 
 export function UsagePage() {
@@ -67,8 +66,7 @@ export function UsagePage() {
   // Token usage calculations
   // Note: Embedding tokens are already stored as "equivalent chat tokens" (divided by 50)
   const totalTokens = tokenUsage?.totalTokens || 0;
-  const includedTokens =
-    subscription?.includedTokens || TOKEN_LIMITS.FREE_INCLUDED_TOKENS;
+  const includedTokens = subscription?.includedTokens ?? 0;
   const purchasedTokens =
     (subscription && "purchasedTokens" in subscription
       ? subscription.purchasedTokens
@@ -96,7 +94,11 @@ export function UsagePage() {
   const totalAvailable = availability.totalAvailableTokens;
   const tokenLimit = totalAvailable;
 
-  const usagePercentage = Math.min((totalTokens / totalAvailable) * 100, 100);
+  // A free account with no trial or prepaid tokens left has nothing available.
+  const usagePercentage =
+    totalAvailable > 0
+      ? Math.min((totalTokens / totalAvailable) * 100, 100)
+      : 100;
 
   // Both plans stop at their included and prepaid token limit.
   const estimatedCost = calculateEstimatedAdditionalUsageCharge();
@@ -379,7 +381,7 @@ export function UsagePage() {
                       : "bg-gray-900 dark:bg-gray-100",
                 )}
                 style={{
-                  width: `${Math.min((totalTokens / tokenLimit) * 100, 100)}%`,
+                  width: `${usagePercentage}%`,
                 }}
               />
             </div>

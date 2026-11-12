@@ -82,16 +82,22 @@ and [Sol pricing](https://developers.openai.com/api/docs/models/gpt-6.1-sol).
 
 ## Plans and token packs
 
-Free and Pro both stop when their included and purchased balance is exhausted.
-Gitdog never creates automatic overage charges; prepaid token packs extend the
-limit and never expire.
+Try Gitdog with trial tokens, then use your own API key or Pro. Free and Pro
+both stop when their included and prepaid balance is exhausted. Gitdog never
+creates automatic overage charges; prepaid token packs extend the limit and
+never expire. Work that runs on your own provider key never uses these tokens.
 
-| Tier               | Included or prepaid tokens | Notes                        |
-| ------------------ | -------------------------- | ---------------------------- |
-| Free               | 100K per month             | Stops at the available limit |
-| Pro                | 2.4M per month             | Stops at the available limit |
-| Token Pack (Small) | 2.2M                       | $9.99 one-time purchase      |
-| Token Pack (Large) | 7.5M                       | $29.99 one-time purchase     |
+| Tier               | Included or prepaid tokens | Notes                                      |
+| ------------------ | -------------------------- | ------------------------------------------ |
+| Free               | 100K trial, once           | Granted on first sign-in; no monthly reset |
+| Pro                | 2.4M per month             | Stops at the available limit               |
+| Token Pack (Small) | 2.2M                       | $9.99 one-time purchase                    |
+| Token Pack (Large) | 7.5M                       | $29.99 one-time purchase                   |
+
+The trial is added to the prepaid wallet once per account and recorded in
+`trialCreditGrants`, so it is never granted again. Free periods that started
+before December 2026 keep the former 100K monthly allowance; later free
+periods include no tokens.
 
 ## Usage accounting
 

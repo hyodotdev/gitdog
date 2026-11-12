@@ -17,7 +17,7 @@ import {
   synchronizeBillingBoundaryQueue as synchronizeExactBillingBoundaryQueue,
   TerminalProQuotaUnavailableError,
 } from "./billingBoundaries";
-import { PRICING } from "../_ai/config";
+import { getFreeIncludedTokens, PRICING } from "../_ai/config";
 import {
   getSubscriptionForEntitlement,
   isLemonProviderProvenance,
@@ -801,7 +801,7 @@ async function creditPurchasedTokens(
       plan: "free",
       status: "active",
       serviceFeeRate: PRICING.PLATFORM_FEE_FREE,
-      includedTokens: PRICING.FREE_INCLUDED_TOKENS,
+      includedTokens: getFreeIncludedTokens(period.periodStart),
       purchasedTokens: args.tokensToAdd,
       periodStart: period.periodStart,
       periodEnd: period.periodEnd,
@@ -1928,4 +1928,37 @@ export const recoverSubscriptionInvoiceInbox = internalMutation({
     }
     return { scheduled: due.length };
   },
+});
+
+/**
+ * Grant the one-time sign-in trial credit as prepaid tokens. The grant row
+ * is the idempotency record, written in the same transaction as the credit
+ * and never deleted, so the trial is never granted twice.
+ */
+export async function grantTrialCreditOnce(
+  ctx: MutationCtx,
+  userId: Id<"users">,
+  now: number = Date.now(),
+): Promise<{ granted: boolean; tokens: number }> {
+  const existing = await ctx.db
+    .query("trialCreditGrants")
+    .withIndex("by_user", (q) => q.eq("userId", userId))
+    .first();
+  if (existing) return { granted: false, tokens: existing.tokens };
+  await creditPurchasedTokens(ctx, {
+    userId,
+    tokensToAdd: PRICING.TRIAL_TOKENS,
+    now,
+  });
+  await ctx.db.insert("trialCreditGrants", {
+    userId,
+    tokens: PRICING.TRIAL_TOKENS,
+    grantedAt: now,
+  });
+  return { granted: true, tokens: PRICING.TRIAL_TOKENS };
+}
+
+export const grantTrialCredit = internalMutation({
+  args: { userId: v.id("users") },
+  handler: async (ctx, args) => await grantTrialCreditOnce(ctx, args.userId),
 });

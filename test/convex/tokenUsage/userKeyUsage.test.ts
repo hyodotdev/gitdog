@@ -8,6 +8,7 @@ import {
   CLAUDE_API_ENDS_AT,
   GENERATION_MODELS,
   PRICING,
+  getFreeIncludedTokens,
 } from "../../../convex/_ai/config";
 import {
   CHAT_RESERVATION_TTL_MS,
@@ -189,9 +190,9 @@ async function exhaustFreeQuota(
       userId: fixture.userId,
       repositoryId: fixture.repositoryId,
       usageType: "chat",
-      inputTokens: PRICING.FREE_INCLUDED_TOKENS,
+      inputTokens: getFreeIncludedTokens(Date.now()),
       outputTokens: 0,
-      totalTokens: PRICING.FREE_INCLUDED_TOKENS,
+      totalTokens: getFreeIncludedTokens(Date.now()),
       inputCostCents: 0,
       outputCostCents: 0,
       baseCostCents: 0,

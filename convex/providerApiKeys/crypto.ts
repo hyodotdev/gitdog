@@ -60,6 +60,16 @@ async function loadEncryptionKey(): Promise<{ key: CryptoKey; keyId: string }> {
   };
 }
 
+/** Identifies the configured encryption key, or null when none is usable. */
+export async function currentEncryptionKeyId(): Promise<string | null> {
+  try {
+    return (await loadEncryptionKey()).keyId;
+  } catch (error) {
+    if (error instanceof ProviderKeyEncryptionError) return null;
+    throw error;
+  }
+}
+
 export async function encryptProviderKey(
   userId: string,
   provider: KeyProvider,

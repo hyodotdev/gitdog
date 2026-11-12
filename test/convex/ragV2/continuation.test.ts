@@ -18,7 +18,7 @@ import {
   EMBEDDING_MODEL,
   EmbeddingProviderError,
 } from "../../../convex/_ai/retrievalEmbeddings";
-import { PRICING } from "../../../convex/_ai/config";
+import { PRICING, getFreeIncludedTokens } from "../../../convex/_ai/config";
 import {
   buildFreeTierEmbeddingDocument,
   getNextRagEmbeddingProviderRetry,
@@ -553,7 +553,7 @@ async function blockPaidUsage(
       userId: repository.userId,
       plan: "free",
       status: "active",
-      includedTokens: PRICING.FREE_INCLUDED_TOKENS,
+      includedTokens: getFreeIncludedTokens(Date.now()),
       purchasedTokens: 0,
       serviceFeeRate: 0.25,
       periodStart: now,
@@ -561,7 +561,7 @@ async function blockPaidUsage(
       createdAt: now,
       updatedAt: now,
     });
-    const usedTokens = PRICING.FREE_INCLUDED_TOKENS - remainingTokens;
+    const usedTokens = getFreeIncludedTokens(Date.now()) - remainingTokens;
     await ctx.db.insert("tokenUsage", {
       userId: repository.userId,
       repositoryId,

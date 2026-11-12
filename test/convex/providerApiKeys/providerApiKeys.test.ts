@@ -323,3 +323,61 @@ describe("provider key management", () => {
     );
   });
 });
+
+describe("provider key failure notices", () => {
+  it("notifies once per status change, not once per failed request", async () => {
+    const t = convexTest(schema, modules);
+    const { userId, as } = await signedIn(t);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("{}", { status: 200 }),
+    );
+    await as.action(api.providerApiKeys.action.save, {
+      provider: "anthropic",
+      apiKey: ANTHROPIC_KEY,
+    });
+    const fail = (code: "invalid" | "out_of_credit" | "rate_limited") =>
+      t.mutation(internal.providerApiKeys.internalMutation.recordKeyFailure, {
+        userId,
+        provider: "anthropic",
+        code,
+      });
+    await fail("out_of_credit");
+    await fail("out_of_credit");
+    await fail("rate_limited");
+    await fail("invalid");
+    const notifications = await t.run(async (ctx) =>
+      ctx.db.query("notifications").collect(),
+    );
+    expect(notifications).toEqual([
+      expect.objectContaining({
+        userId,
+        type: "provider_key_failed",
+        title: "Anthropic API key out of credit",
+        isRead: false,
+      }),
+      expect.objectContaining({
+        type: "provider_key_failed",
+        title: "Anthropic API key rejected",
+      }),
+    ]);
+  });
+
+  it("reports a key the server can no longer decrypt as unreadable", async () => {
+    const t = convexTest(schema, modules);
+    const { as } = await signedIn(t);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("{}", { status: 200 }),
+    );
+    await as.action(api.providerApiKeys.action.save, {
+      provider: "openai",
+      apiKey: OPENAI_KEY,
+    });
+    await expect(as.query(api.providerApiKeys.query.list, {})).resolves.toEqual(
+      [expect.objectContaining({ readable: true })],
+    );
+    process.env.BYOK_ENCRYPTION_KEY = btoa("z".repeat(32));
+    await expect(as.query(api.providerApiKeys.query.list, {})).resolves.toEqual(
+      [expect.objectContaining({ readable: false, status: "active" })],
+    );
+  });
+});

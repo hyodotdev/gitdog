@@ -12,7 +12,7 @@ import {
   CURRENT_PRIVACY_POLICY_VERSION,
 } from "../../../convex/users/legal";
 import { drainScheduledFunctions } from "../scheduling";
-import { PRICING } from "../../../convex/_ai/config";
+import { PRICING, getFreeIncludedTokens } from "../../../convex/_ai/config";
 import { encryptProviderKey } from "../../../convex/providerApiKeys/crypto";
 const modules = import.meta.glob("../../../convex/**/*.ts");
 beforeEach(() => vi.useFakeTimers());
@@ -1111,7 +1111,7 @@ describe("batched PR reviews", () => {
         userId: f.userId,
         plan: "free",
         status: "active",
-        includedTokens: PRICING.FREE_INCLUDED_TOKENS,
+        includedTokens: getFreeIncludedTokens(Date.now()),
         purchasedTokens,
         serviceFeeRate: PRICING.PLATFORM_FEE_FREE,
         periodStart: Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
