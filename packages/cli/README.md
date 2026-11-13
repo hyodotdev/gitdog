@@ -20,7 +20,7 @@
 </p>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/hyodotdev/gitdog/main/.github/assets/terminal.svg?v=0.2.3" alt="Gitdog terminal: connect a project, configure automation and review pending actions" width="800">
+  <img src="https://raw.githubusercontent.com/hyodotdev/gitdog/main/.github/assets/terminal.svg?v=0.3.0" alt="Gitdog terminal: connect a project, configure automation and review pending actions" width="800">
 </p>
 
 Connect repositories, configure issue, discussion and PR automation, review
