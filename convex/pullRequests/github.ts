@@ -302,7 +302,7 @@ export async function readReviewFile(
   if (!changed?.patch || !hasReviewablePatch(changed))
     return await readFile(access, path, ref);
   const content = await readFile(access, path, ref, LARGE_CHANGED_FILE_BYTES);
-  if (content.length <= 40_000) return content;
+  if (new TextEncoder().encode(content).length <= 40_000) return content;
   const windowed = windowChangedSource(content, changed.patch);
   if (windowed === null) throw new ReviewContextLimitError();
   return windowed;
