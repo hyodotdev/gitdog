@@ -1748,6 +1748,74 @@ async function fetchAuthoritativeRepositoryMetadata(
   };
 }
 
+async function fetchBranchHeadSha(
+  githubRepo: string,
+  branch: string,
+  token: string,
+): Promise<string | null> {
+  const response = await fetchGitHub(
+    `https://api.github.com/repos/${githubRepo}/commits/${encodeURIComponent(branch)}`,
+    token,
+    "fetch default branch head",
+  );
+  if (!response.ok) {
+    await response.body?.cancel();
+    return null;
+  }
+  const data = (await response.json()) as { sha?: unknown };
+  return typeof data.sha === "string" && /^[a-f0-9]{40}$/i.test(data.sha)
+    ? data.sha.toLowerCase()
+    : null;
+}
+
+/**
+ * Read the default branch head with one installation token, so a periodic
+ * sync can compare it with the indexed commit before touching the database.
+ * Returns null when GitHub cannot answer; callers then leave the index as is.
+ */
+export async function fetchDefaultBranchHead(args: {
+  installationId: number;
+  githubRepositoryId: number;
+  githubRepo: string;
+  defaultBranch?: string;
+}): Promise<{ commitSha: string; defaultBranch: string } | null> {
+  const appId = process.env.GITHUB_APP_ID;
+  const privateKey = process.env.GITHUB_APP_PRIVATE_KEY;
+  if (!appId || !privateKey) return null;
+  try {
+    const token = await getRepositoryInstallationToken(
+      args.installationId,
+      args.githubRepositoryId,
+      appId,
+      privateKey,
+    );
+    if (args.defaultBranch) {
+      const sha = await fetchBranchHeadSha(
+        args.githubRepo,
+        args.defaultBranch,
+        token,
+      );
+      if (sha) return { commitSha: sha, defaultBranch: args.defaultBranch };
+    }
+    // The stored branch is unknown or no longer resolves (renamed default
+    // branch or transferred repository): ask GitHub for the current one.
+    const metadata = await fetchAuthoritativeRepositoryMetadata(
+      args.githubRepositoryId,
+      token,
+    );
+    const sha = await fetchBranchHeadSha(
+      metadata.githubRepo,
+      metadata.defaultBranch,
+      token,
+    );
+    return sha
+      ? { commitSha: sha, defaultBranch: metadata.defaultBranch }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 async function fetchRepositorySnapshot(
   githubRepo: string,
   branch: string,

@@ -4,6 +4,7 @@ import { v } from "convex/values";
 import { hasStaleIncrementalIndexWork } from "./readiness";
 import type { ActiveRepositoryRecoveryPage } from "./internalQuery";
 import { REPOSITORY_TREE_SNAPSHOT_CLEANUP_STALE_MS } from "./treeSnapshot";
+import { fetchDefaultBranchHead } from "./action";
 
 const STALE_RECOVERY_SCAN_PAGE_SIZE = 25;
 const STALE_RECOVERY_SCAN_MAX_PAGE_SIZE = 50;
@@ -394,9 +395,31 @@ export const dailySyncAllRepositories = internalAction({
     let skipped = page.scanned - page.repositories.length;
     for (const repo of page.repositories) {
       try {
+        // Push webhooks index every default-branch change; this daily pass
+        // only catches missed deliveries. An unchanged head costs one GitHub
+        // request and no database work, and an unreadable head is left for
+        // the next pass instead of forcing a blind reindex.
+        const head = await fetchDefaultBranchHead({
+          installationId: repo.installationId,
+          githubRepositoryId: repo.githubRepositoryId,
+          githubRepo: repo.githubRepo,
+          defaultBranch: repo.defaultBranch,
+        });
+        if (
+          !head ||
+          (repo.indexedSource?.commitSha === head.commitSha &&
+            repo.indexedSource.defaultBranch === head.defaultBranch)
+        ) {
+          skipped++;
+          continue;
+        }
         const prepared = await ctx.runMutation(
           internal.repoIndexing.mutation.prepareIncrementalIndex,
-          { repositoryId: repo._id, scheduleDelayMs: scheduled * 30_000 },
+          {
+            repositoryId: repo._id,
+            scheduleDelayMs: scheduled * 30_000,
+            source: head,
+          },
         );
         if (!prepared.success) {
           skipped++;

@@ -577,7 +577,23 @@ export const getPeriodicSyncPage = internalQuery({
     return {
       repositories: result.page
         .filter((repo) => getIncrementalIndexEligibility(repo).allowed)
-        .map((repo) => ({ _id: repo._id, githubRepo: repo.githubRepo })),
+        .map((repo) => ({
+          _id: repo._id,
+          githubRepo: repo.githubRepo,
+          installationId: repo.installationId,
+          githubRepositoryId: repo.githubRepositoryId,
+          defaultBranch: repo.defaultBranch,
+          // Only a completed, unfailed generation proves its commit is indexed.
+          indexedSource:
+            repo.indexStatus === "completed" &&
+            repo.ragStatus === "completed" &&
+            repo.indexSource?.indexVersion === repo.indexVersion
+              ? {
+                  commitSha: repo.indexSource.commitSha,
+                  defaultBranch: repo.indexSource.defaultBranch,
+                }
+              : null,
+        })),
       scanned: result.page.length,
       isDone: result.isDone,
       continueCursor: result.continueCursor,
