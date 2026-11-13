@@ -25,7 +25,7 @@ import {
   readReviewJson,
   snapshot,
   splitReviewDiff,
-  readFile,
+  readReviewFile,
   treePaths,
   type PullRequest,
 } from "./github";
@@ -45,6 +45,7 @@ import {
   reviewBody,
   reviewComments,
   validateFindings,
+  type ChangedFile,
   type Finding,
 } from "./review";
 import { GITHUB_API_VERSION } from "../github/helpers";
@@ -54,10 +55,11 @@ function readReviewSource(
   access: VerifiedRepositoryAccess,
   path: string,
   commit: string,
+  changed?: ChangedFile,
 ) {
   return runReviewRequest(
     { operation: "Read GitHub source file", file: { path, commit } },
-    () => readFile(access, path, commit),
+    () => readReviewFile(access, path, commit, changed),
   );
 }
 
@@ -111,7 +113,8 @@ async function guard(
     state.ticket.pullRequestBaseSha !== source.baseSha ||
     (!manual &&
       stage === "publication" &&
-      state.repository.settings.requireApprovalForPullRequests !== false)
+      state.repository.settings.requireApprovalForPullRequests !== false &&
+      state.action.proposedChanges?.findings?.length !== 0)
   )
     throw new Error("Review source, settings or lifecycle changed");
   await requireCurrentAiLegalAttestation(ctx, state.repository.userId);
@@ -361,11 +364,14 @@ export const generate = internalAction({
           basePaths,
           guard: ensureCurrent,
           read: (path, ref) =>
-            readReviewSource(
-              access,
-              path,
-              ref === "head" ? data.headSha : data.baseSha,
-            ),
+            ref === "head"
+              ? readReviewSource(
+                  access,
+                  path,
+                  data.headSha,
+                  data.files.find((file) => file.filename === path),
+                )
+              : readReviewSource(access, path, data.baseSha),
         });
         findings.push(...result.findings);
         findingCount += result.findings.length;
@@ -445,6 +451,9 @@ export const generate = internalAction({
                 excludedPaths.size > REVIEW_COVERAGE_PREVIEW,
             }
           : undefined,
+        coverage: batched
+          ? undefined
+          : { changedFiles: pr.changed_files, uncoveredFiles },
       });
     } catch (error) {
       // Do not persist provider bodies, source snippets or credentials in errors.
@@ -555,38 +564,52 @@ export const publish = internalAction({
         throw new Error("Pull request changed after the review was generated");
       const proposal = initial.action.proposedChanges;
       const findings = proposal?.findings as Finding[];
-      if (
-        !Array.isArray(findings) ||
-        findings.length < 1 ||
-        findings.length > MAX_REVIEW_FINDINGS
-      )
-        throw new Error("Review has no supported findings");
+      if (!Array.isArray(findings) || findings.length > MAX_REVIEW_FINDINGS)
+        throw new Error("Review findings are invalid");
       // Re-read diff and evidence at publication, including after human approval.
       const batched = typeof proposal.batchCount === "number";
-      const data = batched
-        ? await snapshot(access, live, false, {
-            findingPaths: new Set(findings.map((finding) => finding.path)),
-          })
-        : await snapshot(access, live);
-      const evidence = [];
-      const references = new Set<string>();
-      for (const finding of findings) {
-        for (const e of finding.evidence) {
-          const key = `${e.ref}:${e.path}`;
-          if (references.has(key)) continue;
-          references.add(key);
-          evidence.push({
-            path: e.path,
-            ref: e.ref,
-            content: await readReviewSource(
-              access,
-              e.path,
-              e.ref === "head" ? data.headSha : data.baseSha,
-            ),
-          });
+      const data =
+        findings.length === 0
+          ? undefined
+          : batched
+            ? await snapshot(access, live, false, {
+                // Evidence in a large changed file is re-read around its diff,
+                // as it was during review, so its diff is needed too.
+                findingPaths: new Set(
+                  findings.flatMap((finding) => [
+                    finding.path,
+                    ...finding.evidence
+                      .filter((e) => e.ref === "head")
+                      .map((e) => e.path),
+                  ]),
+                ),
+              })
+            : await snapshot(access, live);
+      if (data) {
+        const evidence = [];
+        const references = new Set<string>();
+        for (const finding of findings) {
+          for (const e of finding.evidence) {
+            const key = `${e.ref}:${e.path}`;
+            if (references.has(key)) continue;
+            references.add(key);
+            evidence.push({
+              path: e.path,
+              ref: e.ref,
+              content:
+                e.ref === "head"
+                  ? await readReviewSource(
+                      access,
+                      e.path,
+                      data.headSha,
+                      data.files.find((file) => file.filename === e.path),
+                    )
+                  : await readReviewSource(access, e.path, data.baseSha),
+            });
+          }
         }
+        validateFindings({ findings }, data.files, evidence);
       }
-      validateFindings({ findings }, data.files, evidence);
       const marker = `<!-- gitdog-pr-review:${args.actionId} -->`;
       const prior = await existingReview(
         access,
@@ -632,22 +655,27 @@ export const publish = internalAction({
           const suggestions =
             current.state.repository.settings.pullRequestSuggestionsEnabled !==
             false;
-          const body = batched
-            ? combinedReviewBody(
-                findings,
-                source.headSha,
-                {
-                  batchCount: proposal.batchCount,
-                  findingCount: proposal.findingCount,
+          const findingCount = batched
+            ? proposal.findingCount
+            : findings.length;
+          const coverage =
+            typeof proposal.changedFiles === "number" &&
+            typeof proposal.uncoveredFiles === "number"
+              ? {
                   changedFiles: proposal.changedFiles,
                   uncoveredFiles: proposal.uncoveredFiles,
-                },
-                suggestions,
-              )
-            : reviewBody(findings.length, source.headSha);
-          const response = await fetch(
-            `${root(current.access)}/pulls/${live.number}/reviews`,
-            {
+                }
+              : undefined;
+          const body = [
+            reviewBody(findingCount, source.headSha, coverage),
+            ...(batched && findingCount > findings.length
+              ? [
+                  `Showing the ${findings.length} highest-priority findings out of ${findingCount}.`,
+                ]
+              : []),
+          ].join("\n\n");
+          const post = (payload: Record<string, unknown>) =>
+            fetch(`${root(current.access)}/pulls/${live.number}/reviews`, {
               method: "POST",
               headers: {
                 Authorization: `Bearer ${current.access.token}`,
@@ -659,14 +687,34 @@ export const publish = internalAction({
               body: JSON.stringify({
                 commit_id: source.headSha,
                 event: "COMMENT",
-                body: `${body}\n\n${marker}`,
-                ...(batched
-                  ? {}
-                  : { comments: reviewComments(findings, suggestions) }),
+                ...payload,
               }),
               signal: AbortSignal.timeout(30_000),
-            },
-          );
+            });
+          let response = await post({
+            body: `${body}\n\n${marker}`,
+            ...(findings.length
+              ? { comments: reviewComments(findings, suggestions) }
+              : {}),
+          });
+          // GitHub creates nothing when it rejects an inline comment, so a
+          // batched review that cost many batches falls back to one body.
+          if (response.status === 422 && batched && findings.length) {
+            await response.body?.cancel().catch(() => undefined);
+            response = await post({
+              body: `${combinedReviewBody(
+                findings,
+                source.headSha,
+                {
+                  batchCount: proposal.batchCount,
+                  findingCount,
+                  changedFiles: proposal.changedFiles,
+                  uncoveredFiles: proposal.uncoveredFiles,
+                },
+                suggestions,
+              )}\n\n${marker}`,
+            });
+          }
           if (!response.ok) {
             await response.body?.cancel().catch(() => undefined);
             throw new Error(

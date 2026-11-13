@@ -6,6 +6,7 @@ import {
   snapshot,
   splitReviewDiff,
   readFile,
+  readReviewFile,
   treePaths,
   type PullRequest,
 } from "../../../convex/pullRequests/github";
@@ -13,6 +14,10 @@ import { handlePullRequestEvent } from "../../../convex/pullRequests/webhook";
 import type { VerifiedRepositoryAccess } from "../../../convex/github/repositoryIdentity";
 import type { ActionCtx } from "../../../convex/_generated/server";
 import { ReviewContextLimitError } from "../../../convex/pullRequests/errors";
+import {
+  OMITTED_SOURCE_MARKER,
+  windowChangedSource,
+} from "../../../convex/pullRequests/review";
 const access = {
   owner: "owner",
   repo: "repo",
@@ -93,6 +98,83 @@ describe("authoritative PR snapshots", () => {
     await expect(
       readFile(access, "large.ts", pr.head.sha),
     ).rejects.toBeInstanceOf(ReviewContextLimitError);
+  });
+  describe("large changed files", () => {
+    // 3,000 numbered lines, about 57 KB; the diff adds line 1500.
+    const lines = Array.from(
+      { length: 3000 },
+      (_, i) => `const value${i + 1} = ${i + 1};`,
+    );
+    const source = lines.join("\n");
+    const changed = {
+      filename: "src/large.ts",
+      status: "modified",
+      additions: 1,
+      deletions: 1,
+      patch:
+        "@@ -1497,7 +1497,7 @@\n const value1497 = 1497;\n const value1498 = 1498;\n const value1499 = 1499;\n-old\n+const value1500 = 1500;\n const value1501 = 1501;\n const value1502 = 1502;\n const value1503 = 1503;",
+    };
+    const file = (text: string) => ({
+      type: "file",
+      encoding: "base64",
+      content: btoa(text),
+      size: text.length,
+    });
+    it("shows the diff region with its original line numbers", () => {
+      const windowed = windowChangedSource(source, changed.patch)!;
+      const shown = windowed.split("\n");
+      expect(shown).toHaveLength(3000);
+      expect(shown[1499]).toBe("const value1500 = 1500;");
+      expect(shown[1497 - 80 - 1]).toBe("const value1417 = 1417;");
+      expect(shown[1497 - 80 - 2]).toBe("");
+      expect(shown[0]).toBe(OMITTED_SOURCE_MARKER);
+      expect(shown[1]).toBe("");
+      expect(shown[1503 + 80]).toBe(OMITTED_SOURCE_MARKER);
+      expect(shown[2999]).toBe("");
+      expect(JSON.stringify(windowed).length).toBeLessThanOrEqual(40_000);
+    });
+    it("narrows the context, then gives up, when the diff is too large", () => {
+      const all = `@@ -1,3000 +1,3000 @@\n${lines.map((l) => `+${l}`).join("\n")}`;
+      expect(windowChangedSource(source, all)).toBeNull();
+      expect(windowChangedSource(source, "@@ -1,2 +0,0 @@\n-a\n-b")).toBeNull();
+    });
+    it("reads a changed file over 40 KB around its diff", async () => {
+      const get = vi
+        .spyOn(helpers, "fetchGitHubAppJsonWithRetry")
+        .mockResolvedValue(file(source));
+      const windowed = await readReviewFile(
+        access,
+        changed.filename,
+        pr.head.sha,
+        changed,
+      );
+      expect(windowed.split("\n")[1499]).toBe("const value1500 = 1500;");
+      expect(windowed).toContain(OMITTED_SOURCE_MARKER);
+      // A changed file is fetched once at the larger limit.
+      expect(get).toHaveBeenCalledTimes(1);
+    });
+    it("keeps the 40 KB limit for unchanged files and base reads", async () => {
+      vi.spyOn(helpers, "fetchGitHubAppJsonWithRetry").mockResolvedValue(
+        file(source),
+      );
+      await expect(
+        readReviewFile(access, changed.filename, pr.head.sha),
+      ).rejects.toBeInstanceOf(ReviewContextLimitError);
+      await expect(
+        readReviewFile(access, changed.filename, pr.head.sha, {
+          ...changed,
+          status: "removed",
+        }),
+      ).rejects.toBeInstanceOf(ReviewContextLimitError);
+    });
+    it("refuses a changed file over 400 KB", async () => {
+      vi.spyOn(helpers, "fetchGitHubAppJsonWithRetry").mockResolvedValue(
+        file("x".repeat(400_001)),
+      );
+      await expect(
+        readReviewFile(access, changed.filename, pr.head.sha, changed),
+      ).rejects.toBeInstanceOf(ReviewContextLimitError);
+    });
   });
   it("rejects a PR from another immutable repository", async () => {
     vi.spyOn(helpers, "fetchGitHubAppJsonWithRetry").mockResolvedValue({

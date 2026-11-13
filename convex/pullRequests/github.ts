@@ -1,7 +1,12 @@
 import { fetchGitHubAppJsonWithRetry } from "../github/helpers";
 import type { VerifiedRepositoryAccess } from "../github/repositoryIdentity";
 import type { ChangedFile } from "./review";
-import { addedLines, safePath } from "./review";
+import {
+  addedLines,
+  hasReviewablePatch,
+  safePath,
+  windowChangedSource,
+} from "./review";
 import { ReviewContextLimitError, runReviewRequest } from "./errors";
 
 export type PullRequest = {
@@ -235,10 +240,15 @@ export function splitReviewDiff(files: ChangedFile[]): ChangedFile[][] {
   return groups;
 }
 
+// A changed file over the 40 KB limit is fetched up to this size, then shown
+// to the reviewer only around its diff.
+const LARGE_CHANGED_FILE_BYTES = 400_000;
+
 export async function readFile(
   access: VerifiedRepositoryAccess,
   path: string,
   ref: string,
+  maxBytes = 40_000,
 ): Promise<string> {
   if (!safePath(path) || !sha(ref))
     throw new Error("Invalid commit-pinned file request");
@@ -261,7 +271,7 @@ export async function readFile(
     value.size < 0
   )
     throw new Error("Review context is unavailable, binary or too large");
-  if (value.size > 40_000 || value.content.length > 60_000)
+  if (value.size > maxBytes || value.content.length > maxBytes * 1.5)
     throw new ReviewContextLimitError();
   let content: string;
   try {
@@ -273,10 +283,31 @@ export async function readFile(
   } catch {
     throw new Error("Review source is not valid UTF-8");
   }
-  if (content.includes("\0") || content.length > 40_000)
+  if (content.includes("\0") || content.length > maxBytes)
     throw new Error("Review context is binary or too large");
   return content;
 }
+/**
+ * Reads commit-pinned review source. A changed file over the 40 KB limit, read
+ * at head with its diff, is shown around that diff instead of being skipped.
+ * Files of roughly 20,000 lines or more cannot be windowed within the limit
+ * and stay unreviewed.
+ */
+export async function readReviewFile(
+  access: VerifiedRepositoryAccess,
+  path: string,
+  ref: string,
+  changed?: ChangedFile,
+): Promise<string> {
+  if (!changed?.patch || !hasReviewablePatch(changed))
+    return await readFile(access, path, ref);
+  const content = await readFile(access, path, ref, LARGE_CHANGED_FILE_BYTES);
+  if (new TextEncoder().encode(content).length <= 40_000) return content;
+  const windowed = windowChangedSource(content, changed.patch);
+  if (windowed === null) throw new ReviewContextLimitError();
+  return windowed;
+}
+
 export async function treePaths(
   access: VerifiedRepositoryAccess,
   ref: string,
