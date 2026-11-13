@@ -5,6 +5,7 @@ import { internal } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import schema from "../../../convex/schema";
 import { RAG_CHUNKER_VERSION } from "../../../convex/ragV2/chunkPaths";
+import { REFERENCED_BLOB_RECHECK_MS } from "../../../convex/repoIndexing/mutation";
 
 const modules = import.meta.glob("../../../convex/**/*.ts");
 type Backend = ReturnType<typeof convexTest>;
@@ -294,5 +295,38 @@ describe("unchanged file reuse", () => {
         if (job.state.kind === "pending") await ctx.scheduler.cancel(job._id);
       }
     });
+  });
+
+  it("rechecks a referenced stale blob only after a long interval", async () => {
+    const t = convexTest(schema, modules);
+    const { repositoryId } = await insertIndexingRepository(t);
+    await insertFileMap(t, repositoryId, "kept.ts", "sha-kept", 4);
+    const blobId = await t.run(async (ctx) => {
+      const old = Date.now() - 8 * 24 * 60 * 60 * 1_000;
+      return await ctx.db.insert("repoFileBlobs", {
+        sha256: "sha-kept",
+        storageId: await ctx.storage.store(new Blob(["x"])),
+        size: 1,
+        createdAt: old,
+        lastAccessedAt: old,
+        accessCount: 1,
+      });
+    });
+    const threshold = Date.now() - 7 * 24 * 60 * 60 * 1_000;
+    expect(
+      await t.mutation(internal.repoIndexing.mutation.deleteFileBlobIfStale, {
+        blobId,
+        threshold,
+      }),
+    ).toBe(false);
+    const blob = await t.run((ctx) => ctx.db.get(blobId));
+    expect(blob?.lastAccessedAt).toBeGreaterThanOrEqual(
+      Date.now() + REFERENCED_BLOB_RECHECK_MS - 1_000,
+    );
+    const stale = await t.query(
+      internal.repoIndexing.internalQuery.getStaleFileBlobs,
+      { threshold },
+    );
+    expect(stale).toHaveLength(0);
   });
 });

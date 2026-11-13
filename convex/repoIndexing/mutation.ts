@@ -49,6 +49,9 @@ const rateLimitedIndexContinuationArgs = {
 };
 
 const INSTALLATION_ACCESS_RETRY_MS = 5 * 60 * 1_000;
+// With the one-week stale threshold, a referenced blob is checked about
+// every five weeks.
+export const REFERENCED_BLOB_RECHECK_MS = 28 * 24 * 60 * 60 * 1_000;
 
 async function hasReadyRepositoryInstallation(
   ctx: MutationCtx,
@@ -2201,8 +2204,11 @@ export const deleteFileBlobIfStale = internalMutation({
       .withIndex("by_sha256", (q) => q.eq("sha256", blob.sha256))
       .first();
     if (referencedFile) {
+      // Unchanged files reuse their blobs without touching them, so a
+      // referenced blob is rechecked once per REFERENCED_BLOB_RECHECK_MS
+      // instead of coming back into the stale window every week.
       await ctx.db.patch(args.blobId, {
-        lastAccessedAt: Date.now(),
+        lastAccessedAt: Date.now() + REFERENCED_BLOB_RECHECK_MS,
       });
       return false;
     }
