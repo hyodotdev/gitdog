@@ -20,6 +20,7 @@ export const MAX_NEARBY_PERIOD_TOTALS = 16;
 export const MAX_PERIOD_TOTALS_REPOSITORIES = 100;
 export const MAX_PERIOD_TOTALS_BUILD_ROWS_PER_WINDOW = 8_000;
 export const PERIOD_TOTALS_BUILD_ROW_BUDGET = 2_000;
+export const PERIOD_TOTALS_BUILD_STALL_MS = 10 * 60 * 1_000;
 
 export const EMPTY_GITDOG_TOTALS: PeriodTotals["gitdog"] = {
   rowCount: 0,
@@ -329,7 +330,23 @@ export async function ensurePeriodTotals(
         .eq("periodEnd", periodEnd),
     )
     .first();
-  if (existing) return existing._id;
+  if (existing) {
+    // Restart a build whose scheduled step was lost or failed, at most once
+    // per stall interval.
+    if (
+      existing.builtThrough !== undefined &&
+      existing.buildAbandonedAt === undefined &&
+      existing.updatedAt <= Date.now() - PERIOD_TOTALS_BUILD_STALL_MS
+    ) {
+      await ctx.db.patch(existing._id, { updatedAt: Date.now() });
+      await ctx.scheduler.runAfter(
+        0,
+        internal.tokenUsage.internalMutation.buildUsagePeriodTotals,
+        { totalsId: existing._id },
+      );
+    }
+    return existing._id;
+  }
 
   const nearby = await ctx.db
     .query("tokenUsagePeriodTotals")
@@ -383,7 +400,7 @@ export async function buildPeriodTotalsStep(
   totalsId: Id<"tokenUsagePeriodTotals">,
 ): Promise<{ done: boolean }> {
   let totals = await ctx.db.get(totalsId);
-  if (!totals) return { done: true };
+  if (!totals || totals.buildAbandonedAt !== undefined) return { done: true };
   let rowBudget = PERIOD_TOTALS_BUILD_ROW_BUDGET;
   while (totals.builtThrough !== undefined && rowBudget > 0) {
     const from: number = totals.builtThrough;
@@ -405,10 +422,8 @@ export async function buildPeriodTotalsStep(
       });
       return { done: true };
     }
-    const windowEnd = Math.min(
-      next.createdAt + USAGE_TOTALS_HOUR_MS,
-      periodEnd,
-    );
+    const windowMs = totals.buildWindowMs ?? USAGE_TOTALS_HOUR_MS;
+    const windowEnd = Math.min(next.createdAt + windowMs, periodEnd);
     const rows = await ctx.db
       .query("tokenUsage")
       .withIndex("by_user_and_month", (q) =>
@@ -419,13 +434,31 @@ export async function buildPeriodTotalsStep(
       )
       .take(MAX_PERIOD_TOTALS_BUILD_ROWS_PER_WINDOW + 1);
     if (rows.length > MAX_PERIOD_TOTALS_BUILD_ROWS_PER_WINDOW) {
-      throw new Error("Token usage window is too large to aggregate");
+      // Retry with half the window in the next step, so one step never reads
+      // more than one oversized window.
+      const now = Date.now();
+      if (windowMs <= 1) {
+        await ctx.db.patch(totalsId, { buildAbandonedAt: now, updatedAt: now });
+        return { done: true };
+      }
+      await ctx.db.patch(totalsId, {
+        buildWindowMs: Math.floor(windowMs / 2),
+        updatedAt: now,
+      });
+      break;
     }
     let sums: Pick<
       PeriodTotals,
       "gitdog" | "userKey" | "repositories" | "repositoriesOverflow"
     > = totals;
-    for (const row of rows) sums = addRowToPeriodTotals(sums, row);
+    try {
+      for (const row of rows) sums = addRowToPeriodTotals(sums, row);
+    } catch {
+      // A row the aggregate cannot hold keeps this period on the row path.
+      const now = Date.now();
+      await ctx.db.patch(totalsId, { buildAbandonedAt: now, updatedAt: now });
+      return { done: true };
+    }
     const patch = { ...sums, builtThrough: windowEnd, updatedAt: Date.now() };
     await ctx.db.patch(totalsId, patch);
     totals = { ...totals, ...patch };

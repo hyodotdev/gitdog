@@ -10,6 +10,10 @@ import {
 } from "../../../convex/tokenUsage/quota";
 import {
   detachUsageRepositoryInPeriodTotals,
+  EMPTY_GITDOG_TOTALS,
+  EMPTY_USER_KEY_TOTALS,
+  MAX_PERIOD_TOTALS_BUILD_ROWS_PER_WINDOW,
+  PERIOD_TOTALS_BUILD_STALL_MS,
   readCompletePeriodTotals,
 } from "../../../convex/tokenUsage/periodTotals";
 import { insertTokenUsage } from "../../../convex/tokenUsage/totals";
@@ -415,6 +419,83 @@ describe("token usage period totals", () => {
     expect(byRepository(fromTotals)).toEqual(byRepository(fromRows));
     expect(fromTotals.map((entry) => entry.repositoryId).sort()).toEqual(
       ["unknown", zeroRepository].sort(),
+    );
+  });
+
+  it("restarts a stalled build and splits windows with too many rows", async () => {
+    const t = convexTest(schema, modules);
+    const userId = await t.run((ctx) => ctx.db.insert("users", {}));
+    const denseStart = PERIOD_START + 60_000;
+    await t.run(async (ctx) => {
+      // More rows than one build window may read, within one hour.
+      for (
+        let index = 0;
+        index < MAX_PERIOD_TOTALS_BUILD_ROWS_PER_WINDOW;
+        index++
+      ) {
+        await ctx.db.insert("tokenUsage", usageRow(userId, denseStart, 20));
+      }
+      await ctx.db.insert(
+        "tokenUsage",
+        usageRow(userId, denseStart + 40 * 60_000, 20),
+      );
+      // A building aggregate whose scheduled step was lost long ago.
+      await ctx.db.insert("tokenUsagePeriodTotals", {
+        userId,
+        periodStart: PERIOD_START,
+        periodEnd: PERIOD_END,
+        builtThrough: PERIOD_START,
+        gitdog: EMPTY_GITDOG_TOTALS,
+        userKey: EMPTY_USER_KEY_TOTALS,
+        repositories: [],
+        createdAt: PERIOD_START,
+        updatedAt: now() - PERIOD_TOTALS_BUILD_STALL_MS - 1,
+      });
+    });
+
+    await t.run((ctx) =>
+      insertTokenUsage(ctx, usageRow(userId, now() - 1_000, 20)),
+    );
+    await drainScheduledFunctions(t);
+
+    const totals = await readTotals(t, userId);
+    expect(totals?.gitdog.rowCount).toBe(
+      MAX_PERIOD_TOTALS_BUILD_ROWS_PER_WINDOW + 2,
+    );
+    expect(totals?.buildWindowMs).toBeLessThan(60 * 60_000);
+    expect(totals?.buildAbandonedAt).toBeUndefined();
+  }, 60_000);
+
+  it("keeps a period on the row path when its rows cannot be aggregated", async () => {
+    const t = convexTest(schema, modules);
+    const userId = await t.run((ctx) => ctx.db.insert("users", {}));
+    await t.run(async (ctx) => {
+      await ctx.db.insert(
+        "tokenUsage",
+        usageRow(userId, now() - 5_000, 100, { inputTokens: -1 }),
+      );
+    });
+    await t.mutation(
+      internal.tokenUsage.internalMutation.backfillUsagePeriodTotals,
+      {},
+    );
+    await drainScheduledFunctions(t);
+    const totals = await t.run((ctx) =>
+      ctx.db.query("tokenUsagePeriodTotals").first(),
+    );
+    expect(totals?.buildAbandonedAt).toEqual(expect.any(Number));
+    expect(await readTotals(t, userId)).toBeNull();
+    // Backfilling again does not restart an abandoned build.
+    await t.mutation(
+      internal.tokenUsage.internalMutation.backfillUsagePeriodTotals,
+      {},
+    );
+    expect(
+      await t.run((ctx) =>
+        ctx.db.system.query("_scheduled_functions").collect(),
+      ),
+    ).toSatisfy((jobs: Array<{ state: { kind: string } }>) =>
+      jobs.every((job) => job.state.kind !== "pending"),
     );
   });
 });

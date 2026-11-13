@@ -318,6 +318,11 @@ const applicationTables = {
     periodStart: v.number(),
     periodEnd: v.number(),
     builtThrough: v.optional(v.number()),
+    // Window the build reads per step; halved when a window has too many rows.
+    buildWindowMs: v.optional(v.number()),
+    // Set when the build cannot finish (rows too dense or invalid); readers
+    // then keep the row path for this period for good.
+    buildAbandonedAt: v.optional(v.number()),
     // Rows that count toward Gitdog quota (keySource undefined).
     gitdog: v.object({
       rowCount: v.number(),
