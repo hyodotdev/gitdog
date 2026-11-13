@@ -17,7 +17,7 @@ organized, how to run it locally and what a pull request needs.
 ## How it works
 
 ```text
-GitHub webhook ─▶ Convex ─▶ repository index (OpenAI embeddings + keyword search)
+GitHub webhook ─▶ Convex ─▶ repository index (keyword search)
                     │
                     ▼
         Claude Sonnet 5.5 (GPT-6.1 Sol fallback)

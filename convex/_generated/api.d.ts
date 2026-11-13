@@ -28,6 +28,7 @@ import type * as _ai_issueFormatting_workflow from "../_ai/issueFormatting/workf
 import type * as _ai_learning_extractLearning from "../_ai/learning/extractLearning.js";
 import type * as _ai_learning_fetchLinkContent from "../_ai/learning/fetchLinkContent.js";
 import type * as _ai_learning_prompts from "../_ai/learning/prompts.js";
+import type * as _ai_legacyEmbeddings from "../_ai/legacyEmbeddings.js";
 import type * as _ai_legalAttestation from "../_ai/legalAttestation.js";
 import type * as _ai_model from "../_ai/model.js";
 import type * as _ai_providerErrors from "../_ai/providerErrors.js";
@@ -35,7 +36,6 @@ import type * as _ai_providerResolution from "../_ai/providerResolution.js";
 import type * as _ai_providers from "../_ai/providers.js";
 import type * as _ai_requestSize from "../_ai/requestSize.js";
 import type * as _ai_responseValidation from "../_ai/responseValidation.js";
-import type * as _ai_retrievalEmbeddings from "../_ai/retrievalEmbeddings.js";
 import type * as _ai_tools_definitions from "../_ai/tools/definitions.js";
 import type * as _ai_tools_executors from "../_ai/tools/executors.js";
 import type * as _ai_utils from "../_ai/utils.js";
@@ -88,6 +88,7 @@ import type * as paymentLogs_privacy from "../paymentLogs/privacy.js";
 import type * as paymentLogs_settlementConfiguration from "../paymentLogs/settlementConfiguration.js";
 import type * as providerApiKeys_action from "../providerApiKeys/action.js";
 import type * as providerApiKeys_crypto from "../providerApiKeys/crypto.js";
+import type * as providerApiKeys_encryptionState from "../providerApiKeys/encryptionState.js";
 import type * as providerApiKeys_internalMutation from "../providerApiKeys/internalMutation.js";
 import type * as providerApiKeys_internalQuery from "../providerApiKeys/internalQuery.js";
 import type * as providerApiKeys_mutation from "../providerApiKeys/mutation.js";
@@ -126,7 +127,6 @@ import type * as repositories_accessLifecycle from "../repositories/accessLifecy
 import type * as repositories_action from "../repositories/action.js";
 import type * as repositories_aiReadiness from "../repositories/aiReadiness.js";
 import type * as repositories_embeddingPolicy from "../repositories/embeddingPolicy.js";
-import type * as repositories_embeddingPolicyRuntime from "../repositories/embeddingPolicyRuntime.js";
 import type * as repositories_immutableIdentity from "../repositories/immutableIdentity.js";
 import type * as repositories_internalMutation from "../repositories/internalMutation.js";
 import type * as repositories_internalQuery from "../repositories/internalQuery.js";
@@ -138,9 +138,11 @@ import type * as repositoryMembers_mutation from "../repositoryMembers/mutation.
 import type * as repositoryMembers_query from "../repositoryMembers/query.js";
 import type * as subscriptions_action from "../subscriptions/action.js";
 import type * as subscriptions_billingBoundaries from "../subscriptions/billingBoundaries.js";
+import type * as subscriptions_credit from "../subscriptions/credit.js";
 import type * as subscriptions_entitlement from "../subscriptions/entitlement.js";
 import type * as subscriptions_internalMutation from "../subscriptions/internalMutation.js";
 import type * as subscriptions_internalQuery from "../subscriptions/internalQuery.js";
+import type * as subscriptions_mutation from "../subscriptions/mutation.js";
 import type * as subscriptions_query from "../subscriptions/query.js";
 import type * as subscriptions_quotaEntitlement from "../subscriptions/quotaEntitlement.js";
 import type * as subscriptions_wallet from "../subscriptions/wallet.js";
@@ -193,6 +195,7 @@ declare const fullApi: ApiFromModules<{
   "_ai/learning/extractLearning": typeof _ai_learning_extractLearning;
   "_ai/learning/fetchLinkContent": typeof _ai_learning_fetchLinkContent;
   "_ai/learning/prompts": typeof _ai_learning_prompts;
+  "_ai/legacyEmbeddings": typeof _ai_legacyEmbeddings;
   "_ai/legalAttestation": typeof _ai_legalAttestation;
   "_ai/model": typeof _ai_model;
   "_ai/providerErrors": typeof _ai_providerErrors;
@@ -200,7 +203,6 @@ declare const fullApi: ApiFromModules<{
   "_ai/providers": typeof _ai_providers;
   "_ai/requestSize": typeof _ai_requestSize;
   "_ai/responseValidation": typeof _ai_responseValidation;
-  "_ai/retrievalEmbeddings": typeof _ai_retrievalEmbeddings;
   "_ai/tools/definitions": typeof _ai_tools_definitions;
   "_ai/tools/executors": typeof _ai_tools_executors;
   "_ai/utils": typeof _ai_utils;
@@ -253,6 +255,7 @@ declare const fullApi: ApiFromModules<{
   "paymentLogs/settlementConfiguration": typeof paymentLogs_settlementConfiguration;
   "providerApiKeys/action": typeof providerApiKeys_action;
   "providerApiKeys/crypto": typeof providerApiKeys_crypto;
+  "providerApiKeys/encryptionState": typeof providerApiKeys_encryptionState;
   "providerApiKeys/internalMutation": typeof providerApiKeys_internalMutation;
   "providerApiKeys/internalQuery": typeof providerApiKeys_internalQuery;
   "providerApiKeys/mutation": typeof providerApiKeys_mutation;
@@ -291,7 +294,6 @@ declare const fullApi: ApiFromModules<{
   "repositories/action": typeof repositories_action;
   "repositories/aiReadiness": typeof repositories_aiReadiness;
   "repositories/embeddingPolicy": typeof repositories_embeddingPolicy;
-  "repositories/embeddingPolicyRuntime": typeof repositories_embeddingPolicyRuntime;
   "repositories/immutableIdentity": typeof repositories_immutableIdentity;
   "repositories/internalMutation": typeof repositories_internalMutation;
   "repositories/internalQuery": typeof repositories_internalQuery;
@@ -303,9 +305,11 @@ declare const fullApi: ApiFromModules<{
   "repositoryMembers/query": typeof repositoryMembers_query;
   "subscriptions/action": typeof subscriptions_action;
   "subscriptions/billingBoundaries": typeof subscriptions_billingBoundaries;
+  "subscriptions/credit": typeof subscriptions_credit;
   "subscriptions/entitlement": typeof subscriptions_entitlement;
   "subscriptions/internalMutation": typeof subscriptions_internalMutation;
   "subscriptions/internalQuery": typeof subscriptions_internalQuery;
+  "subscriptions/mutation": typeof subscriptions_mutation;
   "subscriptions/query": typeof subscriptions_query;
   "subscriptions/quotaEntitlement": typeof subscriptions_quotaEntitlement;
   "subscriptions/wallet": typeof subscriptions_wallet;

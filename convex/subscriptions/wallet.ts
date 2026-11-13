@@ -46,6 +46,8 @@ export async function consolidatePurchasedTokenWallet(
     userId: Id<"users">;
     targetSubscriptionId: Id<"subscriptions">;
     tokensToAdd?: number;
+    // Credited tokens that are trial rather than paid.
+    trialTokensToAdd?: number;
     now: number;
   },
 ): Promise<number> {
@@ -55,23 +57,49 @@ export async function consolidatePurchasedTokenWallet(
   }
   const currentTotal = sumPurchasedTokenWallet(rows);
   const tokensToAdd = args.tokensToAdd ?? 0;
-  if (!Number.isSafeInteger(tokensToAdd) || tokensToAdd < 0) {
+  const trialTokensToAdd = args.trialTokensToAdd ?? 0;
+  if (
+    !Number.isSafeInteger(tokensToAdd) ||
+    tokensToAdd < 0 ||
+    !Number.isSafeInteger(trialTokensToAdd) ||
+    trialTokensToAdd < 0 ||
+    trialTokensToAdd > tokensToAdd
+  ) {
     throw new Error("Invalid purchased token amount");
   }
   const nextTotal = currentTotal + tokensToAdd;
   if (!Number.isSafeInteger(nextTotal)) {
     throw new Error("Purchased token balance exceeds the supported range");
   }
+  const nextTrial = Math.min(
+    nextTotal,
+    rows.reduce((total, row) => total + (row.trialTokens ?? 0), 0) +
+      trialTokensToAdd,
+  );
   for (const row of rows) {
-    const nextBalance = row._id === args.targetSubscriptionId ? nextTotal : 0;
-    if (row.purchasedTokens !== nextBalance) {
+    const target = row._id === args.targetSubscriptionId;
+    const nextBalance = target ? nextTotal : 0;
+    const nextRowTrial = target && nextTrial > 0 ? nextTrial : undefined;
+    if (
+      row.purchasedTokens !== nextBalance ||
+      row.trialTokens !== nextRowTrial
+    ) {
       await ctx.db.patch(row._id, {
         purchasedTokens: nextBalance,
+        trialTokens: nextRowTrial,
         updatedAt: args.now,
       });
     }
   }
   return nextTotal;
+}
+
+/** The unspent trial inside a consolidated wallet row. */
+export async function readTrialTokens(
+  ctx: WalletReadCtx,
+  subscriptionId: Id<"subscriptions">,
+): Promise<number> {
+  return (await ctx.db.get(subscriptionId))?.trialTokens ?? 0;
 }
 
 export async function debitPurchasedTokenWallet(
@@ -81,6 +109,8 @@ export async function debitPurchasedTokenWallet(
     targetSubscriptionId: Id<"subscriptions">;
     tokensToDebit: number;
     now: number;
+    // Refunds take back paid tokens only and never touch the unspent trial.
+    paidOnly?: boolean;
   },
 ): Promise<{ debited: number; remaining: number }> {
   if (!Number.isSafeInteger(args.tokensToDebit) || args.tokensToDebit < 0) {
@@ -94,8 +124,17 @@ export async function debitPurchasedTokenWallet(
   const debited = Math.min(balance, args.tokensToDebit);
   const remaining = balance - debited;
   if (debited > 0) {
+    const trial = await readTrialTokens(ctx, args.targetSubscriptionId);
+    if (args.paidOnly && remaining < trial) {
+      throw new Error(
+        "Refund would consume trial tokens; record it for manual review instead",
+      );
+    }
+    // Usage spends the trial first so paid tokens stay refundable.
+    const remainingTrial = args.paidOnly ? trial : Math.max(0, trial - debited);
     await ctx.db.patch(args.targetSubscriptionId, {
       purchasedTokens: remaining,
+      trialTokens: remainingTrial > 0 ? remainingTrial : undefined,
       updatedAt: args.now,
     });
   }

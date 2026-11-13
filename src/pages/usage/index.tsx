@@ -17,11 +17,11 @@ import {
 import { SiGithub } from "@icons-pack/react-simple-icons";
 import { useTranslation } from "react-i18next";
 import { cn } from "../../utils/cn";
+import { TrialNextStep } from "../../components/TrialNextStep";
 import {
   calculateEstimatedAdditionalUsageCharge,
   calculateTokenAvailability,
   getUtcMonthlyPeriod,
-  TOKEN_LIMITS,
 } from "../../utils/pricingConfig";
 
 export function UsagePage() {
@@ -65,10 +65,9 @@ export function UsagePage() {
   }
 
   // Token usage calculations
-  // Note: Embedding tokens are already stored as "equivalent chat tokens" (divided by 50)
+  // Historical embedding usage is stored as equivalent chat tokens.
   const totalTokens = tokenUsage?.totalTokens || 0;
-  const includedTokens =
-    subscription?.includedTokens || TOKEN_LIMITS.FREE_INCLUDED_TOKENS;
+  const includedTokens = subscription?.includedTokens ?? 0;
   const purchasedTokens =
     (subscription && "purchasedTokens" in subscription
       ? subscription.purchasedTokens
@@ -96,7 +95,14 @@ export function UsagePage() {
   const totalAvailable = availability.totalAvailableTokens;
   const tokenLimit = totalAvailable;
 
-  const usagePercentage = Math.min((totalTokens / totalAvailable) * 100, 100);
+  // With nothing available and nothing used there is nothing to measure,
+  // so the bar stays empty and the next-step card explains what to do.
+  const usagePercentage =
+    totalAvailable > 0
+      ? Math.min((totalTokens / totalAvailable) * 100, 100)
+      : totalTokens > 0
+        ? 100
+        : 0;
 
   // Both plans stop at their included and prepaid token limit.
   const estimatedCost = calculateEstimatedAdditionalUsageCharge();
@@ -300,6 +306,14 @@ export function UsagePage() {
             </div>
           </div>
 
+          {!isPro && (
+            <div className={cn("mb-8")}>
+              <TrialNextStep
+                tokensLeft={Math.max(0, totalAvailable - totalTokens)}
+              />
+            </div>
+          )}
+
           {/* Usage on the user's own provider keys (not counted in quota) */}
           {tokenUsage?.userKey && tokenUsage.userKey.totalActions > 0 && (
             <div
@@ -379,7 +393,7 @@ export function UsagePage() {
                       : "bg-gray-900 dark:bg-gray-100",
                 )}
                 style={{
-                  width: `${Math.min((totalTokens / tokenLimit) * 100, 100)}%`,
+                  width: `${usagePercentage}%`,
                 }}
               />
             </div>

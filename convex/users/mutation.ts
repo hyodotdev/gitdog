@@ -78,6 +78,12 @@ export const attestLegalEligibility = mutation({
       internal.users.mutation.resumeLegalEligibilityBlockedRepositories,
       { userId },
     );
+    // Separate transaction: a wallet problem must not block consent.
+    await ctx.scheduler.runAfter(
+      0,
+      internal.subscriptions.internalMutation.grantTrialCredit,
+      { userId },
+    );
 
     return { success: true };
   },

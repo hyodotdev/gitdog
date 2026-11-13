@@ -48,6 +48,22 @@ async function signedIn(t: ReturnType<typeof convexTest>) {
   };
 }
 
+async function currentIv(
+  t: ReturnType<typeof convexTest>,
+  userId: Id<"users">,
+  provider: "anthropic" | "openai",
+) {
+  const row = await t.run(async (ctx) =>
+    ctx.db
+      .query("providerApiKeys")
+      .withIndex("by_user_and_provider", (q) =>
+        q.eq("userId", userId).eq("provider", provider),
+      )
+      .unique(),
+  );
+  return row!.iv;
+}
+
 describe("provider key encryption", () => {
   it("round-trips and binds the ciphertext to its user and provider", async () => {
     const encrypted = await encryptProviderKey(
@@ -269,9 +285,11 @@ describe("provider key management", () => {
       apiKey: OPENAI_KEY,
     });
     process.env.BYOK_ENCRYPTION_KEY = btoa("z".repeat(32));
+    // A different server key than the one keys were saved with is a server
+    // misconfiguration, not a problem with this key.
     await expect(
       as.action(api.providerApiKeys.action.revalidate, { provider: "openai" }),
-    ).rejects.toMatchObject({ data: { reason: "unreadable" } });
+    ).rejects.toMatchObject({ data: { reason: "not_configured" } });
     delete process.env.BYOK_ENCRYPTION_KEY;
     await expect(
       as.action(api.providerApiKeys.action.save, {
@@ -301,7 +319,13 @@ describe("provider key management", () => {
     });
     await t.mutation(
       internal.providerApiKeys.internalMutation.recordKeyFailure,
-      { userId, provider: "openai", code: "out_of_credit", httpStatus: 429 },
+      {
+        userId,
+        provider: "openai",
+        code: "out_of_credit",
+        httpStatus: 429,
+        keyIv: await currentIv(t, userId, "openai"),
+      },
     );
     await expect(as.query(api.providerApiKeys.query.list, {})).resolves.toEqual(
       [
@@ -320,6 +344,199 @@ describe("provider key management", () => {
     ).resolves.toEqual({ removed: true, provider: "openai" });
     await expect(as.query(api.providerApiKeys.query.list, {})).resolves.toEqual(
       [],
+    );
+  });
+});
+
+describe("provider key failure notices", () => {
+  it("notifies once per status change, not once per failed request", async () => {
+    const t = convexTest(schema, modules);
+    const { userId, as } = await signedIn(t);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("{}", { status: 200 }),
+    );
+    await as.action(api.providerApiKeys.action.save, {
+      provider: "anthropic",
+      apiKey: ANTHROPIC_KEY,
+    });
+    const fail = async (code: "invalid" | "out_of_credit" | "rate_limited") =>
+      t.mutation(internal.providerApiKeys.internalMutation.recordKeyFailure, {
+        userId,
+        provider: "anthropic",
+        code,
+        keyIv: await currentIv(t, userId, "anthropic"),
+      });
+    await fail("out_of_credit");
+    await fail("out_of_credit");
+    await fail("rate_limited");
+    await fail("invalid");
+    const notifications = await t.run(async (ctx) =>
+      ctx.db.query("notifications").collect(),
+    );
+    expect(notifications).toEqual([
+      expect.objectContaining({
+        userId,
+        type: "provider_key_failed",
+        title: "Anthropic API key out of credit",
+        isRead: false,
+      }),
+      expect.objectContaining({
+        type: "provider_key_failed",
+        title: "Anthropic API key rejected",
+      }),
+    ]);
+  });
+
+  it("reports a changed server key as a service problem, not unreadable keys", async () => {
+    const t = convexTest(schema, modules);
+    const { as } = await signedIn(t);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("{}", { status: 200 }),
+    );
+    await as.action(api.providerApiKeys.action.save, {
+      provider: "openai",
+      apiKey: OPENAI_KEY,
+    });
+    await expect(as.query(api.providerApiKeys.query.list, {})).resolves.toEqual(
+      [expect.objectContaining({ readable: true })],
+    );
+    process.env.BYOK_ENCRYPTION_KEY = btoa("z".repeat(32));
+    await expect(as.query(api.providerApiKeys.query.list, {})).resolves.toEqual(
+      [
+        expect.objectContaining({
+          readable: true,
+          serviceUnavailable: true,
+          status: "active",
+        }),
+      ],
+    );
+  });
+});
+
+describe("provider key notice transitions", () => {
+  it("notifies on every status change, again after a successful check, and once for an unreadable key", async () => {
+    const t = convexTest(schema, modules);
+    const { userId, as } = await signedIn(t);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("{}", { status: 200 }),
+    );
+    await as.action(api.providerApiKeys.action.save, {
+      provider: "openai",
+      apiKey: OPENAI_KEY,
+    });
+    const fail = async (code: "invalid" | "out_of_credit") =>
+      t.mutation(internal.providerApiKeys.internalMutation.recordKeyFailure, {
+        userId,
+        provider: "openai",
+        code,
+        keyIv: await currentIv(t, userId, "openai"),
+      });
+    await fail("invalid");
+    await fail("out_of_credit");
+    await t.mutation(internal.providerApiKeys.internalMutation.markValidated, {
+      userId,
+      provider: "openai",
+      keyIv: await currentIv(t, userId, "openai"),
+    });
+    await fail("invalid");
+    const savedIv = async () =>
+      (await t.run(async (ctx) => ctx.db.query("providerApiKeys").collect()))[0]
+        .iv;
+    const unreadable = async (keyIv?: string) =>
+      t.mutation(internal.providerApiKeys.internalMutation.noteUnreadableKey, {
+        userId,
+        provider: "openai",
+        keyIv: keyIv ?? (await savedIv()),
+      });
+    await unreadable();
+    await unreadable();
+
+    const notices = await t.run(async (ctx) =>
+      ctx.db.query("notifications").collect(),
+    );
+    expect(notices.map((notice) => notice.providerKey)).toEqual([
+      { provider: "openai", reason: "invalid" },
+      { provider: "openai", reason: "out_of_credit" },
+      { provider: "openai", reason: "invalid" },
+      { provider: "openai", reason: "unreadable" },
+    ]);
+
+    // Saving the key again re-arms the unreadable notice, and a late report
+    // about the replaced key is ignored.
+    const replacedIv = await savedIv();
+    await t.mutation(internal.providerApiKeys.internalMutation.upsert, {
+      userId,
+      provider: "openai",
+      ...(await encryptProviderKey(userId, "openai", OPENAI_KEY)),
+      last4: OPENAI_KEY.slice(-4),
+    });
+    await unreadable(replacedIv);
+    expect(
+      (await t.run(async (ctx) => ctx.db.query("providerApiKeys").collect()))[0]
+        .unreadableAt,
+    ).toBeUndefined();
+    await unreadable();
+    expect(
+      (await t.run(async (ctx) => ctx.db.query("notifications").collect()))
+        .length,
+    ).toBe(5);
+  });
+});
+
+describe("provider key reports after replacement", () => {
+  it("ignores a failure or a check reported on a key the owner has since replaced", async () => {
+    const t = convexTest(schema, modules);
+    const { userId, as } = await signedIn(t);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("{}", { status: 200 }),
+    );
+    await as.action(api.providerApiKeys.action.save, {
+      provider: "anthropic",
+      apiKey: ANTHROPIC_KEY,
+    });
+    const replacedIv = await currentIv(t, userId, "anthropic");
+    await as.action(api.providerApiKeys.action.save, {
+      provider: "anthropic",
+      apiKey: `sk-ant-api03-${"c".repeat(40)}`,
+    });
+    for (const code of ["invalid", "out_of_credit"] as const)
+      await t.mutation(
+        internal.providerApiKeys.internalMutation.recordKeyFailure,
+        {
+          userId,
+          provider: "anthropic",
+          code,
+          httpStatus: 401,
+          keyIv: replacedIv,
+        },
+      );
+    const state = await t.run(async (ctx) => ({
+      keys: await ctx.db.query("providerApiKeys").collect(),
+      notifications: await ctx.db.query("notifications").collect(),
+    }));
+    expect(state.notifications).toEqual([]);
+    expect(state.keys).toEqual([
+      expect.objectContaining({ status: "active", last4: "cccc" }),
+    ]);
+    expect(state.keys[0].lastError).toBeUndefined();
+
+    // A check of the replaced key does not clear the current key's failure.
+    await t.mutation(
+      internal.providerApiKeys.internalMutation.recordKeyFailure,
+      {
+        userId,
+        provider: "anthropic",
+        code: "out_of_credit",
+        keyIv: await currentIv(t, userId, "anthropic"),
+      },
+    );
+    await t.mutation(internal.providerApiKeys.internalMutation.markValidated, {
+      userId,
+      provider: "anthropic",
+      keyIv: replacedIv,
+    });
+    await expect(as.query(api.providerApiKeys.query.list, {})).resolves.toEqual(
+      [expect.objectContaining({ status: "out_of_credit" })],
     );
   });
 });

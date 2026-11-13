@@ -51,8 +51,12 @@ export const TOKEN_PRICING = {
 // ============================================
 
 export const TOKEN_LIMITS = {
-  // Free tier: monthly allowance plus prepaid token packs
-  FREE_INCLUDED_TOKENS: 100_000, // 100k tokens
+  // One-time trial credit granted on sign-in (stored as prepaid tokens).
+  // Enough for several issue and discussion replies and small pull request
+  // reviews. Large PRs are reviewed in batches that each hold
+  // REVIEW_BATCH_TOKEN_ESTIMATE up front, so a trial alone may not start one;
+  // the owner's own key has no such limit.
+  TRIAL_TOKENS: 100_000,
 
   // Pro tier: monthly allowance plus prepaid token packs
   PRO_INCLUDED_TOKENS: 2_400_000, // 2.4M tokens
@@ -61,6 +65,20 @@ export const TOKEN_LIMITS = {
   TOKEN_PACK_SMALL_SIZE: 2_200_000, // 2.2M tokens per small pack
   TOKEN_PACK_LARGE_SIZE: 7_500_000, // 7.5M tokens per large pack
 } as const;
+
+// Free plans had a monthly allowance until this UTC month boundary. Periods
+// that start before it keep it, so usage already counted in the current
+// month stays covered; later free periods include no tokens.
+export const FREE_MONTHLY_ALLOWANCE_ENDS_AT = Date.parse(
+  "2026-12-01T00:00:00Z",
+);
+export const LEGACY_FREE_MONTHLY_TOKENS = 100_000;
+
+export function getFreeIncludedTokens(periodStart: number): number {
+  return periodStart < FREE_MONTHLY_ALLOWANCE_ENDS_AT
+    ? LEGACY_FREE_MONTHLY_TOKENS
+    : 0;
+}
 
 // ============================================
 // PLATFORM FEES
@@ -101,7 +119,7 @@ export const SUBSCRIPTION_PRICES = {
 export const PRICING = {
   QUOTA_REFERENCE_COST_PER_1M: TOKEN_PRICING.QUOTA_REFERENCE_COST_PER_1M,
 
-  // Embedding pricing
+  // Embeddings are retired; this prices historical usage rows only.
   OPENAI_EMBEDDING_PER_1M: 0.02,
 
   // Platform fees
@@ -111,7 +129,7 @@ export const PRICING = {
   PLATFORM_FEE_TOKEN_PACK_LARGE: PLATFORM_FEES.TOKEN_PACK_LARGE,
 
   // Token limits
-  FREE_INCLUDED_TOKENS: TOKEN_LIMITS.FREE_INCLUDED_TOKENS,
+  TRIAL_TOKENS: TOKEN_LIMITS.TRIAL_TOKENS,
   PRO_INCLUDED_TOKENS: TOKEN_LIMITS.PRO_INCLUDED_TOKENS,
   TOKEN_PACK_SMALL_SIZE: TOKEN_LIMITS.TOKEN_PACK_SMALL_SIZE,
   TOKEN_PACK_LARGE_SIZE: TOKEN_LIMITS.TOKEN_PACK_LARGE_SIZE,

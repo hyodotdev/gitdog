@@ -35,6 +35,9 @@ const applicationTables = {
       v.literal("out_of_credit"),
     ),
     lastValidatedAt: v.number(),
+    // Set when this key failed to decrypt (the owner is told once); cleared
+    // when the key is saved or checked again.
+    unreadableAt: v.optional(v.number()),
     lastError: v.optional(
       v.object({
         code: v.union(
@@ -50,6 +53,20 @@ const applicationTables = {
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index("by_user_and_provider", ["userId", "provider"]),
+  // The id of the encryption key provider keys were first saved with. An
+  // environment key with another id is a server misconfiguration, not a
+  // problem with users' keys.
+  providerKeyEncryptionState: defineTable({
+    expectedKeyId: v.string(),
+    createdAt: v.number(),
+  }),
+  // One row per user that ever received the sign-in trial credit. It is
+  // never deleted, so the trial cannot be granted twice.
+  trialCreditGrants: defineTable({
+    userId: v.id("users"),
+    tokens: v.number(),
+    grantedAt: v.number(),
+  }).index("by_user", ["userId"]),
   // Provider key validation requests per user, kept apart from the key rows
   // so the limit also applies before a key is saved.
   providerKeyValidationAttempts: defineTable({
@@ -115,11 +132,15 @@ const applicationTables = {
     ),
 
     // Token limits per plan
-    // Free: 100k/month; Pro: 2.4M/billing period. Both may use prepaid packs.
+    // Free: none from December 2026 (100k/month before); Pro: 2.4M per
+    // billing period. Both may use prepaid packs and the one-time trial.
     includedTokens: v.number(),
 
     // Purchased token balance (for token pack purchases)
     purchasedTokens: v.number(),
+    // Part of purchasedTokens that is the unspent one-time trial. Spent
+    // before paid tokens and never taken back by a token-pack refund.
+    trialTokens: v.optional(v.number()),
 
     // Internal service-cost allocation rate (25% free, 18% Pro)
     serviceFeeRate: v.number(), // 0.25 or 0.18
@@ -1098,8 +1119,9 @@ const applicationTables = {
     signature: v.optional(v.string()), // Function/class signature
     docstring: v.optional(v.string()), // Doc comment
 
-    // Search indexes
-    embedding: v.optional(v.array(v.number())), // Vector for semantic search
+    // Search indexes. The embedding fields are retired: nothing writes them,
+    // and they stay optional until purgeRetiredEmbeddings clears old rows.
+    embedding: v.optional(v.array(v.number())),
     embeddingKey: v.optional(v.string()), // Provider/model/dimension/task identity
     embeddingInputMode: v.optional(
       v.union(v.literal("raw_v1"), v.literal("deidentified_v1")),
@@ -1129,16 +1151,10 @@ const applicationTables = {
     .searchIndex("search_text", {
       searchField: "searchableText",
       filterFields: ["repositoryId", "repositoryIndexKey", "language"],
-    })
-    .vectorIndex("by_embedding", {
-      vectorField: "embedding",
-      dimensions: 1536,
-      filterFields: ["embeddingScopeKey", "embeddingLanguageScopeKey"],
     }),
 
-  // Durable provider batches let a removed and later reintroduced chunk reuse
-  // the vector tied to its immutable reservation digest without another paid
-  // provider call. Cache documents stay repository-scoped for safe cleanup.
+  // Retired embedding batch cache. Nothing writes it; existing rows are
+  // removed by purgeRetiredEmbeddings and repository cleanup.
   ragEmbeddingBatches: defineTable({
     reservationKey: v.string(),
     repositoryId: v.id("repositories"),
@@ -1287,7 +1303,7 @@ const applicationTables = {
     ),
     isTrusted: v.boolean(), // Only verified repository authorities may influence responses
     repositoryTrustKey: v.optional(v.string()), // Denormalized vector-search trust scope
-    embedding: v.optional(v.array(v.float64())), // Vector for semantic search (1536 dims)
+    embedding: v.optional(v.array(v.float64())), // Retired; cleared by purgeRetiredEmbeddings
     embeddingKey: v.optional(v.string()),
     embeddingScopeKey: v.optional(v.string()), // Trusted repository + embedding identity
     publicEmbeddingScopeKey: v.optional(v.string()), // Explicitly public GitHub learning vectors only
@@ -1318,17 +1334,6 @@ const applicationTables = {
         "repositoryId",
         "repositoryTrustKey",
         "embeddingDataProvenance",
-      ],
-    })
-    .vectorIndex("by_embedding", {
-      vectorField: "embedding",
-      dimensions: 1536,
-      filterFields: [
-        "repositoryId",
-        "repositoryTrustKey",
-        "embeddingKey",
-        "embeddingScopeKey",
-        "publicEmbeddingScopeKey",
       ],
     }),
 
@@ -1610,6 +1615,18 @@ const applicationTables = {
       v.literal("invitation_received"),
       v.literal("invitation_accepted"),
       v.literal("invitation_rejected"),
+      v.literal("provider_key_failed"),
+    ),
+    // Structured details so the UI can translate the notice.
+    providerKey: v.optional(
+      v.object({
+        provider: v.union(v.literal("anthropic"), v.literal("openai")),
+        reason: v.union(
+          v.literal("invalid"),
+          v.literal("out_of_credit"),
+          v.literal("unreadable"),
+        ),
+      }),
     ),
     invitationId: v.optional(v.id("invitations")),
     repositoryId: v.optional(v.id("repositories")),

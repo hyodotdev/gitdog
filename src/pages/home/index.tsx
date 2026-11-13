@@ -3,11 +3,12 @@ import { api } from "../../../convex/_generated/api";
 import { SEO } from "../../components/SEO";
 import { Layout } from "../../components/Layout";
 import { Link, useNavigate } from "react-router";
-import { Activity, Clock, Zap } from "lucide-react";
+import { Activity, Clock, KeyRound, Zap } from "lucide-react";
 import { SiGithub } from "@icons-pack/react-simple-icons";
 import { LoadingIndicator } from "../../components/uis/LoadingIndicator";
 import { useTranslation } from "react-i18next";
 import { LandingPage } from "./LandingPage";
+import { summarizeProviderKeys } from "../../utils/providerKeyState";
 import { RepositoryIndexingProgress } from "./RepositoryIndexingProgress";
 import {
   FAQPageJsonLd,
@@ -19,6 +20,12 @@ export function HomePage() {
   const repositories = useQuery(api.repositories.query.list);
   const currentUser = useQuery(api.users.query.getCurrentUser);
   const subscription = useQuery(api.subscriptions.query.getCurrent);
+  const providerKeys = useQuery(
+    api.providerApiKeys.query.list,
+    currentUser ? {} : "skip",
+  );
+  const { keyChecksUnavailable, activeKey } =
+    summarizeProviderKeys(providerKeys);
   const navigate = useNavigate();
 
   // Show loading while checking auth
@@ -49,7 +56,7 @@ export function HomePage() {
     {
       question: "Is Gitdog free to use?",
       answer:
-        "Yes. Free includes 100,000 tokens per month, and Pro is $9.99/month with 2.4M tokens. Prepaid token packs are available when you need more, with no automatic overage charges.",
+        "Yes. Free starts with 100,000 one-time trial tokens. After that, use your own Anthropic or OpenAI API key, or Pro at $9.99/month with 2.4M tokens. Prepaid token packs are available when you need more, with no automatic overage charges.",
     },
     {
       question: "What languages does Gitdog support?",
@@ -107,11 +114,40 @@ export function HomePage() {
                   aria-hidden="true"
                 />
                 <span className="text-gray-600 dark:text-gray-400">
-                  {t("home.workspace.tokensPerMonth", {
-                    count: (subscription?.includedTokens ?? 100_000) / 1000,
-                  })}
+                  {subscription?.plan === "pro"
+                    ? t("home.workspace.tokensPerMonth", {
+                        count: subscription.includedTokens / 1000,
+                      })
+                    : t("home.workspace.prepaidTokens", {
+                        count: Math.floor(
+                          (subscription?.purchasedTokens ?? 0) / 1000,
+                        ),
+                      })}
+                  {subscription?.plan !== "pro" &&
+                    (subscription?.includedTokens ?? 0) > 0 &&
+                    ` · ${t("home.workspace.monthlyUntil", {
+                      count: Math.floor(
+                        (subscription?.includedTokens ?? 0) / 1000,
+                      ),
+                    })}`}
                 </span>
               </div>
+              <Link
+                to="/profile#ai-keys"
+                className="flex items-center gap-2 text-gray-600 underline hover:no-underline dark:text-gray-400"
+              >
+                <KeyRound size={16} aria-hidden="true" />
+                {keyChecksUnavailable
+                  ? t("trial.keyChecksUnavailableTitle")
+                  : activeKey
+                    ? t("home.workspace.usingOwnKey", {
+                        provider:
+                          activeKey.provider === "anthropic"
+                            ? "Anthropic"
+                            : "OpenAI",
+                      })
+                    : t("trial.addKey")}
+              </Link>
             </div>
           </div>
 

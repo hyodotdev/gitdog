@@ -65,7 +65,7 @@ Go to: <https://github.com/settings/apps/new>
 - ✅ Discussions
 - ✅ Discussion comments
 
-The `Repository` event is required to revise embedding policy immediately after
+The `Repository` event keeps stored repository metadata current after
 repository metadata changes. Gitdog identifies rename and transfer events by
 GitHub's immutable numeric repository ID, then fail-closes cached free
 eligibility until the next live generation verification. `Installation` and

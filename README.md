@@ -57,7 +57,7 @@ with the actual code as evidence, not generic advice.
 ```mermaid
 flowchart LR
     A[GitHub issue, discussion<br/>or pull request] --> B[Gitdog]
-    B --> C[(Repository index<br/>embeddings + keyword search)]
+    B --> C[(Repository index<br/>keyword search)]
     C --> D[AI draft with<br/>source evidence]
     D --> E{Your approval}
     E -->|Approve| F[Comment or review<br/>on GitHub]
@@ -74,8 +74,9 @@ flowchart LR
 ## Get started
 
 **On the web** — sign in with GitHub at [gitdog.dev](https://gitdog.dev),
-install the GitHub App and connect a repository. The Free plan includes 100K
-tokens per month; no credit card required.
+install the GitHub App and connect a repository. Try Gitdog with 100K one-time
+trial tokens, then use your own Anthropic or OpenAI API key or Pro; no credit
+card required.
 
 **From the terminal** — the [`gitdog` CLI](packages/cli) manages projects,
 settings and approvals:
@@ -124,7 +125,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
 | -------- | -------------------------------------------------------------------- |
 | Frontend | React 19, TypeScript, Vite, Tailwind CSS, react-i18next (en, ko, ja) |
 | Backend  | Convex                                                               |
-| AI       | Claude Sonnet 5.5 with GPT-6.1 Sol fallback; OpenAI embeddings       |
+| AI       | Claude Sonnet 5.5 with GPT-6.1 Sol fallback; your own key optional   |
 | GitHub   | GitHub App (OAuth, webhooks, repository access)                      |
 | Payments | Lemon Squeezy                                                        |
 | Hosting  | Firebase Hosting                                                     |

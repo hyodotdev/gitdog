@@ -14,7 +14,15 @@ export function detectKeyProvider(apiKey: string): KeyProvider | null {
   return null;
 }
 
-export class ProviderKeyEncryptionError extends Error {}
+export class ProviderKeyEncryptionError extends Error {
+  constructor(
+    message: string,
+    // "not_configured" is a server problem; "unreadable" is about one key.
+    readonly kind: "not_configured" | "unreadable" = "unreadable",
+  ) {
+    super(message);
+  }
+}
 
 function toBase64(bytes: Uint8Array): string {
   let binary = "";
@@ -42,11 +50,13 @@ async function loadEncryptionKey(): Promise<{ key: CryptoKey; keyId: string }> {
   } catch {
     throw new ProviderKeyEncryptionError(
       "Provider key encryption is not configured",
+      "not_configured",
     );
   }
   if (raw.byteLength !== 32)
     throw new ProviderKeyEncryptionError(
       "Provider key encryption is not configured",
+      "not_configured",
     );
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", raw));
   return {
@@ -58,6 +68,16 @@ async function loadEncryptionKey(): Promise<{ key: CryptoKey; keyId: string }> {
       byte.toString(16).padStart(2, "0"),
     ).join(""),
   };
+}
+
+/** Identifies the configured encryption key, or null when none is usable. */
+export async function currentEncryptionKeyId(): Promise<string | null> {
+  try {
+    return (await loadEncryptionKey()).keyId;
+  } catch (error) {
+    if (error instanceof ProviderKeyEncryptionError) return null;
+    throw error;
+  }
 }
 
 export async function encryptProviderKey(

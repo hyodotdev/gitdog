@@ -15,7 +15,7 @@ Gitdog is an AI automation platform for GitHub that helps developers automate re
 
 ## Pricing
 
-- **Free Plan**: $0/month - 100,000 tokens/month with a hard limit; prepaid token packs are available for additional usage
+- **Free Plan**: $0/month - 100,000 one-time trial tokens, then your own Anthropic or OpenAI API key; prepaid token packs are available for additional usage
 - **Pro Plan**: $9.99/month - 2.4M tokens/month; prepaid token packs are available for additional usage, with no automatic overage charges
 
 ## Technical Details

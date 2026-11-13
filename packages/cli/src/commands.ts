@@ -69,6 +69,41 @@ export async function jsonArguments(value: string): Promise<Args> {
   return object as Args;
 }
 
+type KeyProvider = "anthropic" | "openai";
+const PROVIDER_NAMES: Record<KeyProvider, string> = {
+  anthropic: "Anthropic",
+  openai: "OpenAI",
+};
+const PROVIDER_KEY_ERRORS: Record<string, string> = {
+  unauthorized: "You are not logged in. Run npx gitdog@latest login.",
+  not_found: "No API key is saved for this provider.",
+  malformed: "That does not look like an API key for this provider.",
+  wrong_provider:
+    "That key belongs to the other provider. Run provider-keys set with the matching provider.",
+  rate_limited: "Too many API key checks. Try again in a few minutes.",
+  not_configured:
+    "Gitdog cannot store API keys right now. Contact support if this continues.",
+  unreadable:
+    "Gitdog can no longer read this saved key. Run provider-keys set to enter it again.",
+  invalid_key: "The provider rejected this API key.",
+  no_model_access:
+    "This API key has no access to the model Gitdog uses. Check the key's project or model permissions.",
+  validation_unavailable:
+    "The provider could not check this key right now. Try again shortly.",
+};
+
+function keyProvider(value: string): KeyProvider {
+  if (value === "anthropic" || value === "openai") return value;
+  throw new Error("Choose a provider: anthropic or openai.");
+}
+
+function providerKeyErrorReason(error: unknown): string | undefined {
+  const data = asRecord(asRecord(error)?.data);
+  return typeof data?.reason === "string" && data.reason in PROVIDER_KEY_ERRORS
+    ? data.reason
+    : undefined;
+}
+
 export function createProgram(
   dependencies: { api?: Api; ui?: Ui } = {},
 ): Command {
@@ -452,6 +487,141 @@ export function createProgram(
           force: true,
         });
       ui.output(result);
+    },
+  );
+
+  const providerKeys = program
+    .command("provider-keys")
+    .alias("ai-keys")
+    .description(
+      "Manage your own Anthropic and OpenAI API keys for Gitdog generation",
+    );
+  const providerKeyCall = async <T>(
+    api: Api,
+    kind: Kind,
+    path: string,
+    args: Args,
+  ): Promise<T> => {
+    try {
+      return await api.call<T>(kind, path, args);
+    } catch (error) {
+      const reason = providerKeyErrorReason(error);
+      if (reason)
+        throw new Error(PROVIDER_KEY_ERRORS[reason], { cause: error });
+      throw error;
+    }
+  };
+  command(
+    providerKeys,
+    "list",
+    "List saved provider keys (provider, last 4 characters, status)",
+    async ({ api, ui }) => {
+      const keys = await api.call<
+        Array<{
+          provider: string;
+          last4: string;
+          status: string;
+          readable?: boolean;
+          serviceUnavailable?: boolean;
+          lastValidatedAt: number;
+          lastErrorCode: string | null;
+        }>
+      >("query", "providerApiKeys/query:list");
+      const rows = keys.map((key) => ({
+        provider: key.provider,
+        key: `…${key.last4}`,
+        status: key.serviceUnavailable
+          ? "checks_unavailable"
+          : key.readable === false
+            ? "unreadable"
+            : key.status,
+        lastChecked: new Date(key.lastValidatedAt).toISOString(),
+        lastError: key.lastErrorCode,
+      }));
+      // The generic renderer only keeps its preferred columns, which would
+      // drop provider, key and check times.
+      if (ui.json || rows.length === 0) ui.output(rows);
+      else
+        ui.table(rows, [
+          "provider",
+          "key",
+          "status",
+          "lastChecked",
+          "lastError",
+        ]);
+    },
+  );
+  command(
+    providerKeys,
+    "set <provider> [unexpected...]",
+    "Save or replace a provider key (prompted without echo, or piped with --stdin)",
+    async ({ api, ui }, args, opts) => {
+      const provider = keyProvider(args[0]);
+      // Declared so Commander does not echo a pasted key in its usage error.
+      if ((args[1] as unknown as string[] | undefined)?.length)
+        throw new Error(
+          "Never pass an API key as an argument. Run provider-keys set without it to be prompted, or pipe it with --stdin.",
+        );
+      // The key never comes from argv, so it stays out of shell history and
+      // process listings.
+      const apiKey = flag(opts.stdin)
+        ? await ui.readStdin()
+        : await ui.secret(`${PROVIDER_NAMES[provider]} API key`);
+      if (!apiKey) throw new Error("No API key was entered.");
+      const saved = await providerKeyCall<{
+        provider: string;
+        last4: string;
+        status: string;
+      }>(api, "action", "providerApiKeys/action:save", { provider, apiKey });
+      ui.output({
+        provider: saved.provider,
+        key: `…${saved.last4}`,
+        status: saved.status,
+      });
+    },
+  )
+    .option("--stdin", "Read the key from standard input instead of a prompt")
+    // Unknown options such as --key=... reach the handler instead of
+    // Commander's error, which would print the value.
+    .allowUnknownOption(true);
+  command(
+    providerKeys,
+    "check <provider>",
+    "Check a saved provider key with the provider again",
+    async ({ api, ui }, args) => {
+      const provider = keyProvider(args[0]);
+      ui.output(
+        await providerKeyCall(
+          api,
+          "action",
+          "providerApiKeys/action:revalidate",
+          {
+            provider,
+          },
+        ),
+      );
+    },
+  );
+  command(
+    providerKeys,
+    "remove <provider>",
+    "Remove a saved provider key; Gitdog's own models are used again",
+    async ({ api, ui }, args, opts) => {
+      const provider = keyProvider(args[0]);
+      await ui.confirm(
+        `Remove your ${PROVIDER_NAMES[provider]} API key from Gitdog?`,
+        flag(opts.yes),
+      );
+      ui.output(
+        await providerKeyCall(
+          api,
+          "mutation",
+          "providerApiKeys/mutation:remove",
+          {
+            provider,
+          },
+        ),
+      );
     },
   );
 
@@ -1313,7 +1483,7 @@ export function createProgram(
         );
       if (operation.path === "providerApiKeys/action:save")
         throw new Error(
-          "Add AI provider keys in Gitdog settings so the key is never echoed or kept in shell history.",
+          "Use npx gitdog@latest provider-keys set <anthropic|openai> so the key is never echoed or kept in shell history.",
         );
       const data = await jsonArguments(text(opts.data) ?? "{}");
       if (operation.kind !== "query") {

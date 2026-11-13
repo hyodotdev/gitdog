@@ -4,6 +4,7 @@ import { ChatProviderRequestError } from "./providerErrors";
 import { CreditFallbackProvider } from "./providers";
 import { UserApiKeyError } from "./providerResolution";
 import { isUsableProviderKey } from "../providerApiKeys/usability";
+import { grantTrialCreditOnce } from "../subscriptions/credit";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { ActionCtx, MutationCtx } from "../_generated/server";
 import { internalMutation, internalQuery } from "../_generated/server";
@@ -446,65 +447,6 @@ async function expireChatReservations(
   return null;
 }
 
-async function expireEmbeddingReservations(
-  ctx: MutationCtx,
-  userId: Id<"users">,
-  now: number,
-): Promise<ChatQuotaDecision | null> {
-  const ambiguous = await ctx.db
-    .query("embeddingUsageReservations")
-    .withIndex("by_user_and_status", (q) =>
-      q.eq("userId", userId).eq("status", "ambiguous"),
-    )
-    .take(CHAT_RESERVATION_CLEANUP_LIMIT + 1);
-  if (ambiguous.length > CHAT_RESERVATION_CLEANUP_LIMIT) {
-    return { allowed: false, reason: "reservation_history_too_large" };
-  }
-  if (ambiguous.some(blocksActiveProvider)) {
-    return { allowed: false, reason: "unresolved_provider_usage" };
-  }
-  const expired = await ctx.db
-    .query("embeddingUsageReservations")
-    .withIndex("by_user_status_settlement_and_expiration", (q) =>
-      q
-        .eq("userId", userId)
-        .eq("status", "pending")
-        .eq("settlementState", undefined)
-        .lte("expiresAt", now),
-    )
-    .take(CHAT_RESERVATION_CLEANUP_LIMIT + 1);
-  if (expired.length > CHAT_RESERVATION_CLEANUP_LIMIT) {
-    return { allowed: false, reason: "reservation_history_too_large" };
-  }
-  for (const reservation of expired) {
-    const providerStarted = reservation.providerStartedAt !== undefined;
-    await ctx.db.patch(reservation._id, {
-      status: providerStarted ? "ambiguous" : "released",
-      releaseReason: providerStarted ? "ambiguous_provider_attempt" : "expired",
-      updatedAt: now,
-    });
-    if (providerStarted && blocksActiveProvider(reservation)) {
-      return { allowed: false, reason: "unresolved_provider_usage" };
-    }
-  }
-  const activeProviderAttempt = await ctx.db
-    .query("embeddingUsageReservations")
-    .withIndex("by_user_status_and_provider_started_at", (q) =>
-      q
-        .eq("userId", userId)
-        .eq("status", "pending")
-        .gte("providerStartedAt", 0),
-    )
-    .take(CHAT_RESERVATION_CLEANUP_LIMIT + 1);
-  if (activeProviderAttempt.length > CHAT_RESERVATION_CLEANUP_LIMIT) {
-    return { allowed: false, reason: "reservation_history_too_large" };
-  }
-  if (activeProviderAttempt.some(blocksActiveProvider)) {
-    return { allowed: false, reason: "provider_attempt_in_progress" };
-  }
-  return null;
-}
-
 async function checkChatQuota(
   ctx: MutationCtx,
   args: {
@@ -513,17 +455,17 @@ async function checkChatQuota(
     now: number;
   },
 ): Promise<ChatQuotaDecision> {
+  // Retired embedding reservations never block or hold quota; the cleanup
+  // cron releases them and settles any known-billed outcome.
   const chatState = await expireChatReservations(ctx, args.userId, args.now);
   if (chatState) return chatState;
-  const embeddingState = await expireEmbeddingReservations(
-    ctx,
-    args.userId,
-    args.now,
-  );
-  if (embeddingState) return embeddingState;
-
   try {
     await settleAllEndedTrustedProQuotas(ctx, args.userId, args.now);
+    // Accounts that never opened the web app still get their one-time
+    // trial, including a former Pro owner whose last period just settled.
+    // Skipped without writes when the wallet needs attention; the checks
+    // below then refuse as usual.
+    await grantTrialCreditOnce(ctx, args.userId, args.now);
   } catch (error) {
     if (error instanceof TerminalProQuotaUnavailableError) {
       return {
@@ -587,54 +529,52 @@ async function checkChatQuota(
     return { allowed: false, reason: "invalid_subscription_balance" };
   }
 
-  const [chatPending, embeddingPending, chatAmbiguous, embeddingAmbiguous] =
-    await Promise.all([
-      ctx.db
-        .query("chatUsageReservations")
-        .withIndex("by_user_key_source_and_status", (q) =>
-          q
-            .eq("userId", args.userId)
-            .eq("keySource", undefined)
-            .eq("status", "pending"),
-        )
-        .take(MAX_COLLECT_LIMIT + 1),
-      ctx.db
-        .query("embeddingUsageReservations")
-        .withIndex("by_user_and_status", (q) =>
-          q.eq("userId", args.userId).eq("status", "pending"),
-        )
-        .take(MAX_COLLECT_LIMIT + 1),
-      ctx.db
-        .query("chatUsageReservations")
-        .withIndex("by_user_key_source_and_status", (q) =>
-          q
-            .eq("userId", args.userId)
-            .eq("keySource", undefined)
-            .eq("status", "ambiguous"),
-        )
-        .take(CHAT_RESERVATION_CLEANUP_LIMIT + 1),
+  // A staged, known-billed embedding outcome from before embeddings were
+  // retired still has to be charged, so its hold keeps counting; other
+  // retired embedding holds do not.
+  const [chatPending, chatAmbiguous, ...stagedEmbedding] = await Promise.all([
+    ctx.db
+      .query("chatUsageReservations")
+      .withIndex("by_user_key_source_and_status", (q) =>
+        q
+          .eq("userId", args.userId)
+          .eq("keySource", undefined)
+          .eq("status", "pending"),
+      )
+      .take(MAX_COLLECT_LIMIT + 1),
+    ctx.db
+      .query("chatUsageReservations")
+      .withIndex("by_user_key_source_and_status", (q) =>
+        q
+          .eq("userId", args.userId)
+          .eq("keySource", undefined)
+          .eq("status", "ambiguous"),
+      )
+      .take(CHAT_RESERVATION_CLEANUP_LIMIT + 1),
+    ...(["pending", "ambiguous"] as const).map((status) =>
       ctx.db
         .query("embeddingUsageReservations")
-        .withIndex("by_user_and_status", (q) =>
-          q.eq("userId", args.userId).eq("status", "ambiguous"),
+        .withIndex("by_user_status_settlement_and_expiration", (q) =>
+          q
+            .eq("userId", args.userId)
+            .eq("status", status)
+            .eq("settlementState", "staged"),
         )
         .take(CHAT_RESERVATION_CLEANUP_LIMIT + 1),
-    ]);
+    ),
+  ]);
   if (
     chatAmbiguous.length > CHAT_RESERVATION_CLEANUP_LIMIT ||
-    embeddingAmbiguous.length > CHAT_RESERVATION_CLEANUP_LIMIT ||
     chatPending.length > MAX_COLLECT_LIMIT ||
-    embeddingPending.length > MAX_COLLECT_LIMIT ||
-    chatPending.length + embeddingPending.length > MAX_COLLECT_LIMIT
+    stagedEmbedding.some((rows) => rows.length > CHAT_RESERVATION_CLEANUP_LIMIT)
   ) {
     return { allowed: false, reason: "reservation_history_too_large" };
   }
   let reservedTokens = 0;
   for (const reservation of [
     ...chatPending,
-    ...embeddingPending,
     ...chatAmbiguous,
-    ...embeddingAmbiguous,
+    ...stagedEmbedding.flat(),
   ]) {
     reservedTokens += reservation.reservedTokens;
     if (!Number.isSafeInteger(reservedTokens)) {
@@ -1073,45 +1013,29 @@ export const markChatProviderStarted = internalMutation({
       });
       return { started: true as const, alreadyStarted: false as const };
     }
-    const [ambiguousChat, ambiguousEmbedding, activeChat, activeEmbedding] =
-      await Promise.all([
-        ctx.db
-          .query("chatUsageReservations")
-          .withIndex("by_user_key_source_and_status", (q) =>
-            q
-              .eq("userId", args.userId)
-              .eq("keySource", undefined)
-              .eq("status", "ambiguous"),
-          )
-          .take(CHAT_RESERVATION_CLEANUP_LIMIT + 1),
-        ctx.db
-          .query("embeddingUsageReservations")
-          .withIndex("by_user_and_status", (q) =>
-            q.eq("userId", args.userId).eq("status", "ambiguous"),
-          )
-          .take(CHAT_RESERVATION_CLEANUP_LIMIT + 1),
-        ctx.db
-          .query("chatUsageReservations")
-          .withIndex("by_user_key_source_status_and_provider_started_at", (q) =>
-            q
-              .eq("userId", args.userId)
-              .eq("keySource", undefined)
-              .eq("status", "pending")
-              .gte("providerStartedAt", 0),
-          )
-          .take(CHAT_RESERVATION_CLEANUP_LIMIT + 1),
-        ctx.db
-          .query("embeddingUsageReservations")
-          .withIndex("by_user_status_and_provider_started_at", (q) =>
-            q
-              .eq("userId", args.userId)
-              .eq("status", "pending")
-              .gte("providerStartedAt", 0),
-          )
-          .take(CHAT_RESERVATION_CLEANUP_LIMIT + 1),
-      ]);
+    const [ambiguousChat, activeChat] = await Promise.all([
+      ctx.db
+        .query("chatUsageReservations")
+        .withIndex("by_user_key_source_and_status", (q) =>
+          q
+            .eq("userId", args.userId)
+            .eq("keySource", undefined)
+            .eq("status", "ambiguous"),
+        )
+        .take(CHAT_RESERVATION_CLEANUP_LIMIT + 1),
+      ctx.db
+        .query("chatUsageReservations")
+        .withIndex("by_user_key_source_status_and_provider_started_at", (q) =>
+          q
+            .eq("userId", args.userId)
+            .eq("keySource", undefined)
+            .eq("status", "pending")
+            .gte("providerStartedAt", 0),
+        )
+        .take(CHAT_RESERVATION_CLEANUP_LIMIT + 1),
+    ]);
     if (
-      [ambiguousChat, ambiguousEmbedding, activeChat, activeEmbedding].some(
+      [ambiguousChat, activeChat].some(
         (rows) => rows.length > CHAT_RESERVATION_CLEANUP_LIMIT,
       )
     ) {
@@ -1120,19 +1044,13 @@ export const markChatProviderStarted = internalMutation({
         reason: "reservation_history_too_large" as const,
       };
     }
-    if (
-      ambiguousChat.some(blocksActiveProvider) ||
-      ambiguousEmbedding.some(blocksActiveProvider)
-    ) {
+    if (ambiguousChat.some(blocksActiveProvider)) {
       return {
         started: false as const,
         reason: "unresolved_provider_usage" as const,
       };
     }
-    if (
-      activeChat.some(blocksActiveProvider) ||
-      activeEmbedding.some(blocksActiveProvider)
-    ) {
+    if (activeChat.some(blocksActiveProvider)) {
       return {
         started: false as const,
         reason: "provider_attempt_in_progress" as const,
@@ -2951,40 +2869,39 @@ export async function hasOpenUsageReservation(
   ctx: MutationCtx,
   userId: Id<"users">,
 ): Promise<boolean> {
-  const [chatPending, chatAmbiguous, embeddingPending, embeddingAmbiguous] =
-    await Promise.all([
-      ctx.db
-        .query("chatUsageReservations")
-        .withIndex("by_user_key_source_and_status", (q) =>
-          q
-            .eq("userId", userId)
-            .eq("keySource", undefined)
-            .eq("status", "pending"),
-        )
-        .first(),
-      ctx.db
-        .query("chatUsageReservations")
-        .withIndex("by_user_key_source_and_status", (q) =>
-          q
-            .eq("userId", userId)
-            .eq("keySource", undefined)
-            .eq("status", "ambiguous"),
-        )
-        .first(),
-      ctx.db
-        .query("embeddingUsageReservations")
-        .withIndex("by_user_and_status", (q) =>
-          q.eq("userId", userId).eq("status", "pending"),
-        )
-        .first(),
+  // Retired embedding reservations are released by their cleanup cron and
+  // no longer hold plan operations, except a staged, known-billed outcome
+  // that still has to be charged to the wallet.
+  const [chatPending, chatAmbiguous, ...stagedEmbedding] = await Promise.all([
+    ctx.db
+      .query("chatUsageReservations")
+      .withIndex("by_user_key_source_and_status", (q) =>
+        q
+          .eq("userId", userId)
+          .eq("keySource", undefined)
+          .eq("status", "pending"),
+      )
+      .first(),
+    ctx.db
+      .query("chatUsageReservations")
+      .withIndex("by_user_key_source_and_status", (q) =>
+        q
+          .eq("userId", userId)
+          .eq("keySource", undefined)
+          .eq("status", "ambiguous"),
+      )
+      .first(),
+    ...(["pending", "ambiguous"] as const).map((status) =>
       ctx.db
         .query("embeddingUsageReservations")
-        .withIndex("by_user_and_status", (q) =>
-          q.eq("userId", userId).eq("status", "ambiguous"),
+        .withIndex("by_user_status_settlement_and_expiration", (q) =>
+          q
+            .eq("userId", userId)
+            .eq("status", status)
+            .eq("settlementState", "staged"),
         )
         .first(),
-    ]);
-  return Boolean(
-    chatPending || chatAmbiguous || embeddingPending || embeddingAmbiguous,
-  );
+    ),
+  ]);
+  return Boolean(chatPending || chatAmbiguous || stagedEmbedding.some(Boolean));
 }

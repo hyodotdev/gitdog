@@ -1,5 +1,9 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { GENERATION_MODELS, PRICING } from "../../../convex/_ai/config";
+import {
+  GENERATION_MODELS,
+  PRICING,
+  LEGACY_FREE_MONTHLY_TOKENS,
+} from "../../../convex/_ai/config";
 
 /**
  * Token Limit Tests
@@ -110,7 +114,7 @@ function canPerformAction(
   const subscription = db.getSubscriptionByUser(userId);
   const plan = subscription?.plan ?? "free";
   const includedTokens =
-    subscription?.includedTokens ?? PRICING.FREE_INCLUDED_TOKENS;
+    subscription?.includedTokens ?? LEGACY_FREE_MONTHLY_TOKENS;
   const purchasedTokens = subscription?.purchasedTokens ?? 0;
   const tokenLimit = includedTokens + purchasedTokens;
 
@@ -148,7 +152,7 @@ describe("Token Limit Checks", () => {
         userId,
         plan: "free",
         status: "active",
-        includedTokens: PRICING.FREE_INCLUDED_TOKENS,
+        includedTokens: LEGACY_FREE_MONTHLY_TOKENS,
         purchasedTokens: 0,
         serviceFeeRate: PRICING.PLATFORM_FEE_FREE,
         periodStart: Date.now(),
@@ -180,7 +184,7 @@ describe("Token Limit Checks", () => {
         userId,
         plan: "free",
         status: "active",
-        includedTokens: PRICING.FREE_INCLUDED_TOKENS,
+        includedTokens: LEGACY_FREE_MONTHLY_TOKENS,
         purchasedTokens: 0,
         serviceFeeRate: PRICING.PLATFORM_FEE_FREE,
         periodStart: Date.now(),
@@ -191,7 +195,7 @@ describe("Token Limit Checks", () => {
       db.insertMonthlyUsage({
         userId,
         yearMonth,
-        totalTokens: PRICING.FREE_INCLUDED_TOKENS, // 100,000
+        totalTokens: LEGACY_FREE_MONTHLY_TOKENS, // 100,000
         totalInputTokens: 40_000,
         totalOutputTokens: 10_000,
         totalCost: 0,
@@ -214,7 +218,7 @@ describe("Token Limit Checks", () => {
         userId,
         plan: "free",
         status: "active",
-        includedTokens: PRICING.FREE_INCLUDED_TOKENS,
+        includedTokens: LEGACY_FREE_MONTHLY_TOKENS,
         purchasedTokens: 0,
         serviceFeeRate: PRICING.PLATFORM_FEE_FREE,
         periodStart: Date.now(),
@@ -246,7 +250,7 @@ describe("Token Limit Checks", () => {
         userId,
         plan: "free",
         status: "active",
-        includedTokens: PRICING.FREE_INCLUDED_TOKENS,
+        includedTokens: LEGACY_FREE_MONTHLY_TOKENS,
         purchasedTokens: 0,
         serviceFeeRate: PRICING.PLATFORM_FEE_FREE,
         periodStart: Date.now(),
@@ -435,7 +439,7 @@ describe("Subscription Creation", () => {
       userId: "user_1",
       plan: "free",
       status: "active",
-      includedTokens: PRICING.FREE_INCLUDED_TOKENS,
+      includedTokens: LEGACY_FREE_MONTHLY_TOKENS,
       purchasedTokens: 0,
       serviceFeeRate: PRICING.PLATFORM_FEE_FREE,
       periodStart: Date.now(),

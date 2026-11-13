@@ -114,7 +114,7 @@
         "files": "Analyze File Structure",
         "config": "Process Configuration Files",
         "cleanup": "Cleanup & Finalize",
-        "embeddings": "Build AI Search Index"
+        "embeddings": "Build Search Index"
       }
     },
     "landing": {
@@ -165,7 +165,7 @@
       },
       "demoTitle": "Gitdog demo video",
       "ctaBottomTitle": "Start automating today",
-      "ctaBottomSubtitle": "Free tier includes 100k tokens per month. No credit card required."
+      "ctaBottomSubtitle": "Try Gitdog with 100k trial tokens, then use your own API key or Pro. No credit card required."
     },
     "workspace": {
       "title": "Workspace",
@@ -200,7 +200,10 @@
         "actionsThisMonth": "{{count}} actions this month",
         "settings": "Settings →"
       },
-      "tokensPerMonth": "{{count, number}}k tokens/month"
+      "tokensPerMonth": "{{count, number}}k tokens/month",
+      "prepaidTokens": "{{count, number}}k trial and prepaid tokens left",
+      "usingOwnKey": "Using your {{provider}} key",
+      "monthlyUntil": "{{count, number}}k free monthly tokens until Dec 1"
     }
   },
   "repositories": {
@@ -512,7 +515,7 @@
       "coveredByTokens": "Covered by included and purchased tokens",
       "prepaidOnly": "No automatic charges. Additional usage requires prepaid token packs.",
       "includedAllowance": "{{included}} included",
-      "allowanceWithPurchased": "{{included}} included + {{remaining}} purchased remaining",
+      "allowanceWithPurchased": "{{included}} included + {{remaining}} trial and prepaid remaining",
       "currentPlan": "Current plan",
       "active": "active",
       "billingPeriod": "Billing period",
@@ -520,8 +523,8 @@
     },
     "tokenUsageThisMonth": "Token usage this billing period",
     "tokensCount": "{{used}} / {{limit}} tokens",
-    "approachingFreeLimit": "You're approaching your {{limit}} token limit. Buy a prepaid token pack to avoid interruptions.",
-    "freeLimitReached": "You've reached your token limit. Buy a prepaid token pack to continue.",
+    "approachingFreeLimit": "You're approaching your {{limit}} token limit. Add your own API key in your profile, buy a token pack or upgrade to Pro to avoid interruptions.",
+    "freeLimitReached": "You've used your available tokens. Add your own API key in your profile, buy a token pack or upgrade to Pro to continue.",
     "usageByRepository": "Usage by repository",
     "noRepositories": {
       "description": "No repositories connected yet",
@@ -543,7 +546,7 @@
       "title": "Upgrade to Pro",
       "description": "Get 2.4M tokens included and priority processing with Pro subscription at $9.99/month",
       "button": "View plans",
-      "inlineTitle": "Need a higher monthly allowance?",
+      "inlineTitle": "Need more than your trial?",
       "inlineDescription": "Pro includes 2.4M tokens each month. Additional usage still requires prepaid token packs."
     },
     "userKey": {
@@ -577,9 +580,7 @@
       "active": "{{count}} active"
     },
     "providerKeys": {
-      "title": "Your AI provider keys",
-      "description": "Add your own Anthropic or OpenAI API key and Gitdog runs issue, discussion and pull request work for repositories you own on that key. That usage is billed by your provider and does not count toward your Gitdog token quota.",
-      "note": "Claude is used first; OpenAI is used if Claude is unavailable or out of credit. If a saved key fails, Gitdog stops instead of switching to its own keys. Repository search embeddings still use Gitdog's included tokens and fall back to keyword search when they run out. Keys are encrypted and never shown again.",
+      "title": "Your own AI keys",
       "inputLabel": "{{provider}} API key",
       "save": "Save key",
       "replace": "Replace key",
@@ -591,7 +592,9 @@
         "active": "Active",
         "invalid": "Rejected",
         "out_of_credit": "Out of credit",
-        "notSet": "Not set"
+        "notSet": "Not set",
+        "unreadable": "Re-enter key",
+        "serviceUnavailable": "Checks unavailable"
       },
       "errors": {
         "format": "This does not look like an {{provider}} API key.",
@@ -600,9 +603,19 @@
         "reenter": "This API key can no longer be read. Enter it again.",
         "unavailable": "{{provider}} could not check this API key right now. Try again shortly.",
         "rateLimited": "Too many API key checks. Try again in a few minutes.",
-        "notConfigured": "Saving API keys is not available right now. Please contact support.",
-        "wrongProvider": "This is not an {{provider}} API key. Paste it into the matching provider instead."
-      }
+        "notConfigured": "Key checks are temporarily unavailable. Try again later.",
+        "wrongProvider": "This looks like an {{other}} key. Paste it into the {{other}} card."
+      },
+      "valueProp": "Run Gitdog on your own Anthropic or OpenAI key — that usage never touches your Gitdog tokens.",
+      "bullets": {
+        "order": "Claude runs first; OpenAI takes over if Claude is out of credit.",
+        "noFallback": "If your key fails, Gitdog pauses and tells you — it never switches to its own keys.",
+        "encrypted": "Keys are encrypted and never shown again; only the last 4 characters appear."
+      },
+      "getKey": "Get a key",
+      "checked": "Checked {{time}}",
+      "confirmRemove": "Remove your {{provider}} key? Gitdog will use its own tokens again.",
+      "moveTo": "Move to {{provider}}"
     }
   },
   "footer": {
@@ -649,19 +662,25 @@
   },
   "banner": {
     "connectPrompt": "Connect your GitHub repository to enable AI automation",
-    "connectNow": "Connect now"
+    "connectNow": "Connect now",
+    "providerKey": {
+      "invalid": "{{provider}} rejected your saved API key, so work that uses it is paused.",
+      "outOfCredit": "Your {{provider}} API key is out of credit, so work that uses it is paused.",
+      "unreadable": "Gitdog can no longer read your saved {{provider}} API key. Enter it again to resume.",
+      "action": "Fix in profile"
+    }
   },
   "billing": {
     "title": "Billing - Gitdog",
     "description": "Manage your subscription and billing",
     "heading": "Plans & Billing",
-    "subtitle": "Free includes 100k tokens each month. Buy token packs or upgrade when you need more.",
+    "subtitle": "Try Gitdog with one-time trial tokens, then use your own API key, buy token packs or upgrade to Pro.",
     "month": "month",
     "currentPlan": "Current Plan",
     "recommended": "Recommended",
     "downgrade": "Downgrade",
     "upgradeToPro": "Upgrade to Pro",
-    "freeDescription": "100k tokens per month with a hard limit",
+    "freeDescription": "100k one-time trial tokens, then your own API key",
     "proDescription": "2.4M tokens included each month, with prepaid token packs available when needed",
     "currentUsage": "Current Usage",
     "usage": {
@@ -674,7 +693,7 @@
     "model": "AI Model",
     "inputTokens": "Input tokens",
     "outputTokens": "Output tokens",
-    "freeTokens": "Free tokens",
+    "freeTokens": "Trial tokens",
     "platformFee": "Prepaid token packs",
     "proDiscount": "No automatic overage charges; buy prepaid token packs when you need more",
     "needHelp": "Have questions about billing?",
@@ -684,8 +703,8 @@
     "title": "Upgrade Your Plan",
     "message": "Get 2.4M included tokens each month and priority processing with Pro",
     "limitReached": {
-      "title": "Monthly Limit Reached",
-      "message": "You've reached your token limit. Buy a token pack or upgrade to continue using AI automation."
+      "title": "Trial tokens used up",
+      "message": "You've used your available tokens. Add your own API key in your profile, buy a token pack or upgrade to Pro to continue."
     },
     "approachingLimit": {
       "title": "Approaching Limit",
@@ -700,14 +719,14 @@
     "prepaidTokenPackDescription": "One-time purchases that never expire. Usage stops when your available token balance is exhausted.",
     "maybeLater": "Maybe later",
     "viewPlans": "View Plans",
-    "currentlyOnFree": "You're currently on the Free plan (100k tokens/month, hard limit)",
+    "currentlyOnFree": "You're currently on the Free plan (one-time trial tokens, or your own API key)",
     "highPerformanceNote": "We use high-performance AI models to ensure the best quality results."
   },
   "pricing": {
     "title": "Pricing - Gitdog",
     "description": "Choose the right plan for your needs",
     "heading": "Simple, Transparent Pricing",
-    "subtitle": "Choose a monthly token allowance and add prepaid token packs when needed. There are no automatic overage charges.",
+    "subtitle": "Try Gitdog with trial tokens, then use your own API key or Pro. Add prepaid token packs when needed; there are no automatic overage charges.",
     "month": "month",
     "currentPlan": "Current Plan",
     "recommended": "Recommended",
@@ -715,7 +734,7 @@
     "upgradeToPro": "Upgrade to Pro",
     "getStarted": "Get Started",
     "processing": "Processing...",
-    "freeDescription": "100k tokens free per month (hard limit)",
+    "freeDescription": "100k one-time trial tokens, then bring your own API key",
     "proDescription": "2.4M tokens included each month; additional usage requires prepaid token packs",
     "loggedIn": {
       "heading": "Plans & Billing",
@@ -727,7 +746,7 @@
       "estimatedCost": "Automatic overage charges"
     },
     "features": {
-      "freeTokens": "100k free tokens/month (hard limit)",
+      "freeTokens": "100k trial tokens once, on sign-in",
       "includedTokens": "2.4M tokens included each month",
       "basicSupport": "Community support",
       "prioritySupport": "Priority support",
@@ -736,19 +755,20 @@
       "noAutomaticOverage": "No automatic overage charges",
       "allFeatures": "All features included",
       "prepaidTokens": "Prepaid token packs for additional usage",
-      "teamCollaboration": "Team collaboration"
+      "teamCollaboration": "Team collaboration",
+      "ownKey": "Use your own Anthropic or OpenAI API key"
     },
     "tokenPack": {
       "title": "Need More Tokens?",
-      "description": "Purchase prepaid token packs for additional AI usage. They are used after monthly included tokens and never expire.",
+      "description": "Purchase prepaid token packs for additional AI usage. They are used after included tokens and never expire.",
       "neverExpire": "Tokens never expire",
       "prepaidPurchase": "One-time prepaid purchase",
       "bestValue": "Best Value",
       "purchase": "Purchase"
     },
     "tokenPricing": "Token Pricing",
-    "tokenPricingDescription": "Free includes 100k tokens per month and Pro includes 2.4M. Both stop at the available limit, which prepaid token packs can extend.",
-    "freeTokensLabel": "Free tokens/month",
+    "tokenPricingDescription": "Free starts with 100k one-time trial tokens and Pro includes 2.4M each month. Both stop at the available limit, which prepaid token packs can extend. Work that runs on your own API key never uses Gitdog tokens.",
+    "freeTokensLabel": "Trial tokens (one-time)",
     "platformFeeLabel": "Prepaid token packs",
     "billingLabel": "Billing",
     "prepaidTokensLabel": "Prepaid token packs",
@@ -814,7 +834,21 @@
   "notifications": {
     "title": "Notifications",
     "markAllRead": "Mark all as read",
-    "noNotifications": "No notifications"
+    "noNotifications": "No notifications",
+    "providerKey": {
+      "invalid": {
+        "title": "{{provider}} API key rejected",
+        "message": "{{provider}} rejected your saved API key, so Gitdog paused work that uses it. Replace or remove it in your profile."
+      },
+      "out_of_credit": {
+        "title": "{{provider}} API key out of credit",
+        "message": "Your {{provider}} API key is out of credit, so Gitdog paused work that uses it. Add credit or replace the key in your profile."
+      },
+      "unreadable": {
+        "title": "Enter your {{provider}} API key again",
+        "message": "Gitdog can no longer read your saved {{provider}} API key. Enter it again in your profile."
+      }
+    }
   },
   "notFound": {
     "title": "Page Not Found - Gitdog",
@@ -844,12 +878,23 @@
       "commentFailed": "Failed to add comment. Please check your permissions."
     },
     "tokenLimit": {
-      "limitReached": "Monthly token limit reached. Please upgrade your plan to continue using AI automation."
+      "limitReached": "Your available tokens are used up. Add your own API key in your profile, buy a token pack or upgrade to Pro to continue."
     },
     "generic": {
       "permissionDenied": "Permission denied. Please check your GitHub App permissions.",
       "notFound": "The requested resource was not found.",
       "networkError": "A network error occurred. Please try again."
+    },
+    "providerKey": {
+      "invalid": "{{provider}} rejected your API key. Replace or remove it in your profile.",
+      "outOfCredit": "Your {{provider}} API key is out of credit. Add credit with {{provider}} or replace the key in your profile.",
+      "rateLimited": "Your {{provider}} API key hit its rate limit. Try again shortly.",
+      "unavailable": "Your {{provider}} API key is no longer available. Add it again in your profile.",
+      "unreadable": "Gitdog can no longer read your {{provider}} API key. Enter it again in your profile.",
+      "removed": "This request started on your own API key, which was removed. Add a key again in your profile.",
+      "yourProvider": "AI provider",
+      "openSettings": "Open settings",
+      "serviceUnavailable": "Gitdog can't use saved API keys right now. Try again shortly."
     }
   },
   "admin": {
@@ -1242,5 +1287,22 @@
         "description": "If you have questions about these terms, please contact us at:"
       }
     }
+  },
+  "trial": {
+    "tokensLeftLabel": "Trial tokens left",
+    "tokensLeftNote": "Trial and prepaid tokens never reset.",
+    "nextTitle": "When your trial runs out",
+    "nextBody": "Add your own Anthropic or OpenAI key to keep going at provider prices, or go Pro for 2.4M tokens a month.",
+    "exhaustedTitle": "Your trial tokens are used up",
+    "exhaustedBody": "Gitdog is paused for your repositories. Add your own API key to continue right away, or upgrade to Pro.",
+    "usingKeyTitle": "Running on your own key",
+    "usingKeyBody": "Issue, discussion and review work runs on your saved key and doesn't use your Gitdog tokens.",
+    "addKey": "Add your own key",
+    "manageKeys": "Manage your keys",
+    "viewPro": "View Pro",
+    "monthlyUntil": "Plus {{tokens}} free monthly tokens until {{date}}. Trial tokens never reset.",
+    "prepaidLeft": "Plus {{tokens}} prepaid tokens.",
+    "keyChecksUnavailableTitle": "Key checks are temporarily unavailable",
+    "keyChecksUnavailableBody": "Your saved API keys can't be used right now because of a temporary Gitdog server problem. Nothing is wrong with your keys; work will resume once it is fixed."
   }
 }

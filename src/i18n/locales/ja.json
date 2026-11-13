@@ -114,7 +114,7 @@
         "files": "ファイル構造を分析",
         "config": "設定ファイルを処理",
         "cleanup": "クリーンアップと完了処理",
-        "embeddings": "AI検索インデックスを構築"
+        "embeddings": "検索インデックスを作成"
       }
     },
     "landing": {
@@ -165,7 +165,7 @@
       },
       "demoTitle": "Gitdogデモ動画",
       "ctaBottomTitle": "今日から自動化を始めましょう",
-      "ctaBottomSubtitle": "無料プランは月100kトークンを含みます。クレジットカード不要。"
+      "ctaBottomSubtitle": "100kの体験トークンでGitdogを試し、その後は自分のAPIキーかProをご利用ください。クレジットカード不要。"
     },
     "workspace": {
       "title": "ワークスペース",
@@ -200,7 +200,10 @@
         "actionsThisMonth": "今月{{count}}アクション",
         "settings": "設定 →"
       },
-      "tokensPerMonth": "月 {{count, number}}kトークン"
+      "tokensPerMonth": "月 {{count, number}}kトークン",
+      "prepaidTokens": "体験・プリペイドトークン残り {{count, number}}k",
+      "usingOwnKey": "{{provider}}キーを使用中",
+      "monthlyUntil": "12月1日まで月間無料トークン{{count, number}}k"
     }
   },
   "repositories": {
@@ -511,7 +514,7 @@
       "coveredByTokens": "含まれるトークンと購入済みトークンで充当",
       "prepaidOnly": "自動課金はありません。追加利用にはプリペイドトークンパックが必要です。",
       "includedAllowance": "{{included}}を含む",
-      "allowanceWithPurchased": "{{included}}を含む + 購入分残り{{remaining}}",
+      "allowanceWithPurchased": "{{included}}を含む + 体験・プリペイド残り{{remaining}}",
       "currentPlan": "現在のプラン",
       "active": "アクティブ",
       "billingPeriod": "請求期間",
@@ -519,8 +522,8 @@
     },
     "tokenUsageThisMonth": "現在の請求期間のトークン使用量",
     "tokensCount": "{{used}} / {{limit}} トークン",
-    "approachingFreeLimit": "{{limit}}トークンの上限に近づいています。中断を避けるにはプリペイドトークンパックを購入してください。",
-    "freeLimitReached": "トークン上限に達しました。続けるにはプリペイドトークンパックを購入してください。",
+    "approachingFreeLimit": "{{limit}}トークンの上限に近づいています。中断を避けるには、プロフィールで自分のAPIキーを追加するか、トークンパックを購入するか、Proにアップグレードしてください。",
+    "freeLimitReached": "利用可能なトークンを使い切りました。続けるには、プロフィールで自分のAPIキーを追加するか、トークンパックを購入するか、Proにアップグレードしてください。",
     "usageByRepository": "リポジトリ別使用量",
     "noRepositories": {
       "description": "まだ接続されたリポジトリがありません",
@@ -542,7 +545,7 @@
       "title": "Proにアップグレード",
       "description": "月額$9.99のProサブスクリプションで2.4Mトークン含むと優先処理を獲得",
       "button": "プランを見る",
-      "inlineTitle": "より多い月間枠が必要ですか？",
+      "inlineTitle": "体験トークンでは足りませんか？",
       "inlineDescription": "Proには毎月2.4Mトークンが含まれます。追加利用にはプリペイドトークンパックが必要です。"
     },
     "userKey": {
@@ -576,9 +579,7 @@
       "active": "{{count}}アクティブ"
     },
     "providerKeys": {
-      "title": "自分の AI プロバイダーキー",
-      "description": "Anthropic または OpenAI の API キーを追加すると、自分が所有するリポジトリの Issue・Discussion・プルリクエストの処理をそのキーで実行します。この利用分はプロバイダーから直接請求され、Gitdog のトークン上限には含まれません。",
-      "note": "まず Claude を使い、Claude が使えないかクレジットがない場合は OpenAI を使います。保存したキーが失敗した場合、Gitdog のキーには切り替えず停止します。リポジトリ検索の埋め込みは引き続き Gitdog の含まれるトークンを使い、尽きるとキーワード検索に切り替わります。キーは暗号化して保存され、再表示されません。",
+      "title": "自分のAIキー",
       "inputLabel": "{{provider}} API キー",
       "save": "キーを保存",
       "replace": "キーを置き換え",
@@ -590,7 +591,9 @@
         "active": "有効",
         "invalid": "拒否",
         "out_of_credit": "クレジット不足",
-        "notSet": "未設定"
+        "notSet": "未設定",
+        "unreadable": "再入力が必要",
+        "serviceUnavailable": "確認できません"
       },
       "errors": {
         "format": "{{provider}} の API キーの形式ではありません。",
@@ -599,9 +602,19 @@
         "reenter": "この API キーは読み取れなくなりました。もう一度入力してください。",
         "unavailable": "{{provider}} が現在この API キーを確認できません。しばらくしてからお試しください。",
         "rateLimited": "API キーの確認が多すぎます。数分後にもう一度お試しください。",
-        "notConfigured": "現在 API キーを保存できません。サポートにお問い合わせください。",
-        "wrongProvider": "{{provider}} の API キーではありません。対応するプロバイダーの欄に貼り付けてください。"
-      }
+        "notConfigured": "現在キーを確認できません。しばらくしてからお試しください。",
+        "wrongProvider": "{{other}}のキーのようです。{{other}}のカードに貼り付けてください。"
+      },
+      "valueProp": "自分のAnthropicまたはOpenAIキーでGitdogを実行 — その利用分はGitdogのトークンを使いません。",
+      "bullets": {
+        "order": "まずClaudeを使い、Claudeのクレジットが尽きたらOpenAIが引き継ぎます。",
+        "noFallback": "キーが失敗するとGitdogは停止してお知らせします — Gitdogのキーには切り替えません。",
+        "encrypted": "キーは暗号化され再表示されません。末尾4文字のみ表示されます。"
+      },
+      "getKey": "キーを取得",
+      "checked": "{{time}}に確認",
+      "confirmRemove": "{{provider}}キーを削除しますか？以後はGitdogのトークンを使います。",
+      "moveTo": "{{provider}}に移動"
     }
   },
   "footer": {
@@ -648,19 +661,25 @@
   },
   "banner": {
     "connectPrompt": "GitHubリポジトリを接続してAI自動化を有効にしましょう",
-    "connectNow": "今すぐ接続"
+    "connectNow": "今すぐ接続",
+    "providerKey": {
+      "invalid": "{{provider}}が保存済みのAPIキーを拒否したため、このキーを使う処理を停止しています。",
+      "outOfCredit": "{{provider}} APIキーのクレジットが不足しているため、このキーを使う処理を停止しています。",
+      "unreadable": "保存済みの{{provider}} APIキーを読み取れなくなりました。もう一度入力すると再開します。",
+      "action": "プロフィールで修正"
+    }
   },
   "billing": {
     "title": "請求 - Gitdog",
     "description": "サブスクリプションと請求の管理",
     "heading": "プラン＆請求",
-    "subtitle": "無料プランには毎月100kトークンが含まれます。さらに必要な場合は、トークンパックの購入またはアップグレードが可能です。",
+    "subtitle": "1回限りの体験トークンでGitdogを試し、その後は自分のAPIキー、トークンパックの購入、またはProへのアップグレードをご利用ください。",
     "month": "月",
     "currentPlan": "現在のプラン",
     "recommended": "おすすめ",
     "downgrade": "ダウングレード",
     "upgradeToPro": "Proにアップグレード",
-    "freeDescription": "月100kトークン、上限到達後は利用停止",
+    "freeDescription": "1回限りの100k体験トークン、その後は自分のAPIキー",
     "proDescription": "毎月2.4Mトークン込み、必要に応じてプリペイドトークンパックを購入可能",
     "currentUsage": "現在の使用量",
     "usage": {
@@ -673,7 +692,7 @@
     "model": "AIモデル",
     "inputTokens": "入力トークン",
     "outputTokens": "出力トークン",
-    "freeTokens": "無料トークン",
+    "freeTokens": "体験トークン",
     "platformFee": "プリペイドトークンパック",
     "proDiscount": "自動超過課金はありません。必要なときにプリペイドトークンパックを購入してください",
     "needHelp": "請求についてご質問がありますか？",
@@ -683,8 +702,8 @@
     "title": "プランをアップグレード",
     "message": "Proで毎月2.4Mトークンと優先処理を利用",
     "limitReached": {
-      "title": "月間制限に達しました",
-      "message": "トークン上限に達しました。AI自動化を続けるには、トークンパックを購入するかアップグレードしてください。"
+      "title": "体験トークンを使い切りました",
+      "message": "利用可能なトークンを使い切りました。続けるには、プロフィールで自分のAPIキーを追加するか、トークンパックを購入するか、Proにアップグレードしてください。"
     },
     "approachingLimit": {
       "title": "制限に近づいています",
@@ -699,14 +718,14 @@
     "prepaidTokenPackDescription": "一度購入すると有効期限はありません。利用可能なトークン残高を使い切ると自動化は停止します。",
     "maybeLater": "後で",
     "viewPlans": "プランを見る",
-    "currentlyOnFree": "現在Freeプランをご利用中（月100kトークン、上限あり）",
+    "currentlyOnFree": "現在Freeプランをご利用中（1回限りの体験トークン、または自分のAPIキー）",
     "highPerformanceNote": "最高品質の結果を提供するために高性能AIモデルを使用しています。"
   },
   "pricing": {
     "title": "料金 - Gitdog",
     "description": "ニーズに合ったプランを選択",
     "heading": "シンプルで透明な料金",
-    "subtitle": "月間トークン枠を選び、必要に応じてプリペイドトークンパックを追加できます。自動超過課金はありません。",
+    "subtitle": "体験トークンでGitdogを試し、その後は自分のAPIキーかProをご利用ください。必要に応じてプリペイドトークンパックを追加でき、自動超過課金はありません。",
     "month": "月",
     "currentPlan": "現在のプラン",
     "recommended": "おすすめ",
@@ -714,7 +733,7 @@
     "upgradeToPro": "Proにアップグレード",
     "getStarted": "始める",
     "processing": "処理中...",
-    "freeDescription": "月100kトークン無料（上限あり）",
+    "freeDescription": "1回限りの100k体験トークン、その後は自分のAPIキー",
     "proDescription": "毎月2.4Mトークン込み、追加利用にはプリペイドトークンパックが必要",
     "loggedIn": {
       "heading": "プラン&請求",
@@ -726,7 +745,7 @@
       "estimatedCost": "自動超過課金"
     },
     "features": {
-      "freeTokens": "月100kトークン無料（上限あり）",
+      "freeTokens": "サインイン時に100k体験トークンを1回付与",
       "includedTokens": "毎月2.4Mトークン込み",
       "basicSupport": "コミュニティサポート",
       "prioritySupport": "優先サポート",
@@ -735,19 +754,20 @@
       "noAutomaticOverage": "自動超過課金なし",
       "allFeatures": "すべての機能を含む",
       "prepaidTokens": "追加利用向けプリペイドトークンパック",
-      "teamCollaboration": "チームコラボレーション"
+      "teamCollaboration": "チームコラボレーション",
+      "ownKey": "自分のAnthropicまたはOpenAI APIキーを利用"
     },
     "tokenPack": {
       "title": "もっとトークンが必要ですか？",
-      "description": "追加AI利用向けのプリペイドトークンパックを購入できます。月間の含まれるトークンの後に使用され、有効期限はありません。",
+      "description": "追加AI利用向けのプリペイドトークンパックを購入できます。含まれるトークンの後に使用され、有効期限はありません。",
       "neverExpire": "トークンの有効期限なし",
       "prepaidPurchase": "1回限りのプリペイド購入",
       "bestValue": "最もお得",
       "purchase": "購入"
     },
     "tokenPricing": "トークン価格",
-    "tokenPricingDescription": "Freeには月100k、Proには月2.4Mトークンが含まれます。どちらも利用可能な上限で停止し、プリペイドトークンパックで追加できます。",
-    "freeTokensLabel": "月間無料トークン",
+    "tokenPricingDescription": "Freeは1回限りの100k体験トークンから始まり、Proには毎月2.4Mトークンが含まれます。どちらも利用可能な上限で停止し、プリペイドトークンパックで追加できます。自分のAPIキーで実行される処理はGitdogのトークンを使いません。",
+    "freeTokensLabel": "体験トークン（1回限り）",
     "platformFeeLabel": "プリペイドトークンパック",
     "billingLabel": "課金",
     "prepaidTokensLabel": "プリペイドトークンパック",
@@ -813,7 +833,21 @@
   "notifications": {
     "title": "通知",
     "markAllRead": "すべて既読にする",
-    "noNotifications": "通知はありません"
+    "noNotifications": "通知はありません",
+    "providerKey": {
+      "invalid": {
+        "title": "{{provider}} APIキーが拒否されました",
+        "message": "{{provider}}が保存済みのAPIキーを拒否したため、このキーを使う処理を停止しました。プロフィールでキーを置き換えるか削除してください。"
+      },
+      "out_of_credit": {
+        "title": "{{provider}} APIキーのクレジットが不足しています",
+        "message": "{{provider}} APIキーのクレジットが不足しているため、このキーを使う処理を停止しました。クレジットを追加するか、プロフィールでキーを置き換えてください。"
+      },
+      "unreadable": {
+        "title": "{{provider}} APIキーを再入力してください",
+        "message": "保存済みの{{provider}} APIキーを読み取れなくなりました。プロフィールでもう一度入力してください。"
+      }
+    }
   },
   "notFound": {
     "title": "ページが見つかりません - Gitdog",
@@ -843,12 +877,23 @@
       "commentFailed": "コメントの追加に失敗しました。権限を確認してください。"
     },
     "tokenLimit": {
-      "limitReached": "月間トークン制限に達しました。AI自動化を継続するには、プランをアップグレードしてください。"
+      "limitReached": "利用可能なトークンを使い切りました。続けるには、プロフィールで自分のAPIキーを追加するか、トークンパックを購入するか、Proにアップグレードしてください。"
     },
     "generic": {
       "permissionDenied": "権限がありません。GitHub Appの権限を確認してください。",
       "notFound": "要求されたリソースが見つかりません。",
       "networkError": "ネットワークエラーが発生しました。もう一度お試しください。"
+    },
+    "providerKey": {
+      "invalid": "{{provider}}がAPIキーを拒否しました。プロフィールでキーを置き換えるか削除してください。",
+      "outOfCredit": "{{provider}} APIキーのクレジットが不足しています。{{provider}}でクレジットを追加するか、プロフィールでキーを置き換えてください。",
+      "rateLimited": "{{provider}} APIキーがレート制限に達しました。しばらくしてからお試しください。",
+      "unavailable": "{{provider}} APIキーが利用できなくなりました。プロフィールでもう一度追加してください。",
+      "unreadable": "{{provider}} APIキーを読み取れなくなりました。プロフィールでもう一度入力してください。",
+      "removed": "このリクエストは自分のAPIキーで開始されましたが、キーが削除されました。プロフィールでキーを再度追加してください。",
+      "yourProvider": "AIプロバイダー",
+      "openSettings": "設定を開く",
+      "serviceUnavailable": "現在、保存済みのAPIキーを使用できません。しばらくしてからお試しください。"
     }
   },
   "admin": {
@@ -1234,5 +1279,22 @@
         "description": "この規約についてご質問がある場合は、以下にお問い合わせください："
       }
     }
+  },
+  "trial": {
+    "tokensLeftLabel": "残りの体験トークン",
+    "tokensLeftNote": "体験・プリペイドトークンはリセットされません。",
+    "nextTitle": "体験トークンを使い切ったら",
+    "nextBody": "自分のAnthropicまたはOpenAIキーを追加すればプロバイダー価格で続けられます。Proなら毎月2.4Mトークンを利用できます。",
+    "exhaustedTitle": "体験トークンを使い切りました",
+    "exhaustedBody": "リポジトリのGitdog処理が停止しています。自分のAPIキーを追加すればすぐに再開でき、Proへのアップグレードも可能です。",
+    "usingKeyTitle": "自分のキーで実行中",
+    "usingKeyBody": "Issue・Discussion・レビューの処理は保存したキーで実行され、Gitdogのトークンを使いません。",
+    "addKey": "自分のキーを追加",
+    "manageKeys": "キーを管理",
+    "viewPro": "Proを見る",
+    "monthlyUntil": "{{date}}まで月間無料トークン{{tokens}}も利用できます。体験トークンはリセットされません。",
+    "prepaidLeft": "プリペイドトークン{{tokens}}も利用できます。",
+    "keyChecksUnavailableTitle": "現在キーを確認できません",
+    "keyChecksUnavailableBody": "Gitdogサーバーの一時的な問題により、保存済みのAPIキーを現在使用できません。キー自体に問題はなく、解消されると処理が再開されます。"
   }
 }

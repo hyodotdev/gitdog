@@ -441,42 +441,41 @@ async function checkChatProviderHolds(
   );
 }
 
+/**
+ * Embeddings are retired: an unsettled embedding hold can no longer finish,
+ * so it is released instead of blocking renewal. Only a staged, known-billed
+ * outcome waits for its settlement cron.
+ */
 async function checkEmbeddingProviderHolds(
   ctx: MutationCtx,
   subscription: Doc<"subscriptions">,
   boundary: Doc<"subscriptionBillingBoundaries">,
   now: number,
 ): Promise<ProviderHoldDecision> {
-  const ambiguous = await ctx.db
-    .query("embeddingUsageReservations")
-    .withIndex("by_subscription_status_and_period_start", (q) =>
-      q.eq("subscriptionId", subscription._id).eq("status", "ambiguous"),
-    )
-    .take(MAX_PROVIDER_HOLDS_PER_SCOPE + 1);
-  if (ambiguous.length > MAX_PROVIDER_HOLDS_PER_SCOPE) return "ambiguous";
-  if (
-    ambiguous.some((reservation) =>
-      reservationBelongsToBoundary(reservation, subscription, boundary),
-    )
-  ) {
-    return "ambiguous";
+  let staged = false;
+  for (const status of ["pending", "ambiguous"] as const) {
+    const reservations = await ctx.db
+      .query("embeddingUsageReservations")
+      .withIndex("by_subscription_status_and_period_start", (q) =>
+        q.eq("subscriptionId", subscription._id).eq("status", status),
+      )
+      .take(MAX_PROVIDER_HOLDS_PER_SCOPE + 1);
+    if (reservations.length > MAX_PROVIDER_HOLDS_PER_SCOPE) return "ambiguous";
+    for (const reservation of reservations) {
+      if (!reservationBelongsToBoundary(reservation, subscription, boundary))
+        continue;
+      if (reservation.settlementState === "staged") {
+        staged = true;
+        continue;
+      }
+      await ctx.db.patch(reservation._id, {
+        status: "released",
+        releaseReason: "embeddings_retired",
+        updatedAt: now,
+      });
+    }
   }
-
-  const pending = await ctx.db
-    .query("embeddingUsageReservations")
-    .withIndex("by_subscription_status_and_period_start", (q) =>
-      q.eq("subscriptionId", subscription._id).eq("status", "pending"),
-    )
-    .take(MAX_PROVIDER_HOLDS_PER_SCOPE + 1);
-  if (pending.length > MAX_PROVIDER_HOLDS_PER_SCOPE) return "ambiguous";
-  return await classifyPendingProviderHolds(
-    ctx,
-    pending.filter((reservation) =>
-      reservationBelongsToBoundary(reservation, subscription, boundary),
-    ),
-    boundary,
-    now,
-  );
+  return staged ? "in_progress" : "clear";
 }
 
 export async function checkBillingBoundaryProviderHolds(
@@ -680,6 +679,75 @@ export async function settleEndedTrustedProSubscriptionQuota(
     return { status: "manual_review", reason };
   }
   return { status: "settled", boundariesSettled };
+}
+
+/**
+ * True while any Pro row of the user still needs boundary settlement or an
+ * operator. Read-only, so callers can skip optional writes such as the trial
+ * grant instead of tripping the settlement errors.
+ */
+export async function hasUnsettledProHistory(
+  ctx: BoundaryReadCtx,
+  userId: Id<"users">,
+  now: number,
+): Promise<boolean> {
+  return (await probeProHistory(ctx, userId, now)) !== "clear";
+}
+
+/** Read-only view of a user's Pro history for optional work like the trial. */
+export async function probeProHistory(
+  ctx: BoundaryReadCtx,
+  userId: Id<"users">,
+  now: number,
+): Promise<"clear" | "unsettled" | "corrupt"> {
+  try {
+    return (await readUnsettledProHistory(ctx, userId, now))
+      ? "unsettled"
+      : "clear";
+  } catch {
+    // Corrupt boundary history (for example duplicate boundaries) needs an
+    // operator.
+    return "corrupt";
+  }
+}
+
+async function readUnsettledProHistory(
+  ctx: BoundaryReadCtx,
+  userId: Id<"users">,
+  now: number,
+): Promise<boolean> {
+  const rows = await ctx.db
+    .query("subscriptions")
+    .withIndex("by_user", (q) => q.eq("userId", userId))
+    .take(101);
+  if (rows.length > 100) return true;
+  for (const row of rows) {
+    if (row.plan !== "pro" || row.proEntitlementProvenance === undefined)
+      continue;
+    if (hasTrustedProEntitlement(row, now)) continue;
+    if (
+      row.periodEnd > now ||
+      row.billingBoundaryReconciliationRequired ||
+      row.billingBoundaryManualReviewReason !== undefined
+    )
+      return true;
+    const exact = await getExactBoundary(ctx, row);
+    if (exact?.status !== "settled") return true;
+    const open = await ctx.db
+      .query("subscriptionBillingBoundaries")
+      .withIndex("by_subscription_status_and_period_end", (q) =>
+        q.eq("subscriptionId", row._id).eq("status", "pending"),
+      )
+      .first();
+    const review = await ctx.db
+      .query("subscriptionBillingBoundaries")
+      .withIndex("by_subscription_status_and_period_end", (q) =>
+        q.eq("subscriptionId", row._id).eq("status", "manual_review"),
+      )
+      .first();
+    if (open || review) return true;
+  }
+  return false;
 }
 
 export async function settleAllEndedTrustedProQuotas(

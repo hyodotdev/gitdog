@@ -83,6 +83,13 @@ async function insertFixture(t: ReturnType<typeof convexTest>): Promise<{
   return await t.run(async (ctx) => {
     const now = Date.now();
     const userId = await ctx.db.insert("users", {});
+    // The one-time trial is already used, so quota checks see only the
+    // allowance each test sets up.
+    await ctx.db.insert("trialCreditGrants", {
+      userId,
+      tokens: 100_000,
+      grantedAt: 1,
+    });
     const repositoryId = await ctx.db.insert("repositories", {
       indexSyncPending: false,
       indexVersion: 1,
@@ -180,6 +187,43 @@ function reservationArgs(
   };
 }
 
+async function insertLegacyEmbeddingReservation(
+  t: ReturnType<typeof convexTest>,
+  fixture: Awaited<ReturnType<typeof insertFixture>>,
+  args: {
+    reservationKey: string;
+    status: "pending" | "ambiguous";
+    providerStartedAt?: number;
+    reservedTokens?: number;
+  },
+): Promise<void> {
+  await t.run(async (ctx) => {
+    const now = Date.now();
+    await ctx.db.insert("embeddingUsageReservations", {
+      reservationKey: args.reservationKey,
+      attemptToken: `${args.reservationKey}:attempt:1`,
+      userId: fixture.userId,
+      repositoryId: fixture.repositoryId,
+      operation: "legacy embedding",
+      provider: "openai",
+      model: "text-embedding-3-small",
+      inputCount: 1,
+      providerTokenLimit: 100,
+      reservedTokens: args.reservedTokens ?? 2,
+      entitlementPlan: "free",
+      includedTokens: 0,
+      serviceFeeRate: 0,
+      quotaPeriodStart: now,
+      quotaPeriodEnd: now + 60_000,
+      status: args.status,
+      providerStartedAt: args.providerStartedAt,
+      expiresAt: now + 60_000,
+      createdAt: now,
+      updatedAt: now,
+    });
+  });
+}
+
 async function reserve(
   t: ReturnType<typeof convexTest>,
   args: ReturnType<typeof reservationArgs>,
@@ -268,6 +312,13 @@ async function insertAdminUser(
 ): Promise<Id<"users">> {
   return await t.run(async (ctx) => {
     const userId = await ctx.db.insert("users", {});
+    // The one-time trial is already used, so quota checks see only the
+    // allowance each test sets up.
+    await ctx.db.insert("trialCreditGrants", {
+      userId,
+      tokens: 100_000,
+      grantedAt: 1,
+    });
     const now = Date.now();
     await ctx.db.insert("userProfiles", {
       userId,
@@ -545,33 +596,18 @@ describe("AI chat usage reservations", () => {
       allowed: true,
       reservationKey: chat.reservationKey,
     });
-
-    await expect(
-      t.mutation(internal._ai.embeddingBilling.reservePaidEmbeddingUsage, {
-        reservationKey: "pro-prepaid-embedding-over",
-        attemptToken: "pro-prepaid-embedding-over:attempt:1",
-        userId: fixture.userId,
-        repositoryId: fixture.repositoryId,
-        operation: "mixed prepaid quota regression",
-        inputCount: 1,
-        providerTokenLimit: 250,
-      }),
-    ).resolves.toEqual({ allowed: false, reason: "limit_reached" });
-
-    await expect(
-      t.mutation(internal._ai.embeddingBilling.reservePaidEmbeddingUsage, {
-        reservationKey: "pro-prepaid-embedding-exact",
-        attemptToken: "pro-prepaid-embedding-exact:attempt:1",
-        userId: fixture.userId,
-        repositoryId: fixture.repositoryId,
-        operation: "mixed prepaid quota regression",
-        inputCount: 1,
-        providerTokenLimit: 200,
-      }),
-    ).resolves.toEqual({
-      allowed: true,
+    // A pending embedding hold from before embeddings were retired no
+    // longer counts, so a chat reservation fills the remaining balance.
+    await insertLegacyEmbeddingReservation(t, fixture, {
       reservationKey: "pro-prepaid-embedding-exact",
+      status: "pending",
+      reservedTokens: 40,
     });
+    const fill = reservationArgs(fixture, "pro-prepaid-chat-fill", 1, {
+      inputTokenLimit: 20,
+      outputTokenLimit: 20,
+    });
+    await expect(reserve(t, fill)).resolves.toMatchObject({ allowed: true });
 
     await expect(
       reserve(
@@ -601,6 +637,7 @@ describe("AI chat usage reservations", () => {
     expect(state.subscription?.purchasedTokens).toBe(100);
     expect(state.reservations).toEqual([
       expect.objectContaining({ reservedTokens: 60 }),
+      expect.objectContaining({ reservedTokens: 40 }),
     ]);
     expect(state.embeddingReservations).toEqual([
       expect.objectContaining({ reservedTokens: 40 }),
@@ -2882,7 +2919,7 @@ describe("AI chat usage reservations", () => {
     await expect(markStarted(t, waiting)).resolves.toBe(true);
   });
 
-  it("blocks a pending chat provider start while embedding usage is ambiguous", async () => {
+  it("does not block a chat provider start on a retired ambiguous embedding hold", async () => {
     const t = convexTest(schema, modules);
     const fixture = await insertFixture(t);
     const chat = reservationArgs(fixture, "chat-waiting-on-embedding", 1, {
@@ -2891,139 +2928,17 @@ describe("AI chat usage reservations", () => {
     });
     await expect(reserve(t, chat)).resolves.toMatchObject({ allowed: true });
 
-    const reservationKey = "ambiguous-embedding-before-chat-start";
-    const attemptToken = `${reservationKey}:attempt:1`;
-    await expect(
-      t.mutation(internal._ai.embeddingBilling.reservePaidEmbeddingUsage, {
-        reservationKey,
-        attemptToken,
-        userId: fixture.userId,
-        repositoryId: fixture.repositoryId,
-        operation: "cross-provider ambiguity regression",
-        inputCount: 1,
-        providerTokenLimit: 100,
-        provider: "openai",
-        model: "text-embedding-3-small",
-      }),
-    ).resolves.toMatchObject({ allowed: true });
-    await expect(
-      t.mutation(
-        internal._ai.embeddingBilling.markEmbeddingUsageProviderStarted,
-        {
-          reservationKey,
-          attemptToken,
-          userId: fixture.userId,
-          repositoryId: fixture.repositoryId,
-        },
-      ),
-    ).resolves.toEqual({ started: true, alreadyStarted: false });
-    await expect(
-      t.mutation(internal._ai.embeddingBilling.markEmbeddingUsageAmbiguous, {
-        reservationKey,
-        attemptToken,
-        userId: fixture.userId,
-        repositoryId: fixture.repositoryId,
-      }),
-    ).resolves.toBe(true);
+    // An unresolved embedding call from before embeddings were retired.
+    await insertLegacyEmbeddingReservation(t, fixture, {
+      reservationKey: "ambiguous-embedding-before-chat-start",
+      status: "ambiguous",
+      providerStartedAt: Date.now(),
+    });
 
     await expect(markStartResult(t, chat)).resolves.toEqual({
-      started: false,
-      reason: "unresolved_provider_usage",
+      started: true,
+      alreadyStarted: false,
     });
-    const waiting = await t.run(async (ctx) =>
-      ctx.db
-        .query("chatUsageReservations")
-        .withIndex("by_reservation_key", (q) =>
-          q.eq("reservationKey", chat.reservationKey),
-        )
-        .unique(),
-    );
-    expect(waiting).toMatchObject({ status: "pending" });
-    expect(waiting?.providerStartedAt).toBeUndefined();
-  });
-
-  it("does not corrupt an expired exact embedding stage while reserving chat", async () => {
-    const t = convexTest(schema, modules);
-    const fixture = await insertFixture(t);
-    const embeddingKey = "expired-staged-embedding-before-chat";
-    const embeddingAttempt = `${embeddingKey}:attempt:1`;
-    await t.mutation(internal._ai.embeddingBilling.reservePaidEmbeddingUsage, {
-      reservationKey: embeddingKey,
-      attemptToken: embeddingAttempt,
-      userId: fixture.userId,
-      repositoryId: fixture.repositoryId,
-      operation: "cross-protocol staged regression",
-      inputCount: 1,
-      providerTokenLimit: 100,
-      provider: "openai",
-      model: "text-embedding-3-small",
-    });
-    await t.mutation(
-      internal._ai.embeddingBilling.markEmbeddingUsageProviderStarted,
-      {
-        reservationKey: embeddingKey,
-        attemptToken: embeddingAttempt,
-        userId: fixture.userId,
-        repositoryId: fixture.repositoryId,
-      },
-    );
-    await t.mutation(
-      internal._ai.embeddingBilling.stageEmbeddingProviderOutcome,
-      {
-        reservationKey: embeddingKey,
-        attemptToken: embeddingAttempt,
-        userId: fixture.userId,
-        repositoryId: fixture.repositoryId,
-        tokens: 17,
-        provider: "openai",
-        model: "text-embedding-3-small",
-      },
-    );
-    await t.run(async (ctx) => {
-      const reservation = await ctx.db
-        .query("embeddingUsageReservations")
-        .withIndex("by_reservation_key", (q) =>
-          q.eq("reservationKey", embeddingKey),
-        )
-        .unique();
-      if (!reservation) throw new Error("embedding reservation missing");
-      await ctx.db.patch(reservation._id, { expiresAt: Date.now() - 1 });
-    });
-
-    await expect(
-      reserve(t, reservationArgs(fixture, "chat-after-staged-embedding")),
-    ).resolves.toEqual({
-      allowed: false,
-      reason: "provider_attempt_in_progress",
-    });
-    const stillStaged = await t.run(async (ctx) =>
-      ctx.db
-        .query("embeddingUsageReservations")
-        .withIndex("by_reservation_key", (q) =>
-          q.eq("reservationKey", embeddingKey),
-        )
-        .unique(),
-    );
-    expect(stillStaged).toMatchObject({
-      status: "pending",
-      settlementState: "staged",
-    });
-    await expect(
-      t.mutation(internal._ai.embeddingBilling.settleStagedEmbeddingOutcome, {
-        reservationKey: embeddingKey,
-        attemptToken: embeddingAttempt,
-        fromScheduler: false,
-      }),
-    ).resolves.toMatchObject({ status: "finalized" });
-    const usages = await t.run(async (ctx) =>
-      ctx.db
-        .query("tokenUsage")
-        .withIndex("by_embedding_reservation", (q) =>
-          q.eq("embeddingReservationKey", embeddingKey),
-        )
-        .collect(),
-    );
-    expect(usages).toHaveLength(1);
   });
 
   it("allows only one provider-started AI request per account", async () => {
@@ -3038,55 +2953,13 @@ describe("AI chat usage reservations", () => {
       allowed: true,
     });
 
-    const embeddingReservationKey = "single-provider-embedding";
-    const embeddingAttemptToken = `${embeddingReservationKey}:attempt:1`;
-    await expect(
-      t.mutation(internal._ai.embeddingBilling.reservePaidEmbeddingUsage, {
-        reservationKey: embeddingReservationKey,
-        attemptToken: embeddingAttemptToken,
-        userId: fixture.userId,
-        repositoryId: fixture.repositoryId,
-        operation: "single provider account lock",
-        inputCount: 1,
-        providerTokenLimit: 100,
-        provider: "openai",
-        model: "text-embedding-3-small",
-      }),
-    ).resolves.toMatchObject({ allowed: true });
-
     await expect(markStarted(t, firstChat)).resolves.toBe(true);
     await expect(markStartResult(t, secondChat)).resolves.toEqual({
       started: false,
       reason: "provider_attempt_in_progress",
     });
-    await expect(
-      t.mutation(
-        internal._ai.embeddingBilling.markEmbeddingUsageProviderStarted,
-        {
-          reservationKey: embeddingReservationKey,
-          attemptToken: embeddingAttemptToken,
-          userId: fixture.userId,
-          repositoryId: fixture.repositoryId,
-        },
-      ),
-    ).resolves.toEqual({
-      started: false,
-      reason: "provider_attempt_in_progress",
-    });
-
     await finalize(t, firstChat);
-    await expect(
-      t.mutation(
-        internal._ai.embeddingBilling.markEmbeddingUsageProviderStarted,
-        {
-          reservationKey: embeddingReservationKey,
-          attemptToken: embeddingAttemptToken,
-          userId: fixture.userId,
-          repositoryId: fixture.repositoryId,
-        },
-      ),
-    ).resolves.toEqual({ started: true, alreadyStarted: false });
-    await expect(markStarted(t, secondChat)).resolves.toBe(false);
+    await expect(markStarted(t, secondChat)).resolves.toBe(true);
   });
 });
 
@@ -3178,6 +3051,22 @@ it("keeps a deadline-crossing in-flight request retryable without dispatching an
   vi.spyOn(Date, "now").mockReturnValue(now);
   const t = convexTest(schema, modules);
   const fixture = await insertFixture(t);
+  // Free periods after the monthly allowance ended need prepaid tokens.
+  await t.run(async (dbCtx) => {
+    const date = new Date(now);
+    await dbCtx.db.insert("subscriptions", {
+      userId: fixture.userId,
+      plan: "free",
+      status: "active",
+      includedTokens: 0,
+      purchasedTokens: PRICING.TRIAL_TOKENS,
+      serviceFeeRate: PRICING.PLATFORM_FEE_FREE,
+      periodStart: Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1),
+      periodEnd: Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1),
+      createdAt: now,
+      updatedAt: now,
+    });
+  });
   const ctx = { runMutation: t.mutation.bind(t) } as unknown as ActionCtx;
   const makeProvider = () =>
     createMeteredProvider(ctx, {

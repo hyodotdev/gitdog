@@ -9,6 +9,7 @@ import {
 import { hasCurrentLegalAttestation } from "../users/legal";
 import { checkAccountTokenAllowance } from "../subscriptions/internalQuery";
 import { isUsableProviderKey } from "../providerApiKeys/usability";
+import { settleThenGrantTrialCredit } from "../subscriptions/credit";
 import type { ReviewQuotaRefusal } from "./errors";
 import {
   combinedReviewBody,
@@ -531,7 +532,12 @@ export const reserveBatchedReviewQuota = internalMutation({
     args,
   ): Promise<
     | { reserved: true }
-    | { reserved: false; reason: ReviewQuotaRefusal; message: string }
+    | {
+        reserved: false;
+        reason: ReviewQuotaRefusal;
+        message: string;
+        userKeyUnavailable?: true;
+      }
   > => {
     const action = await ctx.db.get(args.actionId);
     const ticket = action ? await ctx.db.get(action.ticketId) : null;
@@ -558,7 +564,15 @@ export const reserveBatchedReviewQuota = internalMutation({
             reserved: false,
             reason: "unverified",
             message: "Your AI provider API key is no longer available.",
+            userKeyUnavailable: true,
           };
+    }
+    // Optional: an unexpected settlement problem must not end the review as
+    // a failed quota check; the check below reports real quota problems.
+    try {
+      await settleThenGrantTrialCredit(ctx, ticket.userId);
+    } catch {
+      console.warn("Trial credit grant was skipped");
     }
     // The owner comes from the ticket. Indexing patches the repository
     // several times a second, and this slow usage read would conflict with

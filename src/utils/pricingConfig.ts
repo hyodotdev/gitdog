@@ -4,8 +4,8 @@
  */
 
 export const TOKEN_LIMITS = {
-  // Free tier: hard limit (no overage allowed)
-  FREE_INCLUDED_TOKENS: 100_000, // 100k tokens
+  // Free tier: one-time trial credit granted on sign-in, no monthly allowance
+  TRIAL_TOKENS: 100_000, // 100k tokens
 
   // Pro tier: hard limit extended only by prepaid token packs
   PRO_INCLUDED_TOKENS: 2_400_000, // 2.4M tokens

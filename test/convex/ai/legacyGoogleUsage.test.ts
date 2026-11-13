@@ -31,6 +31,13 @@ async function insertFixture(t: ReturnType<typeof convexTest>): Promise<{
   return await t.run(async (ctx) => {
     const now = Date.now();
     const userId = await ctx.db.insert("users", {});
+    // The one-time trial is already used, so quota checks see only the
+    // allowance each test sets up.
+    await ctx.db.insert("trialCreditGrants", {
+      userId,
+      tokens: 100_000,
+      grantedAt: 1,
+    });
     const repositoryId = await ctx.db.insert("repositories", {
       indexSyncPending: false,
       indexVersion: 1,
@@ -225,7 +232,7 @@ describe("legacy Google usage", () => {
       ),
     ).toEqual({ started: false, reason: "unresolved_provider_usage" });
   });
-  it("holds retired embedding spend without serializing new OpenAI work", async () => {
+  it("ignores retired embedding holds for new chat quota and serialization", async () => {
     const t = convexTest(schema, modules);
     const f = await insertFixture(t);
     const now = Date.now();
@@ -251,12 +258,14 @@ describe("legacy Google usage", () => {
         updatedAt: now,
       });
     });
+    // Embeddings are retired: the cleanup cron releases this hold, and it
+    // no longer counts against quota or blocks a chat provider start.
     expect(
       await t.mutation(
         internal._ai.chatBilling.reserveChatUsage,
         argsFor(f, "too-large", "openai", 100),
       ),
-    ).toMatchObject({ allowed: false, reason: "limit_reached" });
+    ).toMatchObject({ allowed: true });
     const next = argsFor(f, "fits", "openai", 50);
     expect(
       await t.mutation(internal._ai.chatBilling.reserveChatUsage, next),

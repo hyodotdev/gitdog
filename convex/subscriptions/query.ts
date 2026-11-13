@@ -1,3 +1,5 @@
+// Matches the wallet row bound in wallet.ts.
+const MAX_WALLET_ROWS = 100;
 import { query } from "../_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { PRICING, CLAUDE_API_ENDS_AT, GENERATION_MODELS } from "../_ai/config";
@@ -69,6 +71,32 @@ export const getCurrent = query({
         includedTokens: entitlement.includedTokens,
         purchasedTokens: entitlement.purchasedTokens,
         purchasedTokensDebited: 0,
+        trialTokens: 0,
+        serviceFeeRate: entitlement.serviceFeeRate,
+        periodStart: entitlement.periodStart,
+        periodEnd: entitlement.periodEnd,
+      };
+    }
+
+    // Too many wallet rows to sum safely: show the plan without balances
+    // instead of failing every page that reads the subscription.
+    const walletRows = await ctx.db
+      .query("subscriptions")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .take(MAX_WALLET_ROWS + 1);
+    if (walletRows.length > MAX_WALLET_ROWS) {
+      const entitlement = getEffectiveSubscriptionEntitlement(
+        subscription,
+        now,
+      );
+      return {
+        plan: entitlement.plan,
+        status: entitlement.status,
+        includedTokens: entitlement.includedTokens,
+        purchasedTokens: 0,
+        purchasedTokensDebited: 0,
+        trialTokens: 0,
+        walletUnverified: true as const,
         serviceFeeRate: entitlement.serviceFeeRate,
         periodStart: entitlement.periodStart,
         periodEnd: entitlement.periodEnd,
@@ -104,6 +132,11 @@ export const getCurrent = query({
       includedTokens: entitlement.includedTokens,
       purchasedTokens: entitlement.purchasedTokens,
       purchasedTokensDebited,
+      // Unspent trial inside purchasedTokens, summed across wallet rows.
+      trialTokens: walletRows.reduce(
+        (total, row) => total + (row.trialTokens ?? 0),
+        0,
+      ),
       serviceFeeRate: entitlement.serviceFeeRate,
       periodStart: entitlement.periodStart,
       periodEnd: entitlement.periodEnd,
@@ -313,10 +346,12 @@ export const getPricingInfo = query({
         free: {
           name: "Free",
           price: 0,
-          includedTokens: PRICING.FREE_INCLUDED_TOKENS,
+          includedTokens: 0,
+          trialTokens: PRICING.TRIAL_TOKENS,
           serviceFeeRate: PRICING.PLATFORM_FEE_FREE,
           features: [
-            `${(PRICING.FREE_INCLUDED_TOKENS / 1000).toFixed(0)}k tokens/month (hard limit)`,
+            `${(PRICING.TRIAL_TOKENS / 1000).toFixed(0)}k one-time trial tokens`,
+            "Your own Anthropic or OpenAI API key",
             "All repositories",
             "Issue Assistant",
           ],

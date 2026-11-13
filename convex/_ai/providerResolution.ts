@@ -32,7 +32,8 @@ export type UserApiKeyErrorCode =
   | "rate_limited"
   | "removed"
   | "unavailable"
-  | "unreadable";
+  | "unreadable"
+  | "service_unavailable";
 
 function userKeyMessage(code: UserApiKeyErrorCode, provider: KeyProvider) {
   const name = PROVIDER_NAMES[provider];
@@ -49,6 +50,8 @@ function userKeyMessage(code: UserApiKeyErrorCode, provider: KeyProvider) {
       return `Your ${name} API key is no longer available. Add it again in Gitdog settings.`;
     case "unreadable":
       return `Your ${name} API key can no longer be read. Enter it again in Gitdog settings.`;
+    case "service_unavailable":
+      return "Gitdog can't use saved API keys right now. Try again shortly.";
   }
 }
 
@@ -78,6 +81,9 @@ class UserKeyProvider implements AiProvider {
     private readonly userId: Id<"users">,
     private readonly keyProvider: KeyProvider,
     private readonly inner: AiProvider,
+    // The saved key this provider decrypted (its iv changes on every save),
+    // so failures and successes are reported against that key only.
+    private readonly keyIv: string,
   ) {}
   get name() {
     return this.inner.name;
@@ -96,7 +102,13 @@ class UserKeyProvider implements AiProvider {
     try {
       await this.ctx.runMutation(
         internal.providerApiKeys.internalMutation.recordKeyFailure,
-        { userId: this.userId, provider: this.keyProvider, code, httpStatus },
+        {
+          userId: this.userId,
+          provider: this.keyProvider,
+          code,
+          httpStatus,
+          keyIv: this.keyIv,
+        },
       );
     } catch {
       /* Best effort: the request already failed with an actionable error. */
@@ -107,8 +119,26 @@ class UserKeyProvider implements AiProvider {
     messages: ChatMessage[],
     options?: ChatCompletionOptions,
   ): Promise<ChatCompletionResult> {
+    const requestStartedAt = Date.now();
     try {
-      return await this.inner.chat(messages, options);
+      const result = await this.inner.chat(messages, options);
+      // Reported on every success: another action may have recorded a
+      // failure on this key meanwhile. The mutation only reads when the key
+      // is already healthy.
+      try {
+        await this.ctx.runMutation(
+          internal.providerApiKeys.internalMutation.markKeyWorking,
+          {
+            userId: this.userId,
+            provider: this.keyProvider,
+            keyIv: this.keyIv,
+            requestStartedAt,
+          },
+        );
+      } catch {
+        /* Best effort: the next success tries again. */
+      }
+      return result;
     } catch (error) {
       if (!(error instanceof ChatProviderRequestError)) throw error;
       const status = error.httpStatus;
@@ -129,18 +159,39 @@ class UserKeyProvider implements AiProvider {
   }
 }
 
+let missingEncryptionKeyLogged = false;
+function logMissingEncryptionKeyOnce() {
+  if (missingEncryptionKeyLogged) return;
+  missingEncryptionKeyLogged = true;
+  console.error(
+    "[ProviderKeys] BYOK_ENCRYPTION_KEY is missing, invalid or not the key saved keys use; saved keys cannot be used",
+  );
+}
+
 async function userKeyLeaf(
   ctx: ActionCtx,
   row: Doc<"providerApiKeys">,
-): Promise<AiProvider | "unreadable"> {
+): Promise<AiProvider | "unreadable" | "service_unavailable"> {
   let apiKey: string;
   try {
     apiKey = await decryptProviderKey(row);
   } catch (error) {
     // A server-side encryption problem says nothing about the provider key,
-    // so the saved status is left unchanged.
-    if (error instanceof ProviderKeyEncryptionError) return "unreadable";
-    throw error;
+    // so the saved status is left unchanged; the owner is told once.
+    if (!(error instanceof ProviderKeyEncryptionError)) throw error;
+    if (error.kind === "not_configured") {
+      logMissingEncryptionKeyOnce();
+      return "service_unavailable";
+    }
+    try {
+      await ctx.runMutation(
+        internal.providerApiKeys.internalMutation.noteUnreadableKey,
+        { userId: row.userId, provider: row.provider, keyIv: row.iv },
+      );
+    } catch {
+      /* Best effort: the request still fails with an actionable error. */
+    }
+    return "unreadable";
   }
   return new UserKeyProvider(
     ctx,
@@ -149,6 +200,7 @@ async function userKeyLeaf(
     row.provider === "anthropic"
       ? new ClaudeProvider(apiKey, undefined, { enforceAccessDeadline: false })
       : new OpenAIProvider(apiKey),
+    row.iv,
   );
 }
 
@@ -176,13 +228,23 @@ export async function resolveGenerationProvider(
       throw new UserApiKeyError("removed", "anthropic");
     return getDefaultAiModel();
   }
+  const encryption = await ctx.runQuery(
+    internal.providerApiKeys.internalQuery.getEncryptionState,
+    {},
+  );
+  if (!encryption.ok) {
+    logMissingEncryptionKeyOnce();
+    throw new UserApiKeyError("service_unavailable", rows[0].provider);
+  }
   const now = Date.now();
   const leaves = new Map<KeyProvider, AiProvider>();
   let unreadable: KeyProvider | undefined;
+  let serviceUnavailable = false;
   for (const row of rows) {
     if (!isUsableProviderKey(row, now)) continue;
     const leaf = await userKeyLeaf(ctx, row);
     if (leaf === "unreadable") unreadable = row.provider;
+    else if (leaf === "service_unavailable") serviceUnavailable = true;
     else leaves.set(row.provider, leaf);
   }
   const anthropic = leaves.get("anthropic");
@@ -193,6 +255,8 @@ export async function resolveGenerationProvider(
     });
   const only = anthropic ?? openai;
   if (only) return only;
+  if (serviceUnavailable)
+    throw new UserApiKeyError("service_unavailable", rows[0].provider);
   if (unreadable) throw new UserApiKeyError("unreadable", unreadable);
   const outOfCredit = rows.find((row) => row.status === "out_of_credit");
   if (outOfCredit)

@@ -34,7 +34,8 @@ For GitHub Discussions, Gitdog can:
 ## Pricing Plans
 
 ### Free Plan - $0/month
-- 100,000 tokens per month
+- 100,000 one-time trial tokens on first sign-in
+- Then use your own Anthropic or OpenAI API key (that usage never uses Gitdog tokens)
 - Hard limit with no automatic overage charges
 - Prepaid token packs available for additional usage
 - All features included

@@ -12,16 +12,10 @@ import {
   matchesCurrentIndexSource,
 } from "../repoIndexing/readiness";
 import { scheduleRepositoryTreeSnapshotCleanup } from "../repoIndexing/treeSnapshot";
-import { recordEmbeddingUsageInTransaction } from "../tokenUsage/internalMutation";
-import { stageEmbeddingProviderOutcomeInTransaction } from "../_ai/embeddingBilling";
-import { EMBEDDING_DIMENSIONS } from "../_ai/retrievalEmbeddings";
 import {
   assertRagChunkBatchWithinBudget,
   assertRagChunkStorageBounds,
-  buildRagEmbeddingProviderAttemptKey,
-  estimateRagEmbeddingCacheBytes,
   MAX_RAG_EMBEDDING_CACHE_BATCHES_PER_REPOSITORY,
-  MAX_RAG_EMBEDDING_CACHE_BYTES,
   RAG_EMBEDDING_PROVIDER_MAX_ATTEMPTS,
   RAG_EMBEDDING_RESERVATION_MAX_WAITS,
 } from "./chunkBudget";
@@ -123,12 +117,6 @@ const embeddingInputModeValidator = v.union(
   v.literal("deidentified_v1"),
 );
 
-const legalEligibilityBlockOutcomeValidator = v.union(
-  v.literal("blocked"),
-  v.literal("legal_current"),
-  v.literal("stale"),
-);
-
 export type LegalEligibilityBlockOutcome =
   "blocked" | "legal_current" | "stale";
 
@@ -186,15 +174,6 @@ const ragChunkValidator = v.object({
   embeddingInputMode: v.optional(
     v.union(v.literal("raw_v1"), v.literal("deidentified_v1")),
   ),
-});
-
-const ragEmbeddingUsageValidator = v.object({
-  tokens: v.number(),
-  model: v.string(),
-  provider: v.union(v.literal("google"), v.literal("openai")),
-  billingTier: v.union(v.literal("free"), v.literal("paid")),
-  reservationKey: v.optional(v.string()),
-  reservationAttemptToken: v.optional(v.string()),
 });
 
 function ownsActiveRepositoryLifecycle(
@@ -369,16 +348,13 @@ export const claimRagGeneration = internalMutation({
       indexProgressAt: now,
       updatedAt: now,
     });
-    // The embedding pass runs after the visible cleanup log, so record its
-    // start in the indexing log to keep the sync screen moving.
+    // The search index pass runs after the visible cleanup log, so record
+    // its start in the indexing log to keep the sync screen moving.
     await ctx.db.insert("repoIndexingLogs", {
       repositoryId: args.repositoryId,
       indexVersion: args.expectedIndexVersion,
-      level: args.embeddingMode === "keyword_only" ? "warning" : "info",
-      message:
-        args.embeddingMode === "keyword_only"
-          ? "Building keyword search index (semantic embeddings unavailable)"
-          : "Building AI search index (semantic embeddings)",
+      level: "info",
+      message: "Building search index",
       createdAt: now,
     });
     return true;
@@ -399,68 +375,6 @@ function sanitizeEmbeddingError(error: string): string {
 
   return (redacted || "Embedding unavailable").slice(0, 500);
 }
-
-/** Mark an exact claimed work unit as legally blocked. */
-export const blockRagForLegalEligibility = internalMutation({
-  args: {
-    repositoryId: v.id("repositories"),
-    expectedIndexVersion: v.number(),
-    expectedPhase: ragIndexPhaseValidator,
-    expectedCursor: v.optional(v.string()),
-    expectedFileOffset: v.number(),
-    expectedChunkOffset: v.number(),
-    error: v.string(),
-    totalChunks: v.number(),
-    successCount: v.number(),
-    errorCount: v.number(),
-  },
-  returns: legalEligibilityBlockOutcomeValidator,
-  handler: async (ctx, args): Promise<LegalEligibilityBlockOutcome> => {
-    const repository = await ctx.db.get(args.repositoryId);
-    if (
-      !repository ||
-      !ownsActiveRepositoryLifecycle(repository) ||
-      repository.indexVersion !== args.expectedIndexVersion ||
-      repository.indexStatus !== "completed" ||
-      repository.ragStatus !== "indexing" ||
-      repository.ragIndexPhase !== args.expectedPhase ||
-      repository.ragIndexCursor !== args.expectedCursor ||
-      (repository.ragIndexFileOffset ?? 0) !== args.expectedFileOffset ||
-      (repository.ragIndexChunkOffset ?? 0) !== args.expectedChunkOffset ||
-      repository.ragContinuationToken !== undefined
-    ) {
-      return "stale";
-    }
-
-    if (
-      await repositoryOwnerHasCurrentLegalAttestation(ctx, repository.userId)
-    ) {
-      return "legal_current";
-    }
-
-    const now = Date.now();
-    const watchdog = await armIndexWatchdog(ctx, {
-      repositoryId: repository._id,
-      expectedIndexVersion: args.expectedIndexVersion,
-      previousScheduleId: repository.indexWatchdogScheduleId,
-      previousSequence: repository.indexWatchdogSequence,
-    });
-    await ctx.db.patch(repository._id, {
-      ragEmbeddingMode: "keyword_only",
-      ragEmbeddingBillingTier: undefined,
-      ragEmbeddingKey: undefined,
-      ragEmbeddingError: sanitizeEmbeddingError(args.error),
-      ragLegalEligibilityBlockedAt: now,
-      ragLegalEligibilityBlockedIndexVersion: args.expectedIndexVersion,
-      indexWatchdogToken: watchdog.token,
-      indexWatchdogScheduleId: watchdog.scheduleId,
-      indexWatchdogSequence: watchdog.sequence,
-      indexProgressAt: now,
-      updatedAt: now,
-    });
-    return "blocked";
-  },
-});
 
 export type LegalEligibilityResumeOutcome = "scheduled" | "cleared" | "stale";
 
@@ -893,77 +807,6 @@ function buildRepositoryIndexKey(
   return `${repositoryId}:${indexVersion}`;
 }
 
-function assertValidEmbeddingBatch(
-  embeddings: ReadonlyArray<ReadonlyArray<number>>,
-  expectedCount: number,
-): void {
-  if (
-    embeddings.length !== expectedCount ||
-    embeddings.some(
-      (embedding) =>
-        embedding.length !== EMBEDDING_DIMENSIONS ||
-        embedding.some((value) => !Number.isFinite(value)),
-    )
-  ) {
-    throw new Error("invalid RAG embedding batch");
-  }
-}
-
-async function cacheEmbeddingBatch(
-  ctx: MutationCtx,
-  args: {
-    repositoryId: Id<"repositories">;
-    reservationKey: string;
-    embeddingKey: string;
-    embeddings: Array<Array<number>>;
-    expectedCount: number;
-  },
-): Promise<Array<Array<number>>> {
-  if (args.expectedCount < 1) {
-    throw new Error("RAG embedding batch cannot be empty");
-  }
-  if (
-    estimateRagEmbeddingCacheBytes(args.expectedCount) >
-    MAX_RAG_EMBEDDING_CACHE_BYTES
-  ) {
-    throw new Error("RAG embedding batch exceeds the cache byte budget");
-  }
-  assertValidEmbeddingBatch(args.embeddings, args.expectedCount);
-  const existing = await ctx.db
-    .query("ragEmbeddingBatches")
-    .withIndex("by_reservation_key", (q) =>
-      q.eq("reservationKey", args.reservationKey),
-    )
-    .unique();
-
-  if (existing) {
-    if (
-      existing.repositoryId !== args.repositoryId ||
-      existing.embeddingKey !== args.embeddingKey
-    ) {
-      throw new Error("RAG embedding cache identity mismatch");
-    }
-    assertValidEmbeddingBatch(existing.embeddings, args.expectedCount);
-    return existing.embeddings;
-  }
-
-  const now = Date.now();
-  await ctx.db.insert("ragEmbeddingBatches", {
-    repositoryId: args.repositoryId,
-    reservationKey: args.reservationKey,
-    embeddingKey: args.embeddingKey,
-    embeddings: args.embeddings,
-    createdAt: now,
-    updatedAt: now,
-  });
-  await ctx.scheduler.runAfter(
-    0,
-    internal.ragV2.internalMutation.trimEmbeddingBatchCache,
-    { repositoryId: args.repositoryId },
-  );
-  return args.embeddings;
-}
-
 async function upsertChunkDocument(
   ctx: MutationCtx,
   repositoryId: Id<"repositories">,
@@ -1369,297 +1212,6 @@ export const upsertChunks = internalMutation({
   },
 });
 
-/** Durably cache paid vectors and stage their exact usage in one transaction. */
-export const stageGeneratedEmbeddingBatch = internalMutation({
-  args: {
-    repositoryId: v.id("repositories"),
-    indexVersion: v.number(),
-    batchReservationKey: v.string(),
-    providerReservationKey: v.string(),
-    providerReservationAttemptToken: v.string(),
-    embeddingKey: v.string(),
-    embeddingPublication: ragEmbeddingPublicationExpectationValidator,
-    expectedCount: v.number(),
-    embeddings: v.array(v.array(v.float64())),
-    tokens: v.number(),
-    provider: v.optional(v.union(v.literal("google"), v.literal("openai"))),
-    model: v.optional(v.string()),
-  },
-  handler: async (ctx, args) => {
-    if (
-      args.embeddingPublication.embeddingBillingTier !== "paid" ||
-      args.embeddingKey !== args.embeddingPublication.embeddingKey ||
-      args.providerReservationKey !==
-        buildRagEmbeddingProviderAttemptKey(
-          args.batchReservationKey,
-          args.indexVersion,
-        )
-    ) {
-      throw new Error("paid RAG batch staging identity mismatch");
-    }
-    if (
-      !Number.isSafeInteger(args.expectedCount) ||
-      args.expectedCount < 1 ||
-      estimateRagEmbeddingCacheBytes(args.expectedCount) >
-        MAX_RAG_EMBEDDING_CACHE_BYTES
-    ) {
-      throw new Error("RAG embedding batch exceeds the cache byte budget");
-    }
-    assertValidEmbeddingBatch(args.embeddings, args.expectedCount);
-
-    const repository = await ctx.db.get(args.repositoryId);
-    let cached = false;
-    if (repository && ownsActiveRepositoryLifecycle(repository)) {
-      await cacheEmbeddingBatch(ctx, {
-        repositoryId: args.repositoryId,
-        reservationKey: args.batchReservationKey,
-        embeddingKey: args.embeddingKey,
-        embeddings: args.embeddings,
-        expectedCount: args.expectedCount,
-      });
-      cached = true;
-    }
-
-    const settlement = await stageEmbeddingProviderOutcomeInTransaction(ctx, {
-      reservationKey: args.providerReservationKey,
-      attemptToken: args.providerReservationAttemptToken,
-      userId: args.embeddingPublication.userId,
-      repositoryId: args.repositoryId,
-      tokens: args.tokens,
-      provider: args.provider,
-      model: args.model,
-    });
-    return { cached, ...settlement };
-  },
-});
-
-/** Atomically publish one provider batch and finalize any paid reservation. */
-export const commitEmbeddedChunks = internalMutation({
-  args: {
-    repositoryId: v.id("repositories"),
-    chunks: v.array(ragChunkValidator),
-    indexVersion: v.number(),
-    batchReservationKey: v.string(),
-    embeddingKey: v.string(),
-    embeddingPublication: ragEmbeddingPublicationExpectationValidator,
-    usage: ragEmbeddingUsageValidator,
-  },
-  handler: async (
-    ctx,
-    args,
-  ): Promise<{
-    accepted: boolean;
-    chunkIds: Array<Id<"repoChunks">>;
-  }> => {
-    assertRagChunkBatchWithinBudget(args.chunks, false);
-    const repo = await ctx.db.get(args.repositoryId);
-    const ownsCurrentGeneration =
-      repo !== null &&
-      ownsExpectedRagEmbeddingWork(
-        repo,
-        args.indexVersion,
-        args.embeddingPublication,
-      );
-    const policyMatches =
-      repo !== null &&
-      (await matchesRagEmbeddingPublicationPolicy(
-        ctx,
-        repo,
-        args.embeddingPublication,
-      ));
-
-    if (
-      args.embeddingKey !== args.embeddingPublication.embeddingKey ||
-      (args.usage.billingTier === "paid" &&
-        args.usage.reservationKey !==
-          buildRagEmbeddingProviderAttemptKey(
-            args.batchReservationKey,
-            args.indexVersion,
-          ))
-    ) {
-      throw new Error("paid RAG batch reservation identity mismatch");
-    }
-
-    const receivedEmbeddings = args.chunks.map((chunk) => {
-      if (!chunk.embedding || chunk.embeddingKey !== args.embeddingKey) {
-        throw new Error("RAG embedding batch is missing provider vectors");
-      }
-      return chunk.embedding;
-    });
-    if (!ownsCurrentGeneration || !policyMatches) {
-      if (args.usage.billingTier === "paid") {
-        if (repo && ownsActiveRepositoryLifecycle(repo)) {
-          await cacheEmbeddingBatch(ctx, {
-            repositoryId: args.repositoryId,
-            reservationKey: args.batchReservationKey,
-            embeddingKey: args.embeddingKey,
-            embeddings: receivedEmbeddings,
-            expectedCount: args.chunks.length,
-          });
-        }
-        await recordEmbeddingUsageInTransaction(ctx, {
-          userId: args.embeddingPublication.userId,
-          repositoryId: args.repositoryId,
-          ...args.usage,
-        });
-      }
-      if (repo && ownsCurrentGeneration && !policyMatches) {
-        await restartRagAfterEmbeddingPolicyChange(
-          ctx,
-          repo,
-          args.indexVersion,
-        );
-      } else if (
-        repo &&
-        ownsActiveRepositoryLifecycle(repo) &&
-        repo.indexVersion === args.indexVersion &&
-        repo.indexStatus === "completed" &&
-        repo.ragStatus === "indexing" &&
-        !policyMatches
-      ) {
-        await restartRagAfterEmbeddingPolicyChange(
-          ctx,
-          repo,
-          args.indexVersion,
-        );
-      }
-      return { accepted: false, chunkIds: [] };
-    }
-
-    const canonicalEmbeddings = await cacheEmbeddingBatch(ctx, {
-      repositoryId: args.repositoryId,
-      reservationKey: args.batchReservationKey,
-      embeddingKey: args.embeddingKey,
-      embeddings: receivedEmbeddings,
-      expectedCount: args.chunks.length,
-    });
-
-    await recordEmbeddingUsageInTransaction(ctx, {
-      userId: args.embeddingPublication.userId,
-      repositoryId: args.repositoryId,
-      ...args.usage,
-    });
-
-    const repositoryIndexKey = buildRepositoryIndexKey(
-      args.repositoryId,
-      args.indexVersion,
-    );
-    const now = Date.now();
-    const chunkIds: Array<Id<"repoChunks">> = [];
-    for (const [index, chunk] of args.chunks.entries()) {
-      chunkIds.push(
-        await upsertChunkDocument(
-          ctx,
-          args.repositoryId,
-          repositoryIndexKey,
-          {
-            ...chunk,
-            embedding: canonicalEmbeddings[index],
-            embeddingKey: args.embeddingKey,
-          },
-          args.indexVersion,
-          now,
-        ),
-      );
-    }
-
-    return { accepted: true, chunkIds };
-  },
-});
-
-/** Atomically republish an exact provider batch from the durable cache. */
-export const commitCachedEmbeddedChunks = internalMutation({
-  args: {
-    repositoryId: v.id("repositories"),
-    chunks: v.array(ragChunkValidator),
-    indexVersion: v.number(),
-    batchReservationKey: v.string(),
-    embeddingKey: v.string(),
-    embeddingPublication: ragEmbeddingPublicationExpectationValidator,
-  },
-  handler: async (
-    ctx,
-    args,
-  ): Promise<{
-    accepted: boolean;
-    chunkIds: Array<Id<"repoChunks">>;
-  } | null> => {
-    assertRagChunkBatchWithinBudget(args.chunks, true);
-    if (
-      estimateRagEmbeddingCacheBytes(args.chunks.length) >
-      MAX_RAG_EMBEDDING_CACHE_BYTES
-    ) {
-      throw new Error("RAG embedding batch exceeds the cache byte budget");
-    }
-    const repo = await ctx.db.get(args.repositoryId);
-    if (!repo) {
-      throw new Error("repository not found");
-    }
-    const ownsWork = ownsExpectedRagEmbeddingWork(
-      repo,
-      args.indexVersion,
-      args.embeddingPublication,
-    );
-    const policyMatches = await matchesRagEmbeddingPublicationPolicy(
-      ctx,
-      repo,
-      args.embeddingPublication,
-    );
-    if (!ownsWork || !policyMatches) {
-      if (!policyMatches) {
-        await restartRagAfterEmbeddingPolicyChange(
-          ctx,
-          repo,
-          args.indexVersion,
-        );
-      }
-      return { accepted: false, chunkIds: [] };
-    }
-
-    const cached = await ctx.db
-      .query("ragEmbeddingBatches")
-      .withIndex("by_reservation_key", (q) =>
-        q.eq("reservationKey", args.batchReservationKey),
-      )
-      .unique();
-    if (
-      !cached ||
-      cached.repositoryId !== args.repositoryId ||
-      cached.embeddingKey !== args.embeddingKey ||
-      args.embeddingKey !== args.embeddingPublication.embeddingKey
-    ) {
-      // A bounded-cache trim can race the read-only cache probe. Let the
-      // action call the provider with its generation-specific reservation.
-      return null;
-    }
-    assertValidEmbeddingBatch(cached.embeddings, args.chunks.length);
-
-    const repositoryIndexKey = buildRepositoryIndexKey(
-      args.repositoryId,
-      args.indexVersion,
-    );
-    const now = Date.now();
-    const chunkIds: Array<Id<"repoChunks">> = [];
-    for (const [index, chunk] of args.chunks.entries()) {
-      chunkIds.push(
-        await upsertChunkDocument(
-          ctx,
-          args.repositoryId,
-          repositoryIndexKey,
-          {
-            ...chunk,
-            embedding: cached.embeddings[index],
-            embeddingKey: args.embeddingKey,
-          },
-          args.indexVersion,
-          now,
-        ),
-      );
-    }
-    return { accepted: true, chunkIds };
-  },
-});
-
 /** Keep only the newest bounded set of durable provider batches per repo. */
 export const trimEmbeddingBatchCache = internalMutation({
   args: { repositoryId: v.id("repositories") },
@@ -1709,5 +1261,97 @@ export const deleteEmbeddingBatchCachePage = internalMutation({
       { repositoryId: args.repositoryId },
     );
     return 1;
+  },
+});
+
+// Page sizes keep one transaction well under Convex's read and write limits:
+// a cached batch holds up to 32 vectors (about 400 KB), a chunk up to about
+// 150 KB of code, text and vector, and a learning a few KB.
+const RETIRED_EMBEDDING_PURGE_PAGE = {
+  chunks: 25,
+  batches: 8,
+  learnings: 50,
+} as const;
+const retiredEmbeddingPhase = v.union(
+  v.literal("chunks"),
+  v.literal("batches"),
+  v.literal("learnings"),
+);
+
+/**
+ * One-off storage reclaim after embeddings were retired: clears stored
+ * vectors from code chunks and learnings and deletes the batch cache. It is
+ * not scheduled automatically. Run it once against a deployment with:
+ *
+ *   bunx convex run ragV2/internalMutation:purgeRetiredEmbeddings \
+ *     '{"confirm":"delete-retired-embeddings"}'
+ *
+ * It continues itself in small batches until every phase is done.
+ */
+export const purgeRetiredEmbeddings = internalMutation({
+  args: {
+    confirm: v.literal("delete-retired-embeddings"),
+    phase: v.optional(retiredEmbeddingPhase),
+    cursor: v.optional(v.union(v.string(), v.null())),
+  },
+  handler: async (ctx, args) => {
+    const phase = args.phase ?? "chunks";
+    const paginationOpts = {
+      numItems: RETIRED_EMBEDDING_PURGE_PAGE[phase],
+      cursor: args.cursor ?? null,
+    };
+    let page: { isDone: boolean; continueCursor: string };
+    let changed = 0;
+    switch (phase) {
+      case "chunks": {
+        const result = await ctx.db
+          .query("repoChunks")
+          .paginate(paginationOpts);
+        for (const chunk of result.page) {
+          if (chunk.embedding === undefined) continue;
+          await ctx.db.patch(chunk._id, { embedding: undefined });
+          changed++;
+        }
+        page = result;
+        break;
+      }
+      case "batches": {
+        const result = await ctx.db
+          .query("ragEmbeddingBatches")
+          .paginate(paginationOpts);
+        for (const batch of result.page) {
+          await ctx.db.delete(batch._id);
+          changed++;
+        }
+        page = result;
+        break;
+      }
+      case "learnings": {
+        const result = await ctx.db
+          .query("repoLearnings")
+          .paginate(paginationOpts);
+        for (const learning of result.page) {
+          if (learning.embedding === undefined) continue;
+          await ctx.db.patch(learning._id, { embedding: undefined });
+          changed++;
+        }
+        page = result;
+        break;
+      }
+    }
+    const nextPhase: "batches" | "learnings" | null =
+      phase === "chunks" ? "batches" : phase === "batches" ? "learnings" : null;
+    const next = !page.isDone
+      ? { phase, cursor: page.continueCursor }
+      : nextPhase
+        ? { phase: nextPhase, cursor: null }
+        : null;
+    if (next)
+      await ctx.scheduler.runAfter(
+        0,
+        internal.ragV2.internalMutation.purgeRetiredEmbeddings,
+        { confirm: args.confirm, ...next },
+      );
+    return { phase, changed, done: next === null };
   },
 });

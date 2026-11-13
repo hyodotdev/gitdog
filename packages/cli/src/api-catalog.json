@@ -350,6 +350,11 @@
     "args": "{\n    packSize: v.union(v.literal(\"small\"), v.literal(\"large\")),\n  }"
   },
   {
+    "path": "subscriptions/mutation:claimTrialCredit",
+    "kind": "mutation",
+    "args": "{}"
+  },
+  {
     "path": "subscriptions/query:calculateOverage",
     "kind": "query",
     "args": "{}"

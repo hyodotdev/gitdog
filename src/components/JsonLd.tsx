@@ -69,7 +69,7 @@ export function SoftwareApplicationJsonLd() {
         price: "0",
         priceCurrency: "USD",
         description:
-          "100,000 tokens per month with a hard limit and prepaid token packs available for additional usage",
+          "100,000 one-time trial tokens, then your own Anthropic or OpenAI API key; prepaid token packs available for additional usage",
       },
       {
         "@type": "Offer",
@@ -167,7 +167,7 @@ export function PricingPageJsonLd() {
         price: "0",
         priceCurrency: "USD",
         description:
-          "100,000 tokens per month with a hard limit and prepaid token packs available for additional usage",
+          "100,000 one-time trial tokens, then your own Anthropic or OpenAI API key; prepaid token packs available for additional usage",
         availability: "https://schema.org/InStock",
       },
       {

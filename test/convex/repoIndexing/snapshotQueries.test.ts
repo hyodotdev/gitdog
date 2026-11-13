@@ -372,7 +372,7 @@ describe("repository snapshot queries", () => {
       installationId: 301,
       githubRepositoryId: 30_001,
     });
-    const chunkId = await t.run(async (ctx) => {
+    await t.run(async (ctx) => {
       const now = Date.now();
       const id = await ctx.db.insert("repoChunks", {
         repositoryId,
@@ -400,13 +400,6 @@ describe("repository snapshot queries", () => {
     });
 
     await expect(
-      t.query(internal.ragV2.internalQuery.getChunksByDocIds, {
-        repositoryId,
-        indexVersion: 2,
-        ids: [chunkId],
-      }),
-    ).resolves.toEqual([]);
-    await expect(
       t.query(internal.ragV2.internalQuery.keywordSearch, {
         repositoryId,
         indexVersion: 2,
@@ -422,7 +415,7 @@ describe("repository snapshot queries", () => {
       installationId: 401,
       githubRepositoryId: 40_001,
     });
-    const firstChunkId = await t.run(async (ctx) => {
+    await t.run(async (ctx) => {
       const now = Date.now();
       let firstId: Id<"repoChunks"> | undefined;
       for (let index = 0; index < 270; index++) {
@@ -449,14 +442,6 @@ describe("repository snapshot queries", () => {
       if (!firstId) throw new Error("chunk fixture missing");
       return firstId;
     });
-
-    await expect(
-      t.query(internal.ragV2.internalQuery.getChunksByDocIds, {
-        repositoryId,
-        indexVersion: 2,
-        ids: Array.from({ length: 257 }, () => firstChunkId),
-      }),
-    ).rejects.toThrow("vector chunk document batch exceeded its limit");
 
     const keywordResults = await t.query(
       internal.ragV2.internalQuery.keywordSearch,

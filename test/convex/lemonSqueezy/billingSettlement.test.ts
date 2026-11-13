@@ -1244,7 +1244,16 @@ describe("refund settlement", () => {
     async (status) => {
       const t = convexTest(schema, modules);
       const now = Date.now();
-      const userId = await t.run(async (ctx) => ctx.db.insert("users", {}));
+      const userId = await t.run(async (ctx) => {
+        const userId = await ctx.db.insert("users", {});
+        // The trial is already used, so the refund sees only paid tokens.
+        await ctx.db.insert("trialCreditGrants", {
+          userId,
+          tokens: 100_000,
+          grantedAt: 1,
+        });
+        return userId;
+      });
       const order = await tokenOrderArgs(
         userId,
         status === "pending" ? "8184" : "8185",
@@ -1288,15 +1297,41 @@ describe("refund settlement", () => {
           createdAt: now,
           updatedAt: now,
         });
-        await ctx.db.insert("embeddingUsageReservations", {
+        const ticketId = await ctx.db.insert("tickets", {
+          repositoryId,
+          userId,
+          githubRepo: "owner/repo",
+          ticketType: "issue",
+          githubNumber: 1,
+          githubTitle: "Issue",
+          aiInputVersion: 1,
+          status: "open",
+          createdAt: now,
+        });
+        const ticketActionId = await ctx.db.insert("ticketActions", {
+          ticketId,
+          actionType: "answer",
+          chatHistory: [],
+          proposalVersion: 0,
+          status: "pending",
+          createdAt: now,
+        });
+        await ctx.db.insert("chatUsageReservations", {
           reservationKey: `refund-${status}`,
           attemptToken: `attempt-${status}`,
           userId,
           repositoryId,
-          operation: "RAG search",
-          inputCount: 1,
-          providerTokenLimit: 100,
-          reservedTokens: 1,
+          ticketActionId,
+          requirePendingTicketAction: true,
+          ticketActionProposalVersion: 0,
+          generationKey: `refund-generation-${status}`,
+          operation: "answer",
+          model: "claude-sonnet-5-5",
+          provider: "anthropic",
+          requestFingerprint: "0".repeat(64),
+          inputTokenLimit: 1,
+          outputTokenLimit: 1,
+          reservedTokens: 2,
           entitlementPlan: "free",
           includedTokens: 100_000,
           serviceFeeRate: 0.25,
@@ -1340,7 +1375,7 @@ describe("refund settlement", () => {
           )
           .unique(),
         reservation: await ctx.db
-          .query("embeddingUsageReservations")
+          .query("chatUsageReservations")
           .withIndex("by_reservation_key", (q) =>
             q.eq("reservationKey", `refund-${status}`),
           )
@@ -2483,7 +2518,7 @@ describe("authoritative subscription and invoice settlement", () => {
     expect(settled.receipt).toMatchObject({ settlementType: "invoice" });
   });
 
-  it("defers renewal until provider-started chat and embedding holds close", async () => {
+  it("defers renewal until provider-started chat holds close", async () => {
     vi.useFakeTimers();
     const periodStart = Date.parse("2100-01-01T00:00:00.000Z");
     const periodEnd = Date.parse("2100-02-01T00:00:00.000Z");
@@ -2560,17 +2595,6 @@ describe("authoritative subscription and invoice settlement", () => {
       generationKey: "renewal-safe-chat-generation-4203",
       inputTokenLimit: 100,
     };
-    const embeddingReservation = {
-      reservationKey: "renewal-embedding-hold-4203",
-      attemptToken: "renewal-embedding-hold-4203-attempt-1",
-      userId,
-      repositoryId,
-      operation: "RAG search",
-      inputCount: 1,
-      providerTokenLimit: 100,
-      provider: "openai" as const,
-      model: "text-embedding-3-small",
-    };
     await expect(
       t.mutation(
         internal._ai.chatBilling.reserveChatUsage,
@@ -2581,12 +2605,6 @@ describe("authoritative subscription and invoice settlement", () => {
       t.mutation(internal._ai.chatBilling.reserveChatUsage, chatReservation),
     ).resolves.toMatchObject({ allowed: true });
     await expect(
-      t.mutation(
-        internal._ai.embeddingBilling.reservePaidEmbeddingUsage,
-        embeddingReservation,
-      ),
-    ).resolves.toMatchObject({ allowed: true });
-    await expect(
       t.mutation(internal._ai.chatBilling.markChatProviderStarted, {
         reservationKey: chatReservation.reservationKey,
         attemptToken: chatReservation.attemptToken,
@@ -2595,21 +2613,6 @@ describe("authoritative subscription and invoice settlement", () => {
         ticketActionId,
       }),
     ).resolves.toEqual({ started: true, alreadyStarted: false });
-    await expect(
-      t.mutation(
-        internal._ai.embeddingBilling.markEmbeddingUsageProviderStarted,
-        {
-          reservationKey: embeddingReservation.reservationKey,
-          attemptToken: embeddingReservation.attemptToken,
-          userId,
-          repositoryId,
-        },
-      ),
-    ).resolves.toEqual({
-      started: false,
-      reason: "provider_attempt_in_progress",
-    });
-
     const invoice = await invoiceArgs("4203", "7111", periodEnd);
     const { invoiceStatus: _invoiceStatus, ...enqueueArgs } = invoice;
     void _invoiceStatus;
@@ -2686,15 +2689,6 @@ describe("authoritative subscription and invoice settlement", () => {
       providerRequestId: "anthropic-request-4203",
     });
     await expect(
-      t.mutation(internal._ai.embeddingBilling.releasePaidEmbeddingUsage, {
-        reservationKey: embeddingReservation.reservationKey,
-        attemptToken: embeddingReservation.attemptToken,
-        userId,
-        repositoryId,
-        confirmedNotBilled: true,
-      }),
-    ).resolves.toBe(false);
-    await expect(
       t.run(async (ctx) =>
         ctx.db.patch(inboxId, { nextAttemptAt: Date.now() }),
       ),
@@ -2712,12 +2706,6 @@ describe("authoritative subscription and invoice settlement", () => {
         .query("chatUsageReservations")
         .withIndex("by_reservation_key", (q) =>
           q.eq("reservationKey", chatReservation.reservationKey),
-        )
-        .unique(),
-      embedding: await ctx.db
-        .query("embeddingUsageReservations")
-        .withIndex("by_reservation_key", (q) =>
-          q.eq("reservationKey", embeddingReservation.reservationKey),
         )
         .unique(),
       receipt: await ctx.db
@@ -2738,10 +2726,6 @@ describe("authoritative subscription and invoice settlement", () => {
       purchasedTokensDebited: 60,
     });
     expect(settled.chat).toMatchObject({ status: "finalized" });
-    expect(settled.embedding).toMatchObject({
-      status: "released",
-      releaseReason: "entitlement_period_ended",
-    });
     expect(settled.receipt).toMatchObject({ settlementType: "invoice" });
     expect(settled.inbox).toBeNull();
   });

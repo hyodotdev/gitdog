@@ -1,7 +1,6 @@
 import { v } from "convex/values";
 import { internalQuery } from "../_generated/server";
 import type { Doc } from "../_generated/dataModel";
-import { EMBEDDING_DIMENSIONS } from "../_ai/retrievalEmbeddings";
 import { readRepositoryAiAccessSnapshot } from "../repositories/aiReadiness";
 
 interface ChunkSearchFilters {
@@ -27,7 +26,6 @@ interface SearchableChunkPage {
   hasMore: boolean;
 }
 
-const MAX_VECTOR_CHUNK_DOC_IDS = 256;
 const MAX_KEYWORD_SEARCH_RESULTS = 128;
 const MAX_KEYWORD_SEARCH_LANGUAGES = 8;
 
@@ -50,97 +48,6 @@ function matchesChunkFilters(
     filters?.language?.length && !filters.language.includes(chunk.language)
   );
 }
-
-/**
- * Get chunks by content hash in a single query call from Actions.
- */
-export const getChunksByHashes = internalQuery({
-  args: {
-    repositoryId: v.id("repositories"),
-    contentHashes: v.array(v.string()),
-    embeddingKey: v.string(),
-    chunkIds: v.optional(v.array(v.string())),
-  },
-  handler: async (ctx, args): Promise<Array<Doc<"repoChunks"> | null>> => {
-    return await Promise.all(
-      args.contentHashes.map((contentHash, index) =>
-        ctx.db
-          .query("repoChunks")
-          .withIndex("by_repository_content_hash_embedding_key", (q) => {
-            const range = q
-              .eq("repositoryId", args.repositoryId)
-              .eq("contentHash", contentHash)
-              .eq("embeddingKey", args.embeddingKey);
-            return args.chunkIds?.[index] !== undefined
-              ? range.eq("chunkId", args.chunkIds[index])
-              : range;
-          })
-          .first(),
-      ),
-    );
-  },
-});
-
-/** Check whether an immutable provider batch can republish this exact work. */
-export const hasEmbeddingBatch = internalQuery({
-  args: {
-    repositoryId: v.id("repositories"),
-    reservationKey: v.string(),
-    embeddingKey: v.string(),
-    expectedCount: v.number(),
-  },
-  handler: async (ctx, args): Promise<boolean> => {
-    const cached = await ctx.db
-      .query("ragEmbeddingBatches")
-      .withIndex("by_reservation_key", (q) =>
-        q.eq("reservationKey", args.reservationKey),
-      )
-      .unique();
-
-    return Boolean(
-      cached &&
-      cached.repositoryId === args.repositoryId &&
-      cached.embeddingKey === args.embeddingKey &&
-      cached.embeddings.length === args.expectedCount &&
-      cached.embeddings.every(
-        (embedding) =>
-          embedding.length === EMBEDDING_DIMENSIONS &&
-          embedding.every(Number.isFinite),
-      ),
-    );
-  },
-});
-
-/**
- * Get chunks by Convex document IDs returned from native vector search
- */
-export const getChunksByDocIds = internalQuery({
-  args: {
-    repositoryId: v.id("repositories"),
-    indexVersion: v.number(),
-    ids: v.array(v.id("repoChunks")),
-  },
-  handler: async (ctx, args): Promise<Array<Doc<"repoChunks">>> => {
-    if (args.ids.length > MAX_VECTOR_CHUNK_DOC_IDS) {
-      throw new Error("vector chunk document batch exceeded its limit");
-    }
-    const access = await readRepositoryAiAccessSnapshot(
-      ctx,
-      args.repositoryId,
-      args.indexVersion,
-    );
-    if (!access) {
-      return [];
-    }
-    const chunks = await Promise.all(args.ids.map((id) => ctx.db.get(id)));
-    return chunks.filter(
-      (chunk): chunk is NonNullable<typeof chunk> =>
-        chunk !== null &&
-        chunk.repositoryId === args.repositoryId &&
-        chunk.indexVersion === args.indexVersion,
-    );
-  },
-});
 
 /**
  * BM25 keyword search using Convex search index

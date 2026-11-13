@@ -17,7 +17,6 @@ import {
   stableChunkId,
   type CodeChunk,
 } from "../../../convex/ragV2/parser";
-import { buildEmbeddingDocument } from "../../../convex/ragV2/action";
 
 function createChunk(code: string): CodeChunk {
   return {
@@ -124,7 +123,7 @@ describe("RAG chunk byte budgets", () => {
     ).toBe(true);
   });
 
-  it("makes middle and tail source bytes searchable and embeddable", () => {
+  it("makes middle and tail source bytes searchable", () => {
     const middleMarker = "unique-middle-marker-70k";
     const boundaryMarker = "unique-boundary-marker";
     const tailMarker = "unique-tail-marker-90k";
@@ -141,15 +140,10 @@ describe("RAG chunk byte budgets", () => {
     expect(normalized.map((chunk) => chunk.code).join("")).toBe(source);
     for (const chunk of normalized) {
       expect(chunk.searchableText).toContain(chunk.code);
-      expect(buildEmbeddingDocument(chunk).content).toContain(chunk.code);
     }
     for (const marker of [middleMarker, boundaryMarker, tailMarker]) {
       expect(
-        normalized.some(
-          (chunk) =>
-            chunk.searchableText.includes(marker) &&
-            buildEmbeddingDocument(chunk).content.includes(marker),
-        ),
+        normalized.some((chunk) => chunk.searchableText.includes(marker)),
       ).toBe(true);
     }
   });
@@ -175,7 +169,7 @@ describe("RAG chunk byte budgets", () => {
         `top_level_${index} = "coverage-marker-${String(index).padStart(4, "0")}"`,
     },
   ])(
-    "keeps every top-level line searchable and embeddable around semantic chunks in $path",
+    "keeps every top-level line searchable around semantic chunks in $path",
     ({ path, functionLines, topLevelLine }) => {
       const topLevelLines = Array.from({ length: 520 }, (_, index) =>
         topLevelLine(index),
@@ -192,20 +186,12 @@ describe("RAG chunk byte budgets", () => {
       for (let index = 0; index < topLevelLines.length; index++) {
         const marker = `coverage-marker-${String(index).padStart(4, "0")}`;
         expect(
-          normalized.some(
-            (chunk) =>
-              chunk.searchableText.includes(marker) &&
-              buildEmbeddingDocument(chunk).content.includes(marker),
-          ),
+          normalized.some((chunk) => chunk.searchableText.includes(marker)),
         ).toBe(true);
       }
       expect(
-        normalized.some(
-          (chunk) =>
-            chunk.searchableText.includes("function-coverage-marker") &&
-            buildEmbeddingDocument(chunk).content.includes(
-              "function-coverage-marker",
-            ),
+        normalized.some((chunk) =>
+          chunk.searchableText.includes("function-coverage-marker"),
         ),
       ).toBe(true);
     },

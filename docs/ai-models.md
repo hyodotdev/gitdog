@@ -1,9 +1,9 @@
 # AI Models & Pricing
 
-Gitdog uses Claude for issue, discussion and pull request generation, OpenAI as
-the credit fallback, and OpenAI embeddings with keyword retrieval for
-repository search. All model calls run on the server (Convex); the web app and
-CLI never hold provider keys.
+Gitdog uses Claude for issue, discussion and pull request generation and
+OpenAI as the credit fallback. Repository search is keyword-based; Gitdog does
+not create embeddings. All model calls run on the server (Convex); the web app
+and CLI never hold provider keys.
 
 ## Generation routing
 
@@ -36,9 +36,18 @@ those keys instead of Gitdog's:
 - An action that started on a user key cannot be finished on Gitdog's key.
 - This usage is recorded with `keySource: "user"`. It does not consume
   included or prepaid tokens and is shown separately on the Usage page.
-- Repository embeddings stay on Gitdog's OpenAI key and quota; when that quota
-  is exhausted, search falls back to keyword retrieval.
 - Key checks are limited to five per user every ten minutes.
+- Every saved key must use the same server key. Its id is recorded on the
+  first save (or taken from existing keys). A missing `BYOK_ENCRYPTION_KEY`,
+  or one with another id, is treated as a server misconfiguration: saved keys
+  are paused, saving is refused, and users are not told their keys failed.
+- To rotate the server key on purpose, set the new `BYOK_ENCRYPTION_KEY`, then
+  record its id:
+  `bunx convex run providerApiKeys/internalMutation:setExpectedEncryptionKeyId '{"keyId":"<id>"}'`,
+  where the id is the first 16 hex characters of
+  `printf %s "$BYOK_ENCRYPTION_KEY" | base64 -d | shasum -a 256`. Keys saved
+  under the old server key then become unreadable, and their owners are asked
+  to enter them again. There is no decrypt-only previous key.
 - Keys are validated against the generation model on save, encrypted with
   AES-256-GCM using `BYOK_ENCRYPTION_KEY`, and never returned to clients.
 
@@ -55,24 +64,25 @@ variable names.
 
 ## Repository retrieval
 
-Repository indexing, code queries and repository learnings use OpenAI
-`text-embedding-3-small` (1536 dimensions) together with keyword search.
+Repository indexing parses files into function and class chunks for BM25
+keyword search, ranked by path, symbol and documentation matches. During
+generation the model also searches code by exact pattern, lists directories
+and reads files with its repository tools. No embedding provider is called, so
+indexing costs no AI tokens.
 
 - First connection indexes the repository; default-branch pushes trigger
   incremental indexing, and a daily sync refreshes active repositories.
-- Vector batches are cached by content and provider/model identity, so
-  unchanged content is reused after reindexing.
-- Searches filter by exact provider/model keys, so vectors from different
-  models are never mixed. Without OpenAI access or quota, Gitdog falls back to
-  keyword search instead of sending data to another provider.
+- Repository learnings are stored and searched by keyword.
+- Vectors stored before embeddings were retired are no longer read. Reclaim
+  their storage once per deployment with
+  `bunx convex run ragV2/internalMutation:purgeRetiredEmbeddings '{"confirm":"delete-retired-embeddings"}'`.
 
 ## Token pricing
 
-| Model                         | Input per 1M tokens | Output per 1M tokens |
-| ----------------------------- | ------------------- | -------------------- |
-| Claude Sonnet 5.5             | $2.00               | $10.00               |
-| GPT-6.1 Sol                   | $2.00               | $10.00               |
-| OpenAI text-embedding-3-small | $0.02               | —                    |
+| Model             | Input per 1M tokens | Output per 1M tokens |
+| ----------------- | ------------------- | -------------------- |
+| Claude Sonnet 5.5 | $2.00               | $10.00               |
+| GPT-6.1 Sol       | $2.00               | $10.00               |
 
 Sol prompts above 272K input tokens use 2x input and 1.5x output pricing.
 Prompt caching is disabled, so recorded token counts map directly to the listed
@@ -82,16 +92,27 @@ and [Sol pricing](https://developers.openai.com/api/docs/models/gpt-6.1-sol).
 
 ## Plans and token packs
 
-Free and Pro both stop when their included and purchased balance is exhausted.
-Gitdog never creates automatic overage charges; prepaid token packs extend the
-limit and never expire.
+Try Gitdog with trial tokens, then use your own API key or Pro. Free and Pro
+both stop when their included and prepaid balance is exhausted. Gitdog never
+creates automatic overage charges; prepaid token packs extend the limit and
+never expire. Work that runs on your own provider key never uses these tokens.
 
-| Tier               | Included or prepaid tokens | Notes                        |
-| ------------------ | -------------------------- | ---------------------------- |
-| Free               | 100K per month             | Stops at the available limit |
-| Pro                | 2.4M per month             | Stops at the available limit |
-| Token Pack (Small) | 2.2M                       | $9.99 one-time purchase      |
-| Token Pack (Large) | 7.5M                       | $29.99 one-time purchase     |
+| Tier               | Included or prepaid tokens | Notes                                      |
+| ------------------ | -------------------------- | ------------------------------------------ |
+| Free               | 100K trial, once           | Granted on first sign-in; no monthly reset |
+| Pro                | 2.4M per month             | Stops at the available limit               |
+| Token Pack (Small) | 2.2M                       | $9.99 one-time purchase                    |
+| Token Pack (Large) | 7.5M                       | $29.99 one-time purchase                   |
+
+The trial is added to the prepaid wallet once per account and recorded in
+`trialCreditGrants`, so it is never granted again. It is granted on first
+sign-in, on consent, or the first time a free account's quota is checked;
+accounts on Pro (or with Pro history still being settled) are skipped and get
+it once they are on Free, including former Pro owners. Usage spends included
+tokens, then the trial, then paid tokens, and a token-pack refund never takes
+back trial tokens. Free periods that started
+before December 2026 keep the former 100K monthly allowance; later free
+periods include no tokens.
 
 ## Usage accounting
 

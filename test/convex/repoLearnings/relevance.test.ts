@@ -1,13 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { Doc, Id } from "../../../convex/_generated/dataModel";
-import schema from "../../../convex/schema";
 import {
   getLearningEmbeddingPolicy,
   getLearningSearchLimit,
   isRelevantLearningScore,
   mergeLearningResults,
   MIN_LEARNING_RELEVANCE_SCORE,
-  REPO_LEARNING_EMBEDDING_KEY,
 } from "../../../convex/repoLearnings/action";
 import {
   buildLearningContextForProvenance,
@@ -34,20 +32,6 @@ function makeLearning(
   };
 }
 
-type ExportedVectorIndex = {
-  indexDescriptor: string;
-  vectorField: string;
-  dimensions: number;
-  filterFields: string[];
-};
-
-type ExportedSchema = {
-  tables: Array<{
-    tableName: string;
-    vectorIndexes: ExportedVectorIndex[];
-  }>;
-};
-
 describe("repository learning relevance", () => {
   it("accepts scores at the threshold", () => {
     expect(isRelevantLearningScore(MIN_LEARNING_RELEVANCE_SCORE)).toBe(true);
@@ -66,12 +50,6 @@ describe("repository learning relevance", () => {
     expect(getLearningSearchLimit(0)).toBe(1);
     expect(getLearningSearchLimit(3.9)).toBe(3);
     expect(getLearningSearchLimit(100)).toBe(20);
-  });
-
-  it("uses a stable OpenAI search-result embedding identity", () => {
-    expect(REPO_LEARNING_EMBEDDING_KEY).toBe(
-      "openai:text-embedding-3-small:1536:search_result",
-    );
   });
 
   it("defaults missing repository metadata to paid-only routing", () => {
@@ -178,29 +156,5 @@ describe("repository learning relevance", () => {
     expect(results.map((learning) => learning._id)).toEqual(
       learnings.map((learning) => learning._id),
     );
-  });
-});
-
-describe("repository learning vector index", () => {
-  it("supports repository, trust-key, and embedding-key filtering", () => {
-    const exportedSchema = JSON.parse(schema.export()) as ExportedSchema;
-    const vectorIndexes = exportedSchema.tables.find(
-      (table) => table.tableName === "repoLearnings",
-    )?.vectorIndexes;
-
-    expect(vectorIndexes).toEqual([
-      {
-        indexDescriptor: "by_embedding",
-        vectorField: "embedding",
-        dimensions: 1536,
-        filterFields: [
-          "repositoryId",
-          "repositoryTrustKey",
-          "embeddingKey",
-          "embeddingScopeKey",
-          "publicEmbeddingScopeKey",
-        ],
-      },
-    ]);
   });
 });

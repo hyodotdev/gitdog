@@ -24,9 +24,11 @@ import {
   type ProEntitlementProvenance,
 } from "./entitlement";
 import { refreshFreeSubscriptionPeriod } from "./quotaEntitlement";
+import { creditPurchasedTokens, settleThenGrantTrialCredit } from "./credit";
 import {
   consolidatePurchasedTokenWallet,
   debitPurchasedTokenWallet,
+  readTrialTokens,
   getUserWalletRows,
 } from "./wallet";
 
@@ -775,53 +777,6 @@ export const settleEndedProSubscription = internalMutation({
   },
 });
 
-function getCurrentUtcMonthBounds(now: number): {
-  periodStart: number;
-  periodEnd: number;
-} {
-  const date = new Date(now);
-  return {
-    periodStart: Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1),
-    periodEnd: Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1),
-  };
-}
-
-async function creditPurchasedTokens(
-  ctx: MutationCtx,
-  args: { userId: Id<"users">; tokensToAdd: number; now: number },
-): Promise<Id<"subscriptions">> {
-  if (!Number.isSafeInteger(args.tokensToAdd) || args.tokensToAdd <= 0) {
-    throw new Error("Invalid purchased token amount");
-  }
-  const subscription = await getSubscriptionForEntitlement(ctx, args.userId);
-  if (!subscription) {
-    const period = getCurrentUtcMonthBounds(args.now);
-    const subscriptionId = await ctx.db.insert("subscriptions", {
-      userId: args.userId,
-      plan: "free",
-      status: "active",
-      serviceFeeRate: PRICING.PLATFORM_FEE_FREE,
-      includedTokens: PRICING.FREE_INCLUDED_TOKENS,
-      purchasedTokens: args.tokensToAdd,
-      periodStart: period.periodStart,
-      periodEnd: period.periodEnd,
-      createdAt: args.now,
-      updatedAt: args.now,
-    });
-    return subscriptionId;
-  }
-
-  await refreshFreeSubscriptionPeriod(ctx, subscription, args.now);
-
-  await consolidatePurchasedTokenWallet(ctx, {
-    userId: args.userId,
-    targetSubscriptionId: subscription._id,
-    tokensToAdd: args.tokensToAdd,
-    now: args.now,
-  });
-  return subscription._id;
-}
-
 /** Credit and log one token-pack order in a single idempotent transaction. */
 export const fulfillTokenPackOrder = internalMutation({
   args: {
@@ -1114,6 +1069,16 @@ export const processTokenPackRefund = internalMutation({
       now,
     });
     if (walletBalance < tokensToClawBack) {
+      return await recordManualReview(
+        "Token-pack refund balance was already consumed.",
+      );
+    }
+    // The trial is spent before paid tokens, so a refund may only take back
+    // what is left beyond the unspent trial.
+    if (
+      walletBalance - tokensToClawBack <
+      (await readTrialTokens(ctx, subscription._id))
+    ) {
       return await recordManualReview(
         "Token-pack refund balance was already consumed.",
       );
@@ -1928,4 +1893,10 @@ export const recoverSubscriptionInvoiceInbox = internalMutation({
     }
     return { scheduled: due.length };
   },
+});
+
+export const grantTrialCredit = internalMutation({
+  args: { userId: v.id("users") },
+  handler: async (ctx, args) =>
+    await settleThenGrantTrialCredit(ctx, args.userId),
 });

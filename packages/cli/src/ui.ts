@@ -187,11 +187,78 @@ export class Ui {
     }
   }
 
+  /** Read a secret from the terminal without echoing it. */
+  async secret(question: string): Promise<string> {
+    if (!process.stdin.isTTY || !process.stderr.isTTY)
+      throw new Error(
+        "This command needs a terminal to read the key. Pipe it with --stdin instead.",
+      );
+    process.stderr.write(`${clean(question)}: `);
+    const stdin = process.stdin;
+    stdin.setRawMode(true);
+    stdin.resume();
+    stdin.setEncoding("utf8");
+    try {
+      return await new Promise<string>((resolve, reject) => {
+        let value = "";
+        const onData = (chunk: string) => {
+          for (const char of chunk) {
+            switch (char) {
+              case "\r":
+              case "\n":
+                stdin.off("data", onData);
+                process.stderr.write("\n");
+                resolve(value.trim());
+                return;
+              case "\u0003":
+                stdin.off("data", onData);
+                process.stderr.write("\n");
+                reject(new Error("Cancelled."));
+                return;
+              case "\u007f":
+              case "\b":
+                value = value.slice(0, -1);
+                break;
+              default:
+                // Drop other control characters such as Ctrl-D or escapes.
+                if (char >= " ") value += char;
+            }
+          }
+        };
+        stdin.on("data", onData);
+      });
+    } finally {
+      stdin.setRawMode(false);
+      stdin.pause();
+    }
+  }
+
+  /** Read one secret line from standard input for non-interactive use. */
+  async readStdin(): Promise<string> {
+    if (process.stdin.isTTY)
+      throw new Error("--stdin expects the key to be piped in.");
+    let value = "";
+    process.stdin.setEncoding("utf8");
+    for await (const chunk of process.stdin) value += chunk;
+    return singleSecretLine(value);
+  }
+
   async confirm(message: string, yes = false): Promise<void> {
     if (yes) return;
     const answer = await this.ask(`${message} [y/N]`, "n");
     if (!/^y(es)?$/i.test(answer)) throw new Error("Cancelled.");
   }
+}
+
+/** The one non-empty line of piped input; anything more is refused. */
+export function singleSecretLine(input: string): string {
+  const lines = input
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  if (lines.length > 1)
+    throw new Error("--stdin expects exactly one line containing the key.");
+  return lines[0] ?? "";
 }
 
 export function asRecord(value: unknown): Record<string, unknown> | undefined {

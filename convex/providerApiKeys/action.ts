@@ -101,6 +101,17 @@ export const save = action({
           ? `This looks like an ${PROVIDER_NAMES[detected]} API key.`
           : `This does not look like an ${PROVIDER_NAMES[args.provider]} API key.`,
       );
+    const encryption = await ctx.runQuery(
+      internal.providerApiKeys.internalQuery.getEncryptionState,
+      {},
+    );
+    // Saving under a different server key would strand every other key.
+    if (!encryption.ok)
+      keyError(
+        "UNSUPPORTED_OPERATION",
+        "not_configured",
+        "Saving API keys is not available right now.",
+      );
     let encrypted: Awaited<ReturnType<typeof encryptProviderKey>>;
     try {
       encrypted = await encryptProviderKey(userId, args.provider, apiKey);
@@ -145,13 +156,33 @@ export const revalidate = action({
         "not_found",
         "No API key is saved for this provider.",
       );
+    const encryption = await ctx.runQuery(
+      internal.providerApiKeys.internalQuery.getEncryptionState,
+      {},
+    );
+    if (!encryption.ok)
+      keyError(
+        "UNSUPPORTED_OPERATION",
+        "not_configured",
+        "Key checks are temporarily unavailable.",
+      );
     let apiKey: string;
     try {
       apiKey = await decryptProviderKey(row);
     } catch (error) {
       if (!(error instanceof ProviderKeyEncryptionError)) throw error;
-      // A server-side key problem says nothing about the provider key, so
-      // its status is left as it is.
+      if (error.kind === "not_configured")
+        keyError(
+          "UNSUPPORTED_OPERATION",
+          "not_configured",
+          "Key checks are temporarily unavailable.",
+        );
+      // The key itself cannot be decrypted; its provider status is left as
+      // it is, and the key is flagged so the owner sees it.
+      await ctx.runMutation(
+        internal.providerApiKeys.internalMutation.noteUnreadableKey,
+        { userId, provider: args.provider, keyIv: row.iv },
+      );
       keyError(
         "BAD_REQUEST",
         "unreadable",
@@ -169,13 +200,14 @@ export const revalidate = action({
             provider: args.provider,
             code: "invalid",
             httpStatus: result.httpStatus,
+            keyIv: row.iv,
           },
         );
       rejectValidation(args.provider, result);
     }
     await ctx.runMutation(
       internal.providerApiKeys.internalMutation.markValidated,
-      { userId, provider: args.provider },
+      { userId, provider: args.provider, keyIv: row.iv },
     );
     return { provider: args.provider, status: "active" };
   },
