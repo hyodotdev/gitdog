@@ -1770,7 +1770,6 @@ async function fetchBranchHeadSha(
 
 export type DefaultBranchHead =
   | { status: "head"; commitSha: string; defaultBranch: string }
-  // GitHub no longer lets the installation read this repository.
   // Transient or unknown failure; try again on the next pass.
   | { status: "unavailable" };
 
