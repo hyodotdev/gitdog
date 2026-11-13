@@ -13,10 +13,12 @@ const originalFetch = globalThis.fetch;
 const INDEXED_SHA = "a".repeat(40);
 const PUSHED_SHA = "b".repeat(40);
 let headShas: Map<string, string>;
+let defaultBranches: Map<string, string>;
 let githubRequests: string[];
 beforeEach(() => {
   vi.useFakeTimers();
   headShas = new Map();
+  defaultBranches = new Map();
   githubRequests = [];
   vi.spyOn(githubHelpers, "getRepositoryInstallationToken").mockResolvedValue(
     "installation-token",
@@ -24,9 +26,27 @@ beforeEach(() => {
   globalThis.fetch = vi.fn(async (input: string | URL | Request) => {
     const url = String(input instanceof Request ? input.url : input);
     githubRequests.push(url);
+    const metadata = /^https:\/\/api\.github\.com\/repositories\/(\d+)$/.exec(
+      url,
+    );
+    if (metadata) {
+      const id = Number(metadata[1]);
+      const name = id === 101 ? "owner/repo" : `owner/repo-${id - 101}`;
+      return new Response(
+        JSON.stringify({
+          id,
+          full_name: name,
+          default_branch: defaultBranches.get(name) ?? "main",
+        }),
+        { status: 200 },
+      );
+    }
     const match =
-      /^https:\/\/api\.github\.com\/repos\/(.+)\/commits\/main$/.exec(url);
-    const sha = match ? headShas.get(match[1]) : undefined;
+      /^https:\/\/api\.github\.com\/repos\/(.+)\/commits\/(.+)$/.exec(url);
+    const sha = match
+      ? (headShas.get(`${match[1]}@${decodeURIComponent(match[2])}`) ??
+        (match[2] === "main" ? headShas.get(match[1]) : undefined))
+      : undefined;
     return sha
       ? new Response(JSON.stringify({ sha }), { status: 200 })
       : new Response("{}", { status: 404 });
@@ -249,6 +269,7 @@ describe("daily sync head comparison", () => {
     expect(after.scheduled).toHaveLength(0);
     expect(after.logs).toHaveLength(0);
     expect(githubRequests).toEqual([
+      "https://api.github.com/repositories/101",
       "https://api.github.com/repos/owner/repo/commits/main",
     ]);
   });
@@ -290,5 +311,66 @@ describe("daily sync head comparison", () => {
       ),
     ).toEqual({ total: 1, scheduled: 0, skipped: 1, hasMore: false });
     expect(await t.run((ctx) => ctx.db.get(repositoryId))).toEqual(before);
+  });
+
+  it("compares the head of a renamed default branch, not the stored one", async () => {
+    const t = convexTest(schema, modules);
+    const repositoryId = await insertIndexedRepository(t, INDEXED_SHA);
+    // The old branch still exists at the indexed commit.
+    headShas.set("owner/repo@main", INDEXED_SHA);
+    defaultBranches.set("owner/repo", "trunk");
+    headShas.set("owner/repo@trunk", PUSHED_SHA);
+
+    expect(
+      await t.action(
+        internal.repoIndexing.internalAction.dailySyncAllRepositories,
+        {},
+      ),
+    ).toMatchObject({ scheduled: 1, skipped: 0 });
+    expect(await t.run((ctx) => ctx.db.get(repositoryId))).toMatchObject({
+      indexVersion: 2,
+    });
+    await t.run(async (ctx) => {
+      for (const job of await ctx.db.system
+        .query("_scheduled_functions")
+        .take(100)) {
+        if (job.state.kind === "pending") await ctx.scheduler.cancel(job._id);
+      }
+    });
+  });
+
+  it("lets prepare run its access checks when GitHub reports lost access", async () => {
+    for (const [state, scheduled] of [
+      ["deleted", 1],
+      ["unknown", 0],
+    ] as const) {
+      const t = convexTest(schema, modules);
+      await insertIndexedRepository(t, INDEXED_SHA);
+      vi.spyOn(
+        githubHelpers,
+        "getRepositoryInstallationToken",
+      ).mockRejectedValue(
+        new Error(
+          "GitHub repository-scoped installation token request failed (HTTP 404)",
+        ),
+      );
+      vi.spyOn(
+        githubHelpers,
+        "getGitHubInstallationAccessState",
+      ).mockResolvedValue(state);
+      expect(
+        await t.action(
+          internal.repoIndexing.internalAction.dailySyncAllRepositories,
+          {},
+        ),
+      ).toMatchObject({ scheduled });
+      await t.run(async (ctx) => {
+        for (const job of await ctx.db.system
+          .query("_scheduled_functions")
+          .take(100)) {
+          if (job.state.kind === "pending") await ctx.scheduler.cancel(job._id);
+        }
+      });
+    }
   });
 });

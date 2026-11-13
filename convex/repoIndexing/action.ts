@@ -5,6 +5,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { GenericActionCtx } from "convex/server";
 import {
   GitHubAppRateLimitError,
+  getGitHubInstallationAccessState,
   getRepositoryInstallationToken,
   type GitHubTreeItem as BaseGitHubTreeItem,
 } from "../github/helpers";
@@ -1768,37 +1769,50 @@ async function fetchBranchHeadSha(
     : null;
 }
 
+export type DefaultBranchHead =
+  | { status: "head"; commitSha: string; defaultBranch: string }
+  // GitHub no longer lets the installation read this repository.
+  | { status: "access_lost" }
+  // Transient or unknown failure; try again on the next pass.
+  | { status: "unavailable" };
+
 /**
- * Read the default branch head with one installation token, so a periodic
- * sync can compare it with the indexed commit before touching the database.
- * Returns null when GitHub cannot answer; callers then leave the index as is.
+ * Read the authoritative default branch and its head with one installation
+ * token, so a periodic sync can compare it with the indexed commit before
+ * touching the database.
  */
 export async function fetchDefaultBranchHead(args: {
   installationId: number;
   githubRepositoryId: number;
-  githubRepo: string;
-  defaultBranch?: string;
-}): Promise<{ commitSha: string; defaultBranch: string } | null> {
+}): Promise<DefaultBranchHead> {
   const appId = process.env.GITHUB_APP_ID;
   const privateKey = process.env.GITHUB_APP_PRIVATE_KEY;
-  if (!appId || !privateKey) return null;
+  if (!appId || !privateKey) return { status: "unavailable" };
+  let token: string;
   try {
-    const token = await getRepositoryInstallationToken(
+    token = await getRepositoryInstallationToken(
       args.installationId,
       args.githubRepositoryId,
       appId,
       privateKey,
     );
-    if (args.defaultBranch) {
-      const sha = await fetchBranchHeadSha(
-        args.githubRepo,
-        args.defaultBranch,
-        token,
-      );
-      if (sha) return { commitSha: sha, defaultBranch: args.defaultBranch };
-    }
-    // The stored branch is unknown or no longer resolves (renamed default
-    // branch or transferred repository): ask GitHub for the current one.
+  } catch (error) {
+    // A deleted or suspended installation, or a repository no longer
+    // selected for it, is an access change rather than a transient error.
+    const state = await getGitHubInstallationAccessState(
+      args.installationId,
+      appId,
+      privateKey,
+    );
+    const repositoryDeselected =
+      state === "active" &&
+      error instanceof Error &&
+      /HTTP (403|404|422)\b/.test(error.message);
+    return state === "deleted" || state === "suspended" || repositoryDeselected
+      ? { status: "access_lost" }
+      : { status: "unavailable" };
+  }
+  try {
     const metadata = await fetchAuthoritativeRepositoryMetadata(
       args.githubRepositoryId,
       token,
@@ -1809,10 +1823,14 @@ export async function fetchDefaultBranchHead(args: {
       token,
     );
     return sha
-      ? { commitSha: sha, defaultBranch: metadata.defaultBranch }
-      : null;
+      ? {
+          status: "head",
+          commitSha: sha,
+          defaultBranch: metadata.defaultBranch,
+        }
+      : { status: "unavailable" };
   } catch {
-    return null;
+    return { status: "unavailable" };
   }
 }
 
