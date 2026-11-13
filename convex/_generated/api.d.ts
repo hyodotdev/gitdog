@@ -160,6 +160,7 @@ import type * as tickets_mutation from "../tickets/mutation.js";
 import type * as tickets_query from "../tickets/query.js";
 import type * as tokenUsage_internalMutation from "../tokenUsage/internalMutation.js";
 import type * as tokenUsage_internalQuery from "../tokenUsage/internalQuery.js";
+import type * as tokenUsage_periodTotals from "../tokenUsage/periodTotals.js";
 import type * as tokenUsage_query from "../tokenUsage/query.js";
 import type * as tokenUsage_quota from "../tokenUsage/quota.js";
 import type * as tokenUsage_totals from "../tokenUsage/totals.js";
@@ -328,6 +329,7 @@ declare const fullApi: ApiFromModules<{
   "tickets/query": typeof tickets_query;
   "tokenUsage/internalMutation": typeof tokenUsage_internalMutation;
   "tokenUsage/internalQuery": typeof tokenUsage_internalQuery;
+  "tokenUsage/periodTotals": typeof tokenUsage_periodTotals;
   "tokenUsage/query": typeof tokenUsage_query;
   "tokenUsage/quota": typeof tokenUsage_quota;
   "tokenUsage/totals": typeof tokenUsage_totals;

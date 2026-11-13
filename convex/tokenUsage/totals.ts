@@ -1,6 +1,11 @@
 import type { WithoutSystemFields } from "convex/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
+import {
+  getEffectiveSubscriptionEntitlement,
+  getSubscriptionForEntitlement,
+} from "../subscriptions/entitlement";
+import { addUsageToPeriodTotals, ensurePeriodTotals } from "./periodTotals";
 
 export const USAGE_TOTALS_HOUR_MS = 60 * 60 * 1_000;
 // One hour is rebuilt in one transaction so it stays exact under concurrent
@@ -125,10 +130,32 @@ async function readUsageTotalsHour(
 }
 
 /**
- * Insert a usage row and its hourly totals in one transaction. Every
- * tokenUsage insert must go through here, or quota checks undercount.
+ * Insert a usage row with its hourly and period totals in one transaction.
+ * Every tokenUsage insert must go through here, or quota checks undercount.
  */
 export async function insertTokenUsage(
+  ctx: MutationCtx,
+  row: WithoutSystemFields<Doc<"tokenUsage">>,
+): Promise<Id<"tokenUsage">> {
+  // The current entitlement period gets its aggregate before the row lands,
+  // so a period without earlier rows starts complete.
+  const now = Date.now();
+  const entitlement = getEffectiveSubscriptionEntitlement(
+    await getSubscriptionForEntitlement(ctx, row.userId, now),
+    now,
+  );
+  await ensurePeriodTotals(
+    ctx,
+    row.userId,
+    entitlement.periodStart,
+    entitlement.periodEnd,
+  );
+  const usageId = await insertUsageRowAndHourlyTotals(ctx, row);
+  await addUsageToPeriodTotals(ctx, row);
+  return usageId;
+}
+
+async function insertUsageRowAndHourlyTotals(
   ctx: MutationCtx,
   row: WithoutSystemFields<Doc<"tokenUsage">>,
 ): Promise<Id<"tokenUsage">> {

@@ -1,3 +1,4 @@
+import { detachUsageRepositoryInPeriodTotals } from "../tokenUsage/periodTotals";
 import {
   internalMutation,
   mutation,
@@ -965,6 +966,7 @@ export const continueRepositoryDisconnectCleanup = internalMutation({
         )
         .take(DISCONNECT_CLEANUP_BATCH_SIZE);
       for (const row of usage) {
+        await detachUsageRepositoryInPeriodTotals(ctx, row);
         await ctx.db.patch(row._id, { repositoryId: undefined });
       }
       if (usage.length === DISCONNECT_CLEANUP_BATCH_SIZE) {

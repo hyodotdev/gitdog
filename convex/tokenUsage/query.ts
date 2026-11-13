@@ -4,6 +4,7 @@ import { getAuthUserId } from "@convex-dev/auth/server";
 import { MAX_COLLECT_LIMIT } from "../_utils/pagination";
 import { getSubscriptionForEntitlement } from "../subscriptions/entitlement";
 import { readEffectiveSubscriptionQuota } from "../subscriptions/quotaEntitlement";
+import { readCompletePeriodTotals } from "./periodTotals";
 
 export const MAX_TOKEN_USAGE_AGGREGATION_RECORDS = MAX_COLLECT_LIMIT;
 
@@ -97,6 +98,37 @@ export const getCurrentMonthUsage = query({
     if (!quota.verified) throw new Error(INVALID_USAGE_TOTAL_MESSAGE);
     const entitlement = quota.entitlement;
     const { periodStart, periodEnd } = entitlement;
+    const yearMonth = new Date().toISOString().slice(0, 7);
+    const paymentStatus = entitlement.plan === "free" ? "waived" : "pending";
+
+    const period = await readCompletePeriodTotals(
+      ctx,
+      userId,
+      periodStart,
+      periodEnd,
+    );
+    if (period) {
+      return {
+        yearMonth,
+        totalInputTokens: period.gitdog.inputTokens,
+        totalOutputTokens: period.gitdog.outputTokens,
+        totalTokens: period.gitdog.totalTokens,
+        totalBaseCostCents: period.gitdog.baseCostCents,
+        totalServiceFeeCents: period.gitdog.serviceFeeCents,
+        totalCostCents: period.gitdog.totalCostCents,
+        totalActions: period.gitdog.chatActions,
+        totalEmbeddingTokens: period.gitdog.embeddingTokens,
+        userKey: {
+          inputTokens: period.userKey.inputTokens,
+          outputTokens: period.userKey.outputTokens,
+          totalTokens: period.userKey.totalTokens,
+          totalActions: period.userKey.rowCount,
+          estimatedProviderCostCents: period.userKey.baseCostCents,
+          isPartial: false,
+        },
+        paymentStatus: paymentStatus as "waived" | "pending" | "paid",
+      };
+    }
 
     // Aggregate tokenUsage records from periodStart
     const usageRecords = await ctx.db
@@ -166,9 +198,6 @@ export const getCurrentMonthUsage = query({
       );
     }
 
-    const yearMonth = new Date().toISOString().slice(0, 7);
-    const paymentStatus = entitlement.plan === "free" ? "waived" : "pending";
-
     const userKey = {
       inputTokens: 0,
       outputTokens: 0,
@@ -223,6 +252,36 @@ export const getUsageByRepository = query({
     const quota = await readEffectiveSubscriptionQuota(ctx, subscription);
     if (!quota.verified) throw new Error(INVALID_USAGE_TOTAL_MESSAGE);
     const { periodStart, periodEnd } = quota.entitlement;
+
+    const period = await readCompletePeriodTotals(
+      ctx,
+      userId,
+      periodStart,
+      periodEnd,
+    );
+    if (period && period.repositoriesOverflow !== true) {
+      // Entries emptied by a repository disconnect are not reported.
+      return period.repositories
+        .filter(
+          (entry) =>
+            entry.totalTokens > 0 ||
+            entry.chatActions > 0 ||
+            entry.totalCostCents > 0 ||
+            entry.userKeyActions > 0,
+        )
+        .map((entry) => ({
+          repositoryId: entry.repositoryId ?? "unknown",
+          totalTokens: entry.totalTokens,
+          totalInputTokens: entry.inputTokens,
+          totalOutputTokens: entry.outputTokens,
+          totalBaseCostCents: entry.baseCostCents,
+          totalServiceFeeCents: entry.serviceFeeCents,
+          totalCostCents: entry.totalCostCents,
+          totalActions: entry.chatActions,
+          userKeyTokens: entry.userKeyTokens,
+          userKeyActions: entry.userKeyActions,
+        }));
+    }
 
     // Get all tokenUsage records for the billing period
     const usageRecords = await ctx.db
