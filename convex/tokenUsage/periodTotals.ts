@@ -20,6 +20,7 @@ export const MAX_NEARBY_PERIOD_TOTALS = 16;
 export const MAX_PERIOD_TOTALS_REPOSITORIES = 100;
 export const MAX_PERIOD_TOTALS_BUILD_ROWS_PER_WINDOW = 8_000;
 export const PERIOD_TOTALS_BUILD_ROW_BUDGET = 2_000;
+export const MAX_PERIOD_TOTALS_BUILD_WINDOWS_PER_STEP = 250;
 export const PERIOD_TOTALS_BUILD_STALL_MS = 10 * 60 * 1_000;
 
 export const EMPTY_GITDOG_TOTALS: PeriodTotals["gitdog"] = {
@@ -244,11 +245,22 @@ export async function addUsageToPeriodTotals(
     row.userId,
     row.createdAt,
   )) {
-    if (buildWillReadRow(totals, row.createdAt)) continue;
-    await ctx.db.patch(totals._id, {
-      ...addRowToPeriodTotals(totals, row),
-      updatedAt: now,
-    });
+    if (
+      totals.buildAbandonedAt !== undefined ||
+      buildWillReadRow(totals, row.createdAt)
+    ) {
+      continue;
+    }
+    let sums: ReturnType<typeof addRowToPeriodTotals>;
+    try {
+      sums = addRowToPeriodTotals(totals, row);
+    } catch {
+      // Aggregate upkeep never blocks recording usage: a row the aggregate
+      // cannot hold moves this period to the row path for good.
+      await ctx.db.patch(totals._id, { buildAbandonedAt: now, updatedAt: now });
+      continue;
+    }
+    await ctx.db.patch(totals._id, { ...sums, updatedAt: now });
   }
 }
 
@@ -267,14 +279,20 @@ export async function detachUsageRepositoryInPeriodTotals(
     row.userId,
     row.createdAt,
   )) {
-    if (buildWillReadRow(totals, row.createdAt)) continue;
-    const removed = applyToRepositories(totals, row.repositoryId, row, -1);
-    const moved = applyToRepositories(
-      { ...totals, ...removed },
-      undefined,
-      row,
-      1,
-    );
+    if (
+      totals.buildAbandonedAt !== undefined ||
+      buildWillReadRow(totals, row.createdAt)
+    ) {
+      continue;
+    }
+    let moved: ReturnType<typeof applyToRepositories>;
+    try {
+      const removed = applyToRepositories(totals, row.repositoryId, row, -1);
+      moved = applyToRepositories({ ...totals, ...removed }, undefined, row, 1);
+    } catch {
+      await ctx.db.patch(totals._id, { buildAbandonedAt: now, updatedAt: now });
+      continue;
+    }
     await ctx.db.patch(totals._id, { ...moved, updatedAt: now });
   }
 }
@@ -298,7 +316,11 @@ export async function readCompletePeriodTotals(
         .eq("periodEnd", periodEnd),
     )
     .first();
-  return totals && totals.builtThrough === undefined ? totals : null;
+  return totals &&
+    totals.builtThrough === undefined &&
+    totals.buildAbandonedAt === undefined
+    ? totals
+    : null;
 }
 
 /**
@@ -399,13 +421,32 @@ export async function buildPeriodTotalsStep(
   ctx: MutationCtx,
   totalsId: Id<"tokenUsagePeriodTotals">,
 ): Promise<{ done: boolean }> {
-  let totals = await ctx.db.get(totalsId);
-  if (!totals || totals.buildAbandonedAt !== undefined) return { done: true };
+  const totals = await ctx.db.get(totalsId);
+  if (
+    !totals ||
+    totals.builtThrough === undefined ||
+    totals.buildAbandonedAt !== undefined
+  ) {
+    return { done: true };
+  }
+  const { userId, periodEnd } = totals;
+  let builtThrough: number | undefined = totals.builtThrough;
+  let windowMs = totals.buildWindowMs ?? USAGE_TOTALS_HOUR_MS;
+  let sums: Pick<
+    PeriodTotals,
+    "gitdog" | "userKey" | "repositories" | "repositoriesOverflow"
+  > = totals;
   let rowBudget = PERIOD_TOTALS_BUILD_ROW_BUDGET;
-  while (totals.builtThrough !== undefined && rowBudget > 0) {
-    const from: number = totals.builtThrough;
-    const periodEnd = totals.periodEnd;
-    const userId = totals.userId;
+  // Each iteration makes two range reads; the cap keeps a sparse period far
+  // below the per-transaction read limits.
+  for (
+    let windows = 0;
+    builtThrough !== undefined &&
+    rowBudget > 0 &&
+    windows < MAX_PERIOD_TOTALS_BUILD_WINDOWS_PER_STEP;
+    windows++
+  ) {
+    const from: number = builtThrough;
     const next = await ctx.db
       .query("tokenUsage")
       .withIndex("by_user_and_month", (q) =>
@@ -416,13 +457,9 @@ export async function buildPeriodTotalsStep(
       )
       .first();
     if (!next) {
-      await ctx.db.patch(totalsId, {
-        builtThrough: undefined,
-        updatedAt: Date.now(),
-      });
-      return { done: true };
+      builtThrough = undefined;
+      break;
     }
-    const windowMs = totals.buildWindowMs ?? USAGE_TOTALS_HOUR_MS;
     const windowEnd = Math.min(next.createdAt + windowMs, periodEnd);
     const rows = await ctx.db
       .query("tokenUsage")
@@ -434,23 +471,18 @@ export async function buildPeriodTotalsStep(
       )
       .take(MAX_PERIOD_TOTALS_BUILD_ROWS_PER_WINDOW + 1);
     if (rows.length > MAX_PERIOD_TOTALS_BUILD_ROWS_PER_WINDOW) {
-      // Retry with half the window in the next step, so one step never reads
-      // more than one oversized window.
-      const now = Date.now();
       if (windowMs <= 1) {
+        // One millisecond holds more rows than a step may read: keep this
+        // period on the row path for good.
+        const now = Date.now();
         await ctx.db.patch(totalsId, { buildAbandonedAt: now, updatedAt: now });
         return { done: true };
       }
-      await ctx.db.patch(totalsId, {
-        buildWindowMs: Math.floor(windowMs / 2),
-        updatedAt: now,
-      });
+      // Retry with half the window in the next step, so one step never reads
+      // more than one oversized window.
+      windowMs = Math.floor(windowMs / 2);
       break;
     }
-    let sums: Pick<
-      PeriodTotals,
-      "gitdog" | "userKey" | "repositories" | "repositoriesOverflow"
-    > = totals;
     try {
       for (const row of rows) sums = addRowToPeriodTotals(sums, row);
     } catch {
@@ -459,12 +491,20 @@ export async function buildPeriodTotalsStep(
       await ctx.db.patch(totalsId, { buildAbandonedAt: now, updatedAt: now });
       return { done: true };
     }
-    const patch = { ...sums, builtThrough: windowEnd, updatedAt: Date.now() };
-    await ctx.db.patch(totalsId, patch);
-    totals = { ...totals, ...patch };
+    builtThrough = windowEnd;
     rowBudget -= rows.length;
+    // A sparse window lets the window grow back toward the default.
+    if (rows.length * 4 <= MAX_PERIOD_TOTALS_BUILD_ROWS_PER_WINDOW) {
+      windowMs = Math.min(windowMs * 2, USAGE_TOTALS_HOUR_MS);
+    }
   }
-  if (totals.builtThrough === undefined) return { done: true };
+  await ctx.db.patch(totalsId, {
+    ...sums,
+    builtThrough,
+    buildWindowMs: windowMs === USAGE_TOTALS_HOUR_MS ? undefined : windowMs,
+    updatedAt: Date.now(),
+  });
+  if (builtThrough === undefined) return { done: true };
   await ctx.scheduler.runAfter(
     0,
     internal.tokenUsage.internalMutation.buildUsagePeriodTotals,

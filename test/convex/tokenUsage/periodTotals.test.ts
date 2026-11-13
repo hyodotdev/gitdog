@@ -13,6 +13,7 @@ import {
   EMPTY_GITDOG_TOTALS,
   EMPTY_USER_KEY_TOTALS,
   MAX_PERIOD_TOTALS_BUILD_ROWS_PER_WINDOW,
+  MAX_PERIOD_TOTALS_BUILD_WINDOWS_PER_STEP,
   PERIOD_TOTALS_BUILD_STALL_MS,
   readCompletePeriodTotals,
 } from "../../../convex/tokenUsage/periodTotals";
@@ -462,7 +463,8 @@ describe("token usage period totals", () => {
     expect(totals?.gitdog.rowCount).toBe(
       MAX_PERIOD_TOTALS_BUILD_ROWS_PER_WINDOW + 2,
     );
-    expect(totals?.buildWindowMs).toBeLessThan(60 * 60_000);
+    // The window was split for the dense hour and grew back afterwards.
+    expect(totals?.buildWindowMs).toBeUndefined();
     expect(totals?.buildAbandonedAt).toBeUndefined();
   }, 60_000);
 
@@ -497,5 +499,78 @@ describe("token usage period totals", () => {
     ).toSatisfy((jobs: Array<{ state: { kind: string } }>) =>
       jobs.every((job) => job.state.kind !== "pending"),
     );
+  });
+
+  it("never blocks a usage insert on a row the aggregate cannot hold", async () => {
+    const t = convexTest(schema, modules);
+    const userId = await t.run((ctx) => ctx.db.insert("users", {}));
+    await t.run((ctx) =>
+      insertTokenUsage(ctx, usageRow(userId, now() - 2_000, 100)),
+    );
+    expect((await readTotals(t, userId))?.gitdog.totalTokens).toBe(100);
+
+    await t.run((ctx) =>
+      insertTokenUsage(
+        ctx,
+        usageRow(userId, now() - 1_000, 50, {
+          keySource: "user",
+          outputTokens: 0.5,
+        }),
+      ),
+    );
+    const rows = await t.run((ctx) => ctx.db.query("tokenUsage").collect());
+    expect(rows).toHaveLength(2);
+    // The period falls back to the rows, which still count Gitdog usage only.
+    expect(await readTotals(t, userId)).toBeNull();
+    expect(
+      await t.run((ctx) =>
+        readQuotaTokenUsage(ctx, {
+          userId,
+          periodStart: PERIOD_START,
+          periodEndExclusive: PERIOD_END,
+        }),
+      ),
+    ).toMatchObject({ verified: true, tokensUsed: 100 });
+  });
+
+  it("bounds the windows one build step reads and continues in later steps", async () => {
+    const t = convexTest(schema, modules);
+    const userId = await t.run((ctx) => ctx.db.insert("users", {}));
+    const sparseRows = MAX_PERIOD_TOTALS_BUILD_WINDOWS_PER_STEP + 5;
+    await t.run(async (ctx) => {
+      for (let index = 0; index < sparseRows; index++) {
+        await ctx.db.insert(
+          "tokenUsage",
+          usageRow(userId, PERIOD_START + index * 2 * 60 * 60_000, 20),
+        );
+      }
+    });
+    const totalsId = await t.run(async (ctx) =>
+      ctx.db.insert("tokenUsagePeriodTotals", {
+        userId,
+        periodStart: PERIOD_START,
+        periodEnd: PERIOD_END,
+        builtThrough: PERIOD_START,
+        gitdog: EMPTY_GITDOG_TOTALS,
+        userKey: EMPTY_USER_KEY_TOTALS,
+        repositories: [],
+        createdAt: PERIOD_START,
+        updatedAt: now(),
+      }),
+    );
+    expect(
+      await t.mutation(
+        internal.tokenUsage.internalMutation.buildUsagePeriodTotals,
+        {
+          totalsId,
+        },
+      ),
+    ).toEqual({ done: false });
+    const partial = await t.run((ctx) => ctx.db.get(totalsId));
+    expect(partial?.gitdog.rowCount).toBe(
+      MAX_PERIOD_TOTALS_BUILD_WINDOWS_PER_STEP,
+    );
+    await drainScheduledFunctions(t);
+    expect((await readTotals(t, userId))?.gitdog.rowCount).toBe(sparseRows);
   });
 });
