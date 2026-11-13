@@ -150,7 +150,8 @@ describe("authoritative PR snapshots", () => {
       );
       expect(windowed.split("\n")[1499]).toBe("const value1500 = 1500;");
       expect(windowed).toContain(OMITTED_SOURCE_MARKER);
-      expect(get).toHaveBeenCalledTimes(2);
+      // A changed file is fetched once at the larger limit.
+      expect(get).toHaveBeenCalledTimes(1);
     });
     it("keeps the 40 KB limit for unchanged files and base reads", async () => {
       vi.spyOn(helpers, "fetchGitHubAppJsonWithRetry").mockResolvedValue(

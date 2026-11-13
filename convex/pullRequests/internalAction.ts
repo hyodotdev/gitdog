@@ -39,6 +39,7 @@ import {
   runReviewRequest,
 } from "./errors";
 import {
+  combinedReviewBody,
   hasReviewablePatch,
   MAX_REVIEW_FINDINGS,
   reviewBody,
@@ -572,7 +573,16 @@ export const publish = internalAction({
           ? undefined
           : batched
             ? await snapshot(access, live, false, {
-                findingPaths: new Set(findings.map((finding) => finding.path)),
+                // Evidence in a large changed file is re-read around its diff,
+                // as it was during review, so its diff is needed too.
+                findingPaths: new Set(
+                  findings.flatMap((finding) => [
+                    finding.path,
+                    ...finding.evidence
+                      .filter((e) => e.ref === "head")
+                      .map((e) => e.path),
+                  ]),
+                ),
               })
             : await snapshot(access, live);
       if (data) {
@@ -664,9 +674,8 @@ export const publish = internalAction({
                 ]
               : []),
           ].join("\n\n");
-          const response = await fetch(
-            `${root(current.access)}/pulls/${live.number}/reviews`,
-            {
+          const post = (payload: Record<string, unknown>) =>
+            fetch(`${root(current.access)}/pulls/${live.number}/reviews`, {
               method: "POST",
               headers: {
                 Authorization: `Bearer ${current.access.token}`,
@@ -678,14 +687,34 @@ export const publish = internalAction({
               body: JSON.stringify({
                 commit_id: source.headSha,
                 event: "COMMENT",
-                body: `${body}\n\n${marker}`,
-                ...(findings.length
-                  ? { comments: reviewComments(findings, suggestions) }
-                  : {}),
+                ...payload,
               }),
               signal: AbortSignal.timeout(30_000),
-            },
-          );
+            });
+          let response = await post({
+            body: `${body}\n\n${marker}`,
+            ...(findings.length
+              ? { comments: reviewComments(findings, suggestions) }
+              : {}),
+          });
+          // GitHub creates nothing when it rejects an inline comment, so a
+          // batched review that cost many batches falls back to one body.
+          if (response.status === 422 && batched && findings.length) {
+            await response.body?.cancel().catch(() => undefined);
+            response = await post({
+              body: `${combinedReviewBody(
+                findings,
+                source.headSha,
+                {
+                  batchCount: proposal.batchCount,
+                  findingCount,
+                  changedFiles: proposal.changedFiles,
+                  uncoveredFiles: proposal.uncoveredFiles,
+                },
+                suggestions,
+              )}\n\n${marker}`,
+            });
+          }
           if (!response.ok) {
             await response.body?.cancel().catch(() => undefined);
             throw new Error(

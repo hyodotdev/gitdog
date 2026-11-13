@@ -290,6 +290,8 @@ export async function readFile(
 /**
  * Reads commit-pinned review source. A changed file over the 40 KB limit, read
  * at head with its diff, is shown around that diff instead of being skipped.
+ * Files of roughly 20,000 lines or more cannot be windowed within the limit
+ * and stay unreviewed.
  */
 export async function readReviewFile(
   access: VerifiedRepositoryAccess,
@@ -297,23 +299,15 @@ export async function readReviewFile(
   ref: string,
   changed?: ChangedFile,
 ): Promise<string> {
-  try {
+  if (!changed?.patch || !hasReviewablePatch(changed))
     return await readFile(access, path, ref);
-  } catch (error) {
-    if (
-      !(error instanceof ReviewContextLimitError) ||
-      !changed?.patch ||
-      !hasReviewablePatch(changed)
-    )
-      throw error;
-    const windowed = windowChangedSource(
-      await readFile(access, path, ref, LARGE_CHANGED_FILE_BYTES),
-      changed.patch,
-    );
-    if (windowed === null) throw error;
-    return windowed;
-  }
+  const content = await readFile(access, path, ref, LARGE_CHANGED_FILE_BYTES);
+  if (content.length <= 40_000) return content;
+  const windowed = windowChangedSource(content, changed.patch);
+  if (windowed === null) throw new ReviewContextLimitError();
+  return windowed;
 }
+
 export async function treePaths(
   access: VerifiedRepositoryAccess,
   ref: string,

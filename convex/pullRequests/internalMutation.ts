@@ -12,7 +12,6 @@ import { isUsableProviderKey } from "../providerApiKeys/usability";
 import { settleThenGrantTrialCredit } from "../subscriptions/credit";
 import type { ReviewQuotaRefusal } from "./errors";
 import {
-  combinedReviewBody,
   findingBody,
   findingValidator,
   reviewBatchProgressValidator,
@@ -712,25 +711,23 @@ export const propose = internalMutation({
         findings: args.findings,
         excludedPaths: args.excludedPaths,
         filesRead: args.filesRead,
-        // Approvers preview the review body together with every finding.
-        suggestedResponse:
-          batch && !noFindings
-            ? combinedReviewBody(
-                args.findings,
-                args.source.headSha,
-                batch,
-                suggestions,
-              )
-            : [
-                reviewBody(
-                  batch?.findingCount ?? args.findings.length,
-                  args.source.headSha,
-                  coverage,
-                ),
-                ...args.findings.map(
-                  (f) => `${f.path}:${f.line}\n${findingBody(f, suggestions)}`,
-                ),
-              ].join("\n\n"),
+        // Approvers preview the posted summary and every finding, which a
+        // batched review posts inline like a single one.
+        suggestedResponse: [
+          reviewBody(
+            batch?.findingCount ?? args.findings.length,
+            args.source.headSha,
+            coverage,
+          ),
+          ...(batch && batch.findingCount > args.findings.length
+            ? [
+                `Showing the ${args.findings.length} highest-priority findings out of ${batch.findingCount}.`,
+              ]
+            : []),
+          ...args.findings.map(
+            (f) => `${f.path}:${f.line}\n${findingBody(f, suggestions)}`,
+          ),
+        ].join("\n\n"),
       },
       // The no-findings summary is fixed text, so it needs no approval.
       status: verificationOnly

@@ -764,6 +764,80 @@ it("posts a summary review without inline comments when nothing was found", asyn
     (await f.t.run((ctx) => ctx.db.get(f.actionId)))?.executionResult,
   ).toMatchObject({ reviewId: 77, published: true });
 });
+describe("batched publication", () => {
+  async function batchedPublication() {
+    const f = await publicationFixture();
+    // Turn the saved review into a batched one whose evidence also quotes a
+    // changed file that has no finding of its own.
+    await f.t.run(async (ctx) => {
+      const action = (await ctx.db.get(f.actionId))!;
+      const [finding] = action.proposedChanges.findings;
+      await ctx.db.patch(f.actionId, {
+        proposedChanges: {
+          ...action.proposedChanges,
+          batchCount: 4,
+          findingCount: 1,
+          changedFiles: 70,
+          uncoveredFiles: 0,
+          findings: [
+            {
+              ...finding,
+              evidence: [
+                ...finding.evidence,
+                {
+                  path: "src/large.ts",
+                  ref: "head",
+                  quote: "const large = true;",
+                },
+              ],
+            },
+          ],
+        },
+      });
+    });
+    const github = await import("../../../convex/pullRequests/github");
+    const snapshot = vi.spyOn(github, "snapshot");
+    vi.spyOn(github, "readReviewFile").mockImplementation(async (_a, path) =>
+      path === "src/large.ts"
+        ? "const large = true;"
+        : "function find(key) {\n return cache.get('constant');\n}",
+    );
+    return { ...f, snapshot };
+  }
+  it("re-reads the diff of every changed file its evidence cites", async () => {
+    const f = await batchedPublication();
+    expect(
+      await f.t.action(internal.pullRequests.internalAction.publish, {
+        actionId: f.actionId,
+        manual: true,
+      }),
+    ).toEqual({ success: true });
+    const options = f.snapshot.mock.calls[0][3] as {
+      findingPaths: Set<string>;
+    };
+    expect([...options.findingPaths].sort()).toEqual([
+      "src/large.ts",
+      "src/main.ts",
+    ]);
+    const request = JSON.parse(f.fetch.mock.calls[0][1]!.body as string);
+    expect(request.comments).toHaveLength(1);
+  });
+  it("falls back to one body when GitHub rejects an inline comment", async () => {
+    const f = await batchedPublication();
+    f.fetch.mockResolvedValueOnce(new Response("{}", { status: 422 }));
+    expect(
+      await f.t.action(internal.pullRequests.internalAction.publish, {
+        actionId: f.actionId,
+        manual: true,
+      }),
+    ).toEqual({ success: true });
+    expect(f.fetch).toHaveBeenCalledTimes(2);
+    const retry = JSON.parse(f.fetch.mock.calls[1][1]!.body as string);
+    expect(retry).not.toHaveProperty("comments");
+    expect(retry.body).toContain("`src/main.ts:2`");
+    expect(retry.body).toContain(`<!-- gitdog-pr-review:${f.actionId} -->`);
+  });
+});
 it("does not send a review if the live head has advanced", async () => {
   const f = await publicationFixture();
   f.live.mockResolvedValue({
