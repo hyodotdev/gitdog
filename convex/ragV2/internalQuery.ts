@@ -73,7 +73,6 @@ export const keywordSearch = internalQuery({
     if (!access) {
       return [];
     }
-    const repositoryIndexKey = `${args.repositoryId}:${args.indexVersion}`;
     const topK = clampFiniteInteger(args.topK, 8, MAX_KEYWORD_SEARCH_RESULTS);
     const languages = Array.from(
       new Set(
@@ -99,8 +98,7 @@ export const keywordSearch = internalQuery({
         .withSearchIndex("search_text", (q) => {
           const scopedQuery = q
             .search("searchableText", args.query)
-            .eq("repositoryId", args.repositoryId)
-            .eq("repositoryIndexKey", repositoryIndexKey);
+            .eq("repositoryId", args.repositoryId);
 
           return language ? scopedQuery.eq("language", language) : scopedQuery;
         })
@@ -125,11 +123,10 @@ export const keywordSearch = internalQuery({
     ).flat();
     const seenChunkIds = new Set<string>();
     const searchResults = rawSearchResults.filter((chunk) => {
-      if (
-        chunk.repositoryId !== args.repositoryId ||
-        chunk.indexVersion !== args.indexVersion ||
-        chunk.repositoryIndexKey !== repositoryIndexKey
-      ) {
+      // Chunks are replaced per path, so every chunk of the repository
+      // belongs to the generation the access snapshot pinned: unchanged
+      // paths keep the chunks written by an earlier generation.
+      if (chunk.repositoryId !== args.repositoryId) {
         return false;
       }
       if (seenChunkIds.has(chunk.chunkId)) {
@@ -182,15 +179,12 @@ export const getChunksByIds = internalQuery({
       const batchIds = args.chunkIds.slice(i, i + batchSize);
       const batchChunks = await Promise.all(
         batchIds.map(async (chunkId) => {
-          // Include the pinned index version because chunk IDs can be reused
-          // across repository generations.
+          // Chunk IDs hash path and line range, so one ID names one current
+          // chunk of the repository.
           const chunk = await ctx.db
             .query("repoChunks")
-            .withIndex("by_index_version_and_chunk", (q) =>
-              q
-                .eq("repositoryId", args.repositoryId)
-                .eq("indexVersion", args.indexVersion)
-                .eq("chunkId", chunkId),
+            .withIndex("by_repository_and_chunk", (q) =>
+              q.eq("repositoryId", args.repositoryId).eq("chunkId", chunkId),
             )
             .first();
           return chunk;
@@ -227,10 +221,8 @@ export const getSearchableChunksPage = internalQuery({
 
     const page = await ctx.db
       .query("repoChunks")
-      .withIndex("by_index_version", (q) =>
-        q
-          .eq("repositoryId", args.repositoryId)
-          .eq("indexVersion", args.indexVersion),
+      .withIndex("by_repository", (q) =>
+        q.eq("repositoryId", args.repositoryId),
       )
       .paginate({
         numItems: Math.min(Math.max(args.limit ?? 64, 1), 100),

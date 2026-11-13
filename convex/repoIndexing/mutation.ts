@@ -27,6 +27,7 @@ import {
   scheduleRepositoryTreeSnapshotCleanup,
 } from "./treeSnapshot";
 import { RAG_OLD_CHUNK_CLEANUP_BATCH_SIZE } from "../ragV2/chunkBudget";
+import { deleteChunksForPath } from "../ragV2/chunkPaths";
 import { quarantineRepositoryForMissingInstallation } from "../repositories/accessLifecycle";
 import {
   getExactGitHubInstallation,
@@ -1669,6 +1670,10 @@ async function upsertFileMapForPublication(
       size: args.size,
       isText: args.isText,
       indexVersion: args.expectedIndexVersion,
+      ragPending:
+        existing.ragPending === true || !isUnchangedFileMap(existing, args)
+          ? true
+          : undefined,
       updatedAt: now,
     });
     return existing._id;
@@ -1681,10 +1686,95 @@ async function upsertFileMapForPublication(
     size: args.size,
     isText: args.isText,
     indexVersion: args.expectedIndexVersion,
+    ragPending: true,
     createdAt: now,
     updatedAt: now,
   });
 }
+
+type FileMapIdentity = Pick<
+  Doc<"repoFileMap">,
+  "sha256" | "language" | "size" | "isText"
+>;
+
+/** The same blob at the same path needs no new blob work and no re-chunking. */
+export function isUnchangedFileMap(
+  existing: FileMapIdentity,
+  next: FileMapIdentity,
+): boolean {
+  return (
+    existing.sha256 === next.sha256 &&
+    existing.isText === next.isText &&
+    existing.size === next.size &&
+    existing.language === next.language
+  );
+}
+
+export const MAX_UNCHANGED_FILE_MAP_BATCH = 64;
+
+/**
+ * Carry every unchanged file of one tree page into the new generation in a
+ * single transaction. Only the generation number of each map row changes;
+ * blobs and chunks are not touched. Returns the paths that still need the
+ * per-file blob workflow, or "stale" when the generation lost ownership.
+ */
+export const reuseUnchangedFileMaps = internalMutation({
+  args: {
+    repositoryId: v.id("repositories"),
+    expectedUserId: v.id("users"),
+    expectedInstallationId: v.number(),
+    expectedGithubRepositoryId: v.number(),
+    expectedGithubRepo: v.string(),
+    expectedIndexVersion: v.number(),
+    files: v.array(
+      v.object({
+        filePath: v.string(),
+        sha256: v.string(),
+        language: v.optional(v.string()),
+        size: v.number(),
+        isText: v.boolean(),
+      }),
+    ),
+  },
+  returns: v.union(
+    v.literal("stale"),
+    v.object({ changedPaths: v.array(v.string()) }),
+  ),
+  handler: async (ctx, args) => {
+    if (args.files.length > MAX_UNCHANGED_FILE_MAP_BATCH) {
+      throw new Error("Unchanged file map batch is too large");
+    }
+    const first = args.files[0];
+    if (!first) return { changedPaths: [] };
+    if (
+      !(await ownsExactFileBlobPublication(ctx, {
+        ...args,
+        ...first,
+      }))
+    ) {
+      return "stale" as const;
+    }
+    const changedPaths: string[] = [];
+    for (const file of args.files) {
+      const existing = await ctx.db
+        .query("repoFileMap")
+        .withIndex("by_repository_and_path", (q) =>
+          q.eq("repositoryId", args.repositoryId).eq("filePath", file.filePath),
+        )
+        .first();
+      if (!existing || !isUnchangedFileMap(existing, file)) {
+        changedPaths.push(file.filePath);
+        continue;
+      }
+      if (existing.indexVersion !== args.expectedIndexVersion) {
+        await ctx.db.patch(existing._id, {
+          indexVersion: args.expectedIndexVersion,
+        });
+      }
+    }
+    return { changedPaths };
+  },
+});
 
 export const storeFileBlob = internalMutation({
   args: {
@@ -1920,13 +2010,29 @@ export const continueFileMapCleanup = internalMutation({
       )
       .take(batchSize);
 
+    // A path missing from the new tree loses its chunks with its map row.
+    let chunkBudget = RAG_OLD_CHUNK_CLEANUP_BATCH_SIZE;
+    let deletedMaps = 0;
+    let chunkBudgetExhausted = false;
     for (const fileMap of oldFileMaps) {
+      const chunks = await deleteChunksForPath(
+        ctx,
+        args.repositoryId,
+        fileMap.filePath,
+        chunkBudget,
+      );
+      chunkBudget -= chunks.deleted;
+      if (!chunks.done) {
+        chunkBudgetExhausted = true;
+        break;
+      }
       await ctx.db.delete(fileMap._id);
+      deletedMaps++;
     }
 
     const now = Date.now();
-    const hasMore = oldFileMaps.length === batchSize;
-    const deletedTotal = (args.deletedTotal ?? 0) + oldFileMaps.length;
+    const hasMore = oldFileMaps.length === batchSize || chunkBudgetExhausted;
+    const deletedTotal = (args.deletedTotal ?? 0) + deletedMaps;
     const watchdog = await armIndexWatchdog(ctx, {
       repositoryId: args.repositoryId,
       expectedIndexVersion: args.expectedIndexVersion,
@@ -2036,8 +2142,9 @@ export const continueFileMapCleanup = internalMutation({
 });
 
 /**
- * Clean up old chunks (from previous versions, internal only)
- * Split into separate mutations to avoid multiple pagination error
+ * Clean up chunks of older generations. RAG passes now use
+ * ragV2/internalMutation:cleanupRagGeneration; this stays for actions that
+ * were already running when that change deployed.
  */
 export const cleanupOldChunks = internalMutation({
   args: {

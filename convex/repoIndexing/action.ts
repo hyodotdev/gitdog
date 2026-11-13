@@ -1900,10 +1900,37 @@ async function processRepositoryTreeBatch(
   indexVersion: number,
   offset: number,
 ): Promise<{ nextOffset: number; totalFiles: number }> {
-  const { batch, nextOffset, totalFiles } = getRepositoryIndexBatch(
-    files,
-    offset,
-  );
+  const {
+    batch: pageBatch,
+    nextOffset,
+    totalFiles,
+  } = getRepositoryIndexBatch(files, offset);
+
+  // Unchanged files only move to the new generation; they need no blob
+  // lookups, uploads, or re-chunking.
+  const reuse =
+    pageBatch.length === 0
+      ? { changedPaths: [] }
+      : await ctx.runMutation(
+          internal.repoIndexing.mutation.reuseUnchangedFileMaps,
+          {
+            repositoryId,
+            ...publicationIdentity,
+            expectedIndexVersion: indexVersion,
+            files: pageBatch.map((file) => ({
+              filePath: file.path,
+              sha256: file.sha,
+              language: getLanguageFromPath(file.path),
+              size: file.size ?? 0,
+              isText: isTextFile(file.path),
+            })),
+          },
+        );
+  if (reuse === "stale") {
+    throw new Error("stale repository indexing generation");
+  }
+  const changedPaths = new Set(reuse.changedPaths);
+  const batch = pageBatch.filter((file) => changedPaths.has(file.path));
 
   for (let i = 0; i < batch.length; i += FILE_INDEX_CONCURRENCY) {
     const concurrentFiles = batch.slice(i, i + FILE_INDEX_CONCURRENCY);
@@ -1999,7 +2026,7 @@ async function processRepositoryTreeBatch(
         throw new GitHubRateLimitError(
           "fetch repository file page",
           failed.reason.retryAt,
-          offset + i,
+          offset + pageBatch.indexOf(batch[i]),
         );
       }
       throw failed.reason;

@@ -107,6 +107,7 @@ import type * as pullRequests_webhook from "../pullRequests/webhook.js";
 import type * as pullRequests_workflow from "../pullRequests/workflow.js";
 import type * as ragV2_action from "../ragV2/action.js";
 import type * as ragV2_chunkBudget from "../ragV2/chunkBudget.js";
+import type * as ragV2_chunkPaths from "../ragV2/chunkPaths.js";
 import type * as ragV2_internalMutation from "../ragV2/internalMutation.js";
 import type * as ragV2_internalQuery from "../ragV2/internalQuery.js";
 import type * as ragV2_parser from "../ragV2/parser.js";
@@ -274,6 +275,7 @@ declare const fullApi: ApiFromModules<{
   "pullRequests/workflow": typeof pullRequests_workflow;
   "ragV2/action": typeof ragV2_action;
   "ragV2/chunkBudget": typeof ragV2_chunkBudget;
+  "ragV2/chunkPaths": typeof ragV2_chunkPaths;
   "ragV2/internalMutation": typeof ragV2_internalMutation;
   "ragV2/internalQuery": typeof ragV2_internalQuery;
   "ragV2/parser": typeof ragV2_parser;

@@ -15,6 +15,7 @@ import {
   getUtf8ByteLength,
   MAX_RAG_CHUNK_CODE_BYTES,
   MAX_RAG_SEARCHABLE_TEXT_BYTES,
+  RAG_OLD_CHUNK_CLEANUP_BATCH_SIZE,
 } from "../../../convex/ragV2/chunkBudget";
 import { stableChunkId } from "../../../convex/ragV2/parser";
 import schema from "../../../convex/schema";
@@ -729,11 +730,11 @@ describe("RAG embedding work continuations", () => {
     ).toBe(false);
   });
 
-  it("continues a large file at the embedding-batch boundary", async () => {
+  it("stores every chunk batch of a large file in one run", async () => {
     const t = convexTest(schema, modules);
     const repositoryId = await insertRepository(t, "pending", 3, "chunked");
     const embeddingBatchSizes: Array<number> = [];
-    globalThis.fetch = vi.fn(
+    const fetchMock = vi.fn(
       async (input: string | URL | Request, init?: RequestInit) => {
         const url =
           typeof input === "string"
@@ -758,18 +759,26 @@ describe("RAG embedding work continuations", () => {
 
         throw new Error(`Unexpected fetch: ${url}`);
       },
-    ) as unknown as typeof fetch;
+    );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
 
     const firstBatch = await t.action(
       internal.ragV2.action.generateChunkEmbeddings,
       { repositoryId },
     );
+    // Every chunk batch of the page runs in one action, and the repository
+    // checkpoint is written once for the whole page.
     expect(firstBatch).toEqual({
       success: true,
       totalChunks: 65,
-      successCount: 32,
+      successCount: 65,
       errorCount: 0,
     });
+    expect(
+      fetchMock.mock.calls.filter(
+        ([input]) => String(input) === "https://storage.test/chunked.ts",
+      ),
+    ).toHaveLength(1);
 
     const checkpoint = await t.run(async (ctx) => ({
       repository: await ctx.db.get(repositoryId),
@@ -778,13 +787,11 @@ describe("RAG embedding work continuations", () => {
     expect(checkpoint.repository).toMatchObject({
       ragStatus: "indexing",
       ragEmbeddingMode: "keyword_only",
-      ragIndexPhase: "files",
-      ragIndexFileOffset: 0,
-      ragIndexChunkOffset: 32,
+      ragIndexPhase: "cleanup",
       ragTotalChunks: 65,
-      ragIndexedChunks: 32,
+      ragIndexedChunks: 65,
       ragFailedChunks: 0,
-      ragProcessedFiles: 0,
+      ragProcessedFiles: 1,
     });
     expect(
       checkpoint.scheduled.filter(
@@ -1208,7 +1215,11 @@ describe("RAG embedding work continuations", () => {
       phase: "cleanup",
       token: "cleanup-once",
     });
-    await insertOldChunks(t, repositoryId, 2);
+    await insertOldChunks(
+      t,
+      repositoryId,
+      RAG_OLD_CHUNK_CLEANUP_BATCH_SIZE + 1,
+    );
 
     const firstCleanup = await t.action(
       internal.ragV2.action.generateChunkEmbeddings,

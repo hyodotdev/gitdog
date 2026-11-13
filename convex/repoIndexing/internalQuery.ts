@@ -11,6 +11,9 @@ interface RepositoryFilePageItem {
   language: string | undefined;
   size: number;
   isText: boolean;
+  // Pending-only pages also list paths without chunkable content so their
+  // previous chunks are removed.
+  hasBlob?: boolean;
 }
 
 const STALE_FILE_BLOB_BATCH_SIZE = 100;
@@ -294,6 +297,7 @@ export const getRepositoryFilesPage = internalQuery({
     indexVersion: v.number(),
     cursor: v.optional(v.string()),
     limit: v.optional(v.number()),
+    pendingOnly: v.optional(v.boolean()),
   },
   handler: async (ctx, args): Promise<RepositoryFilesPage> => {
     const access = await readRepositoryAiAccessSnapshot(
@@ -306,6 +310,41 @@ export const getRepositoryFilesPage = internalQuery({
     }
 
     const pageSize = args.limit ?? 100;
+
+    if (args.pendingOnly === true) {
+      // Only paths whose content changed since their chunks were written.
+      const pending = await ctx.db
+        .query("repoFileMap")
+        .withIndex("by_repository_rag_pending_and_path", (q) =>
+          q.eq("repositoryId", args.repositoryId).eq("ragPending", true),
+        )
+        .paginate({ numItems: pageSize, cursor: args.cursor ?? null });
+      const files = await Promise.all(
+        pending.page
+          .filter((fileMap) => fileMap.indexVersion === args.indexVersion)
+          .map(async (fileMap): Promise<RepositoryFilePageItem> => {
+            const blob = fileMap.isText
+              ? await ctx.db
+                  .query("repoFileBlobs")
+                  .withIndex("by_sha256", (q) => q.eq("sha256", fileMap.sha256))
+                  .first()
+              : null;
+            return {
+              path: fileMap.filePath,
+              url: blob ? await ctx.storage.getUrl(blob.storageId) : null,
+              language: fileMap.language,
+              size: fileMap.size,
+              isText: fileMap.isText,
+              hasBlob: blob !== null,
+            };
+          }),
+      );
+      return {
+        files,
+        cursor: pending.isDone ? null : pending.continueCursor,
+        hasMore: !pending.isDone,
+      };
+    }
 
     const page = await ctx.db
       .query("repoFileMap")

@@ -667,6 +667,9 @@ const applicationTables = {
     ragIndexChunkOffset: v.optional(v.number()),
     ragContinuationToken: v.optional(v.string()),
     ragProcessedFiles: v.optional(v.number()),
+    // Set once a RAG pass finishes with per-path chunk replacement. Until then
+    // a pass rebuilds every file and sweeps chunks of older generations.
+    ragChunkLayout: v.optional(v.literal("path_v1")),
     indexSyncPending: v.boolean(), // Coalesce pushes received during file/RAG indexing
 
     // Repository disconnect is a durable bounded cleanup workflow. The row is
@@ -1148,6 +1151,8 @@ const applicationTables = {
       "indexVersion",
       "chunkId",
     ])
+    .index("by_repository_and_path", ["repositoryId", "path"])
+    .index("by_repository_and_chunk", ["repositoryId", "chunkId"])
     .searchIndex("search_text", {
       searchField: "searchableText",
       filterFields: ["repositoryId", "repositoryIndexKey", "language"],
@@ -1189,11 +1194,19 @@ const applicationTables = {
     size: v.number(),
     isText: v.boolean(), // Whether file is text or binary
     indexVersion: v.number(),
+    // True while this path's chunks do not reflect sha256. Only these paths
+    // are re-chunked; a successful RAG pass clears the flag.
+    ragPending: v.optional(v.boolean()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index("by_repository", ["repositoryId"])
     .index("by_repository_and_path", ["repositoryId", "filePath"])
+    .index("by_repository_rag_pending_and_path", [
+      "repositoryId",
+      "ragPending",
+      "filePath",
+    ])
     .index("by_repository_version_and_path", [
       "repositoryId",
       "indexVersion",
