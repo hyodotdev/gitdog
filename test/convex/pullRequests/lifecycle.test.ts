@@ -186,7 +186,8 @@ describe("PR review durable lifecycle", () => {
       ctx.db.query("ticketActions").take(2),
     );
     expect(actions).toHaveLength(1);
-    expect(actions[0]).toMatchObject({ _id: actionId, status: "completed" });
+    // The no-findings summary goes straight to publication.
+    expect(actions[0]).toMatchObject({ _id: actionId, status: "approved" });
   });
   it("keeps generating through a description edit without starting another review", async () => {
     const f = await fixture();
@@ -249,7 +250,7 @@ describe("PR review durable lifecycle", () => {
       }),
     ).toBe(false);
   });
-  it("completes without posting empty findings", async () => {
+  it("posts a summary for a review without findings, without approval", async () => {
     const f = await fixture();
     const actionId = (await f.observe())!;
     await f.t.mutation(internal.pullRequests.internalMutation.propose, {
@@ -258,11 +259,20 @@ describe("PR review durable lifecycle", () => {
       findings: [],
       excludedPaths: ["binary.png"],
       filesRead: ["head:src/main.ts"],
+      coverage: { changedFiles: 2, uncoveredFiles: 1 },
     });
-    expect(await f.t.run((ctx) => ctx.db.get(actionId))).toMatchObject({
-      status: "completed",
-      executionResult: { published: false },
+    const action = await f.t.run((ctx) => ctx.db.get(actionId));
+    expect(action).toMatchObject({
+      status: "approved",
+      proposedChanges: { changedFiles: 2, uncoveredFiles: 1 },
     });
+    expect(action?.proposedChanges?.suggestedResponse).toContain(
+      "Gitdog found no supported defects",
+    );
+    expect(action?.proposedChanges?.suggestedResponse).toContain(
+      "1 of 2 changed files were not fully reviewed.",
+    );
+    expect(action).not.toHaveProperty("executionResult");
   });
   describe("generation failures", () => {
     const pullRequest = {
@@ -634,7 +644,7 @@ it("allows one generation across two automatic actions already queued for the sa
   );
 });
 
-async function publicationFixture() {
+async function publicationFixture(empty = false) {
   const f = await fixture();
   const actionId = (await f.observe())!;
   const suggestion = {
@@ -645,9 +655,10 @@ async function publicationFixture() {
   await f.t.mutation(internal.pullRequests.internalMutation.propose, {
     actionId,
     source,
-    findings: [{ ...findings[0], suggestion }],
+    findings: empty ? [] : [{ ...findings[0], suggestion }],
     excludedPaths: [],
     filesRead: ["head:src/main.ts"],
+    ...(empty ? { coverage: { changedFiles: 3, uncoveredFiles: 1 } } : {}),
   });
   const identity = await import("../../../convex/github/repositoryIdentity");
   const github = await import("../../../convex/pullRequests/github");
@@ -688,7 +699,7 @@ async function publicationFixture() {
       },
     ],
   });
-  vi.spyOn(github, "readFile").mockResolvedValue(
+  vi.spyOn(github, "readReviewFile").mockResolvedValue(
     "function find(key) {\n return cache.get('constant');\n}",
   );
   vi.spyOn(helpers, "fetchGitHubAppJsonWithRetry").mockResolvedValue([]);
@@ -727,6 +738,28 @@ it("publishes one COMMENT review with native suggestions against the exact head"
       },
     ],
   });
+  expect(
+    (await f.t.run((ctx) => ctx.db.get(f.actionId)))?.executionResult,
+  ).toMatchObject({ reviewId: 77, published: true });
+});
+it("posts a summary review without inline comments when nothing was found", async () => {
+  const f = await publicationFixture(true);
+  const snapshot = vi.spyOn(
+    await import("../../../convex/pullRequests/github"),
+    "snapshot",
+  );
+  expect(
+    await f.t.action(internal.pullRequests.internalAction.publish, {
+      actionId: f.actionId,
+      manual: false,
+    }),
+  ).toEqual({ success: true });
+  expect(snapshot).not.toHaveBeenCalled();
+  const request = JSON.parse(f.fetch.mock.calls[0][1]!.body as string);
+  expect(request).not.toHaveProperty("comments");
+  expect(request.body).toBe(
+    `Gitdog found no supported defects in \`${source.headSha.slice(0, 12)}\`. 1 of 3 changed files were not fully reviewed. This is not a merge approval; tests were not run.\n\n[Gitdog](https://gitdog.dev)\n\n<!-- gitdog-pr-review:${f.actionId} -->`,
+  );
   expect(
     (await f.t.run((ctx) => ctx.db.get(f.actionId)))?.executionResult,
   ).toMatchObject({ reviewId: 77, published: true });
@@ -1061,7 +1094,9 @@ describe("explicit verification of failed reviews", () => {
       ],
     });
     vi.spyOn(github, "treePaths").mockResolvedValue([]);
-    vi.spyOn(github, "readFile").mockResolvedValue("new implementation source");
+    vi.spyOn(github, "readReviewFile").mockResolvedValue(
+      "new implementation source",
+    );
     const chat = vi
       .fn()
       .mockResolvedValueOnce({
@@ -1188,7 +1223,7 @@ describe("batched PR reviews", () => {
     vi.spyOn(github, "treePaths").mockResolvedValue(
       files.map((f) => f.filename),
     );
-    vi.spyOn(github, "readFile").mockResolvedValue(
+    vi.spyOn(github, "readReviewFile").mockResolvedValue(
       "function find(key) {\n return cache.get('constant');\n}",
     );
     const batches: string[] = [];
@@ -1300,14 +1335,26 @@ describe("batched PR reviews", () => {
       event: "COMMENT",
       commit_id: source.headSha,
     });
-    expect(request).not.toHaveProperty("comments");
-    expect(request.body).toBe(
-      `${(await f.getAction())?.proposedChanges?.suggestedResponse}\n\n<!-- gitdog-pr-review:${f.actionId} -->`,
+    // Batched findings are posted inline under a short summary.
+    expect(
+      request.comments.map((c: { path: string; line: number }) => [
+        c.path,
+        c.line,
+      ]),
+    ).toEqual([
+      ["src/file-1.ts", 2],
+      ["src/file-49.ts", 2],
+    ]);
+    expect(JSON.stringify(request.comments)).toContain(
+      "return cache.get(key);",
     );
-    expect(request.body).toContain("src/file-1.ts:2");
+    expect(request.body).toContain("Gitdog found 2 potential defects");
     expect(request.body).not.toContain("were not fully reviewed");
-    expect(request.body).toContain("src/file-49.ts:2");
-    expect(request.body).toContain("return cache.get(key);");
+    expect(request.body).toContain(`<!-- gitdog-pr-review:${f.actionId} -->`);
+    // Approvers still preview every finding.
+    expect((await f.getAction())?.proposedChanges?.suggestedResponse).toContain(
+      "src/file-49.ts:2",
+    );
     expect(
       await f.observe({ ...source, body: "Edit only the description" }),
     ).toBeNull();
@@ -1337,9 +1384,11 @@ describe("batched PR reviews", () => {
     expect(action).not.toHaveProperty("reviewQuotaHold");
     expect(f.fetch).toHaveBeenCalledTimes(1);
     const request = JSON.parse(f.fetch.mock.calls[0][1]!.body as string);
-    expect(request).not.toHaveProperty("comments");
-    expect(request.body).toContain("src/file-1.ts:2");
-    expect(request.body).toContain("src/file-2.ts:2");
+    expect(request.comments.map((c: { path: string }) => c.path)).toEqual([
+      "src/file-1.ts",
+      "src/file-2.ts",
+      "src/file-3.ts",
+    ]);
   });
 
   it("publishes a single-batch review when one oversized diff is left out", async () => {
@@ -1357,10 +1406,11 @@ describe("batched PR reviews", () => {
       },
     });
     const request = JSON.parse(f.fetch.mock.calls[0][1]!.body as string);
-    expect(request).not.toHaveProperty("comments");
-    expect(request.body).toContain("src/file-1.ts:2");
+    expect(request.comments.map((c: { path: string }) => c.path)).toEqual([
+      "src/file-1.ts",
+    ]);
     expect(request.body).toContain(
-      "Processed in 1 file batch. 1 of 3 changed files were not fully reviewed.",
+      "1 of 3 changed files were not fully reviewed.",
     );
   });
 
@@ -1629,10 +1679,12 @@ describe("batched PR reviews", () => {
       ...f.files.map((file) => file.filename),
       "README.md",
     ]);
-    vi.spyOn(github, "readFile").mockImplementation(async (_access, path) => {
-      if (path === "README.md") return "Repository guidance.";
-      throw new ReviewContextLimitError();
-    });
+    vi.spyOn(github, "readReviewFile").mockImplementation(
+      async (_access, path) => {
+        if (path === "README.md") return "Repository guidance.";
+        throw new ReviewContextLimitError();
+      },
+    );
     for (const page of [undefined, 2, 3, 4]) await f.generate(page);
     const action = await f.getAction();
     expect(action?.status).toBe("failed");

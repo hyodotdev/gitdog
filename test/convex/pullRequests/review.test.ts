@@ -5,6 +5,8 @@ import {
   addedLines,
   combinedReviewBody,
   findingBody,
+  OMITTED_SOURCE_MARKER,
+  reviewBody,
   validateFindings,
   REVIEW_RESPONSE_FORMAT,
   type Finding,
@@ -43,6 +45,31 @@ const finding: Finding = {
 };
 const reads = [{ path: file.filename, ref: "head" as const, content: source }];
 describe("commit-grounded PR finding validation", () => {
+  it("refuses evidence quoting the omitted-lines marker of a large file", () => {
+    const windowed = `${OMITTED_SOURCE_MARKER}\n${source}`;
+    const shifted = { ...finding, line: 3 };
+    const quote = `${OMITTED_SOURCE_MARKER}\nfunction find(key) {\n return cache.get('constant');`;
+    expect(() =>
+      validateFindings(
+        {
+          findings: [
+            { ...shifted, evidence: [{ ...finding.evidence[0], quote }] },
+          ],
+        },
+        [{ ...file, patch: file.patch!.replace("-1,3 +1,3", "-2,3 +2,3") }],
+        [{ ...reads[0], content: windowed }],
+      ),
+    ).toThrow("Finding evidence was not present in commit-pinned reads");
+  });
+  it("summarizes a review without findings and its coverage", () => {
+    const sha = "a".repeat(40);
+    expect(reviewBody(0, sha, { changedFiles: 5, uncoveredFiles: 2 })).toBe(
+      "Gitdog found no supported defects in `aaaaaaaaaaaa`. 2 of 5 changed files were not fully reviewed. This is not a merge approval; tests were not run.\n\n[Gitdog](https://gitdog.dev)",
+    );
+    expect(reviewBody(1, sha, { changedFiles: 5, uncoveredFiles: 0 })).toBe(
+      "Gitdog found 1 potential defect in `aaaaaaaaaaaa`. Findings are limited to the reviewed changes; tests were not run.\n\n[Gitdog](https://gitdog.dev)",
+    );
+  });
   it("normalizes a schema-required null suggestion without weakening evidence checks", () => {
     expect(
       validateFindings(
@@ -451,7 +478,7 @@ describe("bounded review workflow", () => {
       tools: requestOptions[0].tools,
       responseFormat: requestOptions[0].responseFormat,
     }).length;
-    expect(payloadSize).toMatchInlineSnapshot(`10287`);
+    expect(payloadSize).toMatchInlineSnapshot(`10528`);
     expect(payloadSize).toBeLessThan(11_000);
     expect(requestOptions[0].responseFormat).toEqual(REVIEW_RESPONSE_FORMAT);
     expect(requests).toHaveLength(1);

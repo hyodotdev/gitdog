@@ -16,6 +16,7 @@ import {
   findingBody,
   findingValidator,
   reviewBatchProgressValidator,
+  reviewBody,
 } from "./review";
 import { isBotPullRequestAuthor, REVIEW_BATCH_TOKEN_ESTIMATE } from "./github";
 
@@ -605,6 +606,10 @@ export const propose = internalMutation({
     group: v.optional(v.number()),
     next: v.optional(v.object({ page: v.number(), group: v.number() })),
     batchProgress: v.optional(reviewBatchProgressValidator),
+    // Coverage of a single (non-batched) review; batches carry their own.
+    coverage: v.optional(
+      v.object({ changedFiles: v.number(), uncoveredFiles: v.number() }),
+    ),
   },
   handler: async (ctx, args) => {
     const action = await ctx.db.get(args.actionId);
@@ -685,6 +690,7 @@ export const propose = internalMutation({
     const verificationOnly = action.reviewVerificationOnly === true;
     const approval = repo.settings.requireApprovalForPullRequests !== false;
     const suggestions = repo.settings.pullRequestSuggestionsEnabled !== false;
+    const coverage = batch ?? args.coverage;
     await ctx.db.patch(action._id, {
       ...ENDED_BATCH,
       proposedChanges: {
@@ -697,44 +703,47 @@ export const propose = internalMutation({
               uncoveredFiles: batch.uncoveredFiles,
               coverageLimited: batch.coverageLimited,
             }
-          : {}),
+          : args.coverage
+            ? {
+                changedFiles: args.coverage.changedFiles,
+                uncoveredFiles: args.coverage.uncoveredFiles,
+              }
+            : {}),
         findings: args.findings,
         excludedPaths: args.excludedPaths,
         filesRead: args.filesRead,
-        // Approvers preview the exact body a batched review will post.
-        suggestedResponse: noFindings
-          ? "No supported findings in the inspected changes. This is not a merge approval; tests were not run."
-          : batch
+        // Approvers preview the review body together with every finding.
+        suggestedResponse:
+          batch && !noFindings
             ? combinedReviewBody(
                 args.findings,
                 args.source.headSha,
                 batch,
                 suggestions,
               )
-            : args.findings
-                .map(
+            : [
+                reviewBody(
+                  batch?.findingCount ?? args.findings.length,
+                  args.source.headSha,
+                  coverage,
+                ),
+                ...args.findings.map(
                   (f) => `${f.path}:${f.line}\n${findingBody(f, suggestions)}`,
-                )
-                .join("\n\n"),
+                ),
+              ].join("\n\n"),
       },
-      status:
-        noFindings || verificationOnly
-          ? "completed"
-          : approval
-            ? "pending_approval"
-            : "approved",
-      completedAt: noFindings || verificationOnly ? Date.now() : undefined,
-      executionResult:
-        noFindings || verificationOnly
-          ? {
-              published: false,
-              reason: verificationOnly
-                ? "verification_only"
-                : "no_supported_findings",
-            }
-          : undefined,
+      // The no-findings summary is fixed text, so it needs no approval.
+      status: verificationOnly
+        ? "completed"
+        : approval && !noFindings
+          ? "pending_approval"
+          : "approved",
+      completedAt: verificationOnly ? Date.now() : undefined,
+      executionResult: verificationOnly
+        ? { published: false, reason: "verification_only" }
+        : undefined,
     });
-    if (!noFindings && !verificationOnly && !approval)
+    if (!verificationOnly && (!approval || noFindings))
       await ctx.scheduler.runAfter(
         0,
         internal.pullRequests.internalAction.publish,
@@ -768,9 +777,11 @@ export const claim = internalMutation({
       repo.settings.pullRequestReviewsEnabled !== true
     )
       return false;
+    // The no-findings summary is fixed text and is published without approval.
     if (
       !args.manual &&
-      repo.settings.requireApprovalForPullRequests !== false
+      repo.settings.requireApprovalForPullRequests !== false &&
+      action.proposedChanges?.findings?.length !== 0
     ) {
       await ctx.db.patch(action._id, { status: "pending_approval" });
       return false;

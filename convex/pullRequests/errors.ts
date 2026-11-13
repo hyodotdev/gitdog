@@ -116,8 +116,8 @@ const fixedFailureReasons = new Map([
     "GitHub returned an invalid review history response.",
   ],
   [
-    "Review has no supported findings",
-    "The saved review did not contain a publishable set of findings.",
+    "Review findings are invalid",
+    "The saved review did not contain a valid set of findings.",
   ],
   [
     "Invalid commit-pinned file request",

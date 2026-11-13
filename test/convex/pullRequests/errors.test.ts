@@ -114,7 +114,7 @@ describe("safe PR generation diagnostics", () => {
       "finished without inspecting a changed file",
     ],
     ["Review history is unavailable", "invalid review history response"],
-    ["Review has no supported findings", "publishable set of findings"],
+    ["Review findings are invalid", "valid set of findings"],
     ["Invalid commit-pinned file request", "unsafe path or an invalid commit"],
   ])("names the internal review failure %s", (message, reason) => {
     for (const text of [
