@@ -15,7 +15,7 @@ import { v } from "convex/values";
 import { internalAction } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { normalizeCodeChunksForStorage, parseCodeIntoChunks } from "./parser";
-import { canRechunkChangedPathsOnly } from "./chunkPaths";
+import { isChangedPathsPass } from "./chunkPaths";
 import { requireStrictCurrentAiLegalAttestation } from "../_ai/legalAttestation";
 import {
   buildRagChunkPublicationBatches,
@@ -236,6 +236,7 @@ export const generateChunkEmbeddings = internalAction({
     let successCount = 0;
     let errorCount = 0;
     let processedFileMaps = 0;
+    let claimedInitialCall = false;
 
     const repo = await ctx.runQuery(
       internal.repositories.internalQuery.getById,
@@ -248,6 +249,9 @@ export const generateChunkEmbeddings = internalAction({
       throw new Error("Repository not found");
     }
 
+    // The repository as read after this run's claim; its pinned pass mode
+    // decides which files the pass visits.
+    let passRepo: typeof repo = repo;
     const isInitialCall =
       args.phase === undefined &&
       args.cursor === undefined &&
@@ -342,10 +346,12 @@ export const generateChunkEmbeddings = internalAction({
         };
       }
 
+      // The claim pinned the pass mode and its starting chunk count.
       totalChunks = 0;
       successCount = 0;
       errorCount = 0;
       processedFileMaps = 0;
+      claimedInitialCall = true;
       currentWork = {
         phase: "files",
         cursor: undefined,
@@ -453,6 +459,12 @@ export const generateChunkEmbeddings = internalAction({
           repositoryId: args.repositoryId,
         },
       );
+      passRepo = currentRepo ?? passRepo;
+      if (claimedInitialCall && currentRepo) {
+        totalChunks = currentRepo.ragTotalChunks;
+        successCount = currentRepo.ragIndexedChunks;
+        claimedInitialCall = false;
+      }
       const isCurrent =
         currentRepo?.indexVersion === indexVersion &&
         currentRepo.indexStatus === "completed" &&
@@ -654,7 +666,7 @@ export const generateChunkEmbeddings = internalAction({
 
       // Once a repository has per-path chunks, only paths whose content
       // changed are visited; unchanged files cost no chunk reads or writes.
-      const pendingOnly = canRechunkChangedPathsOnly(repo);
+      const pendingOnly = isChangedPathsPass(passRepo);
       const filePage = await ctx.runQuery(
         internal.repoIndexing.internalQuery.getRepositoryFilesPage,
         {
@@ -713,6 +725,12 @@ export const generateChunkEmbeddings = internalAction({
             internal.ragV2.internalMutation.deleteChunksForPathInGeneration,
             { repositoryId: args.repositoryId, indexVersion, path },
           );
+          // A changed-paths pass carries the stored count, so replaced
+          // chunks leave it; a full pass counts only what it writes.
+          if (pendingOnly) {
+            totalChunks = Math.max(0, totalChunks - deleted.deleted);
+            successCount = Math.max(0, successCount - deleted.deleted);
+          }
           if (deleted.done) return;
         }
         throw new Error("Repository path has too many stale chunks");

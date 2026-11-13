@@ -732,6 +732,13 @@ const applicationTables = {
     // explicit rebuild request, makes the next pass rebuild every path.
     ragChunkerVersion: v.optional(v.number()),
     ragFullRebuildRequested: v.optional(v.boolean()),
+    // Pinned when a RAG pass is claimed, so a deploy mid-pass cannot change
+    // which files it visits or how it cleans up.
+    ragPassMode: v.optional(v.union(v.literal("changed"), v.literal("full"))),
+    ragPassChunkerVersion: v.optional(v.number()),
+    // Chunks currently stored for the repository, carried across passes that
+    // rewrite only changed paths.
+    ragLiveChunks: v.optional(v.number()),
     indexSyncPending: v.boolean(), // Coalesce pushes received during file/RAG indexing
 
     // Repository disconnect is a durable bounded cleanup workflow. The row is

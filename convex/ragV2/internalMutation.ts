@@ -29,6 +29,7 @@ import { satisfiesCurrentLegalAttestationRequirement } from "../users/legal";
 import {
   canRechunkChangedPathsOnly,
   deleteChunksForPath,
+  isChangedPathsPass,
   RAG_CHUNKER_VERSION,
 } from "./chunkPaths";
 
@@ -324,11 +325,16 @@ export const claimRagGeneration = internalMutation({
       previousScheduleId: repo.indexWatchdogScheduleId,
       previousSequence: repo.indexWatchdogSequence,
     });
+    const changedOnly = canRechunkChangedPathsOnly(repo);
+    // A changed-paths pass starts from the chunks already stored.
+    const baselineChunks = changedOnly ? (repo.ragLiveChunks ?? 0) : 0;
     await ctx.db.patch(args.repositoryId, {
       ragStatus: "indexing",
       ragError: undefined,
-      ragTotalChunks: 0,
-      ragIndexedChunks: 0,
+      ragPassMode: changedOnly ? "changed" : "full",
+      ragPassChunkerVersion: RAG_CHUNKER_VERSION,
+      ragTotalChunks: baselineChunks,
+      ragIndexedChunks: baselineChunks,
       ragFailedChunks: 0,
       ragEmbeddingMode: args.embeddingMode,
       ragEmbeddingBillingTier:
@@ -975,9 +981,19 @@ export const updateRagStatus = internalMutation({
         // exactly one chunk set per current path.
         if (args.expectedPhase === "cleanup") {
           updates.ragChunkLayout = "path_v1";
-          updates.ragChunkerVersion = RAG_CHUNKER_VERSION;
-          updates.ragFullRebuildRequested = undefined;
+          // Stamp the chunker the pass was claimed with. If the deployed
+          // chunker changed mid-pass, the mismatch makes the next pass a
+          // full rebuild. A pass claimed before pinning leaves it unset.
+          updates.ragChunkerVersion = repo.ragPassChunkerVersion;
+          if (repo.ragPassMode === "full") {
+            updates.ragFullRebuildRequested = undefined;
+          }
+          if (args.indexedChunks !== undefined) {
+            updates.ragLiveChunks = args.indexedChunks;
+          }
         }
+        updates.ragPassMode = undefined;
+        updates.ragPassChunkerVersion = undefined;
         updates.ragLastIndexedAt = now;
         updates.ragError = undefined;
         updates.ragIndexPhase = undefined;
@@ -988,6 +1004,14 @@ export const updateRagStatus = internalMutation({
         updates.ragProcessedFiles = undefined;
         break;
       case "failed":
+        // A changed-paths pass replaced whole paths, so its running count
+        // still matches the stored chunks. A failed full pass is redone in
+        // full, which recounts from zero.
+        if (isChangedPathsPass(repo) && args.indexedChunks !== undefined) {
+          updates.ragLiveChunks = args.indexedChunks;
+        }
+        updates.ragPassMode = undefined;
+        updates.ragPassChunkerVersion = undefined;
         updates.ragError = args.error ?? "Unknown RAG indexing error";
         updates.ragIndexPhase = undefined;
         updates.ragIndexCursor = undefined;
@@ -1288,7 +1312,7 @@ export const cleanupRagGeneration = internalMutation({
     if (!repo || !ownsRagPhase(repo, args.indexVersion, "cleanup")) {
       return null;
     }
-    if (!canRechunkChangedPathsOnly(repo)) {
+    if (!isChangedPathsPass(repo)) {
       const oldChunks = await ctx.db
         .query("repoChunks")
         .withIndex("by_index_version", (q) =>

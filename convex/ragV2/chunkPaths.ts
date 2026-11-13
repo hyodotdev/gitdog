@@ -18,7 +18,10 @@ export function usesPathChunkLayout(repository: ChunkLayoutState): boolean {
   return repository.ragChunkLayout === "path_v1";
 }
 
-/** Whether a RAG pass may visit only the paths flagged as changed. */
+/**
+ * Whether a pass about to be claimed may visit only the paths flagged as
+ * changed. Decided once per pass; the pass then follows ragPassMode.
+ */
 export function canRechunkChangedPathsOnly(
   repository: ChunkLayoutState,
 ): boolean {
@@ -27,6 +30,13 @@ export function canRechunkChangedPathsOnly(
     repository.ragChunkerVersion === RAG_CHUNKER_VERSION &&
     repository.ragFullRebuildRequested !== true
   );
+}
+
+/** The pinned mode of the claimed pass; passes from before pinning are full. */
+export function isChangedPathsPass(
+  repository: Pick<Doc<"repositories">, "ragPassMode">,
+): boolean {
+  return repository.ragPassMode === "changed";
 }
 
 /**

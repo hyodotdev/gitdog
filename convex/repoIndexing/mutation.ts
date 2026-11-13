@@ -2019,6 +2019,7 @@ export const continueFileMapCleanup = internalMutation({
     // A path missing from the new tree loses its chunks with its map row.
     let chunkBudget = RAG_OLD_CHUNK_CLEANUP_BATCH_SIZE;
     let deletedMaps = 0;
+    let deletedChunks = 0;
     let chunkBudgetExhausted = false;
     for (const fileMap of oldFileMaps) {
       const chunks = await deleteChunksForPath(
@@ -2028,6 +2029,7 @@ export const continueFileMapCleanup = internalMutation({
         chunkBudget,
       );
       chunkBudget -= chunks.deleted;
+      deletedChunks += chunks.deleted;
       if (!chunks.done) {
         chunkBudgetExhausted = true;
         break;
@@ -2039,6 +2041,10 @@ export const continueFileMapCleanup = internalMutation({
     const now = Date.now();
     const hasMore = oldFileMaps.length === batchSize || chunkBudgetExhausted;
     const deletedTotal = (args.deletedTotal ?? 0) + deletedMaps;
+    const liveChunks =
+      repo.ragLiveChunks === undefined
+        ? {}
+        : { ragLiveChunks: Math.max(0, repo.ragLiveChunks - deletedChunks) };
     const watchdog = await armIndexWatchdog(ctx, {
       repositoryId: args.repositoryId,
       expectedIndexVersion: args.expectedIndexVersion,
@@ -2047,6 +2053,7 @@ export const continueFileMapCleanup = internalMutation({
     });
     if (hasMore) {
       await ctx.db.patch(args.repositoryId, {
+        ...liveChunks,
         indexWatchdogToken: watchdog.token,
         indexWatchdogScheduleId: watchdog.scheduleId,
         indexWatchdogSequence: watchdog.sequence,
@@ -2079,6 +2086,7 @@ export const continueFileMapCleanup = internalMutation({
 
     await scheduleRepositoryTreeSnapshotCleanup(ctx, repo.indexTreeSnapshotId);
     await ctx.db.patch(args.repositoryId, {
+      ...liveChunks,
       indexStatus: "completed",
       indexError: undefined,
       lastIndexedAt: now,

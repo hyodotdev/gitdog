@@ -459,4 +459,152 @@ describe("incremental repository chunking", () => {
       expect(page.chunks).toHaveLength(1);
     }
   });
+
+  async function seedPinnedPass(
+    t: Backend,
+    repositoryId: Id<"repositories">,
+    phase: "files" | "cleanup",
+    liveChunks: number,
+  ) {
+    await t.run((ctx) =>
+      ctx.db.patch(repositoryId, {
+        ragStatus: "indexing",
+        // Claimed by code with the previous chunker; the deployed constant
+        // has moved on since.
+        ragPassMode: "changed",
+        ragPassChunkerVersion: RAG_CHUNKER_VERSION - 1,
+        ragChunkerVersion: RAG_CHUNKER_VERSION - 1,
+        ragIndexPhase: phase,
+        ragIndexFileOffset: 0,
+        ragIndexChunkOffset: 0,
+        ragContinuationToken: `${phase}-token`,
+        ragProcessedFiles: 0,
+        ragTotalChunks: liveChunks,
+        ragIndexedChunks: liveChunks,
+        ragLiveChunks: liveChunks,
+      }),
+    );
+    await t.action(internal.ragV2.action.generateChunkEmbeddings, {
+      repositoryId,
+      indexVersion: 3,
+      phase,
+      fileOffset: 0,
+      chunkOffset: 0,
+      claimToken: `${phase}-token`,
+    });
+    await drainScheduledFunctions(t);
+  }
+
+  it("keeps a changed-paths pass pinned when the chunker version moves mid-pass", async () => {
+    // Cleanup phase: unchanged paths keep their chunks.
+    {
+      const t = convexTest(schema, modules);
+      const repositoryId = await insertRepository(t, "path_v1");
+      const keptId = await insertChunk(
+        t,
+        repositoryId,
+        "src/kept.ts",
+        "keptSymbol",
+        1,
+      );
+      await seedPinnedPass(t, repositoryId, "cleanup", 1);
+      const repository = await t.run((ctx) => ctx.db.get(repositoryId));
+      expect(await t.run((ctx) => ctx.db.get(keptId))).not.toBeNull();
+      expect(repository).toMatchObject({
+        ragStatus: "completed",
+        ragChunkerVersion: RAG_CHUNKER_VERSION - 1,
+        ragIndexedChunks: 1,
+        ragLiveChunks: 1,
+      });
+      expect(repository?.ragPassMode).toBeUndefined();
+    }
+    // Files phase: the pass keeps paging the changed-paths index.
+    {
+      const t = convexTest(schema, modules);
+      const repositoryId = await insertRepository(t, "path_v1");
+      await insertFile(
+        t,
+        repositoryId,
+        "src/steady.ts",
+        "export function steadyOne() {}",
+        false,
+      );
+      await insertFile(
+        t,
+        repositoryId,
+        "src/edited.ts",
+        "export function editedTwo() {}",
+        true,
+      );
+      await insertChunk(t, repositoryId, "src/steady.ts", "steadyOne", 1);
+      await insertChunk(t, repositoryId, "src/edited.ts", "editedOld", 1);
+      fetchedUrls = [];
+      await seedPinnedPass(t, repositoryId, "files", 2);
+      expect(fetchedUrls).toHaveLength(1);
+      expect(await search(t, repositoryId, "steadyOne")).toEqual([
+        "src/steady.ts",
+      ]);
+      expect(await search(t, repositoryId, "editedTwo")).toEqual([
+        "src/edited.ts",
+      ]);
+      expect(await search(t, repositoryId, "editedOld")).toEqual([]);
+      const repository = await t.run((ctx) => ctx.db.get(repositoryId));
+      expect(repository).toMatchObject({
+        ragStatus: "completed",
+        ragChunkerVersion: RAG_CHUNKER_VERSION - 1,
+        ragIndexedChunks: 2,
+        ragLiveChunks: 2,
+      });
+
+      // The stale stamp makes the next pass a full rebuild.
+      await t.run((ctx) =>
+        ctx.db.patch(repositoryId, { indexVersion: 4, ragStatus: "pending" }),
+      );
+      await t.run(async (ctx) => {
+        for (const map of await ctx.db.query("repoFileMap").collect()) {
+          await ctx.db.patch(map._id, { indexVersion: 4 });
+        }
+      });
+      fetchedUrls = [];
+      await runRagPass(t, repositoryId);
+      expect(fetchedUrls).toHaveLength(2);
+      expect(await t.run((ctx) => ctx.db.get(repositoryId))).toMatchObject({
+        ragStatus: "completed",
+        ragChunkerVersion: RAG_CHUNKER_VERSION,
+        ragLiveChunks: 2,
+      });
+    }
+  });
+
+  it("keeps the repository chunk count across a changed-paths pass", async () => {
+    const t = convexTest(schema, modules);
+    const repositoryId = await insertRepository(t, "path_v1", {
+      ragLiveChunks: 2,
+    });
+    await insertFile(
+      t,
+      repositoryId,
+      "src/a.ts",
+      "export function aOne() {}",
+      false,
+    );
+    await insertFile(
+      t,
+      repositoryId,
+      "src/b.ts",
+      "export function bTwo() {}",
+      true,
+    );
+    await insertChunk(t, repositoryId, "src/a.ts", "aOne", 2);
+    await insertChunk(t, repositoryId, "src/b.ts", "bOld", 2);
+
+    await runRagPass(t, repositoryId);
+
+    expect(await t.run((ctx) => ctx.db.get(repositoryId))).toMatchObject({
+      ragStatus: "completed",
+      ragTotalChunks: 2,
+      ragIndexedChunks: 2,
+      ragLiveChunks: 2,
+    });
+  });
 });
