@@ -339,38 +339,21 @@ describe("daily sync head comparison", () => {
     });
   });
 
-  it("lets prepare run its access checks when GitHub reports lost access", async () => {
-    for (const [state, scheduled] of [
-      ["deleted", 1],
-      ["unknown", 0],
-    ] as const) {
-      const t = convexTest(schema, modules);
-      await insertIndexedRepository(t, INDEXED_SHA);
-      vi.spyOn(
-        githubHelpers,
-        "getRepositoryInstallationToken",
-      ).mockRejectedValue(
-        new Error(
-          "GitHub repository-scoped installation token request failed (HTTP 404)",
-        ),
-      );
-      vi.spyOn(
-        githubHelpers,
-        "getGitHubInstallationAccessState",
-      ).mockResolvedValue(state);
-      expect(
-        await t.action(
-          internal.repoIndexing.internalAction.dailySyncAllRepositories,
-          {},
-        ),
-      ).toMatchObject({ scheduled });
-      await t.run(async (ctx) => {
-        for (const job of await ctx.db.system
-          .query("_scheduled_functions")
-          .take(100)) {
-          if (job.state.kind === "pending") await ctx.scheduler.cancel(job._id);
-        }
-      });
-    }
+  it("skips without database work when the installation token cannot be minted", async () => {
+    const t = convexTest(schema, modules);
+    const repositoryId = await insertIndexedRepository(t, INDEXED_SHA);
+    const before = await t.run((ctx) => ctx.db.get(repositoryId));
+    vi.spyOn(githubHelpers, "getRepositoryInstallationToken").mockRejectedValue(
+      new Error(
+        "GitHub repository-scoped installation token request failed (HTTP 404)",
+      ),
+    );
+    expect(
+      await t.action(
+        internal.repoIndexing.internalAction.dailySyncAllRepositories,
+        {},
+      ),
+    ).toMatchObject({ scheduled: 0, skipped: 1 });
+    expect(await t.run((ctx) => ctx.db.get(repositoryId))).toEqual(before);
   });
 });

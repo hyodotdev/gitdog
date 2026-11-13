@@ -5,7 +5,6 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { GenericActionCtx } from "convex/server";
 import {
   GitHubAppRateLimitError,
-  getGitHubInstallationAccessState,
   getRepositoryInstallationToken,
   type GitHubTreeItem as BaseGitHubTreeItem,
 } from "../github/helpers";
@@ -1772,7 +1771,6 @@ async function fetchBranchHeadSha(
 export type DefaultBranchHead =
   | { status: "head"; commitSha: string; defaultBranch: string }
   // GitHub no longer lets the installation read this repository.
-  | { status: "access_lost" }
   // Transient or unknown failure; try again on the next pass.
   | { status: "unavailable" };
 
@@ -1796,21 +1794,10 @@ export async function fetchDefaultBranchHead(args: {
       appId,
       privateKey,
     );
-  } catch (error) {
-    // A deleted or suspended installation, or a repository no longer
-    // selected for it, is an access change rather than a transient error.
-    const state = await getGitHubInstallationAccessState(
-      args.installationId,
-      appId,
-      privateKey,
-    );
-    const repositoryDeselected =
-      state === "active" &&
-      error instanceof Error &&
-      /HTTP (403|404|422)\b/.test(error.message);
-    return state === "deleted" || state === "suspended" || repositoryDeselected
-      ? { status: "access_lost" }
-      : { status: "unavailable" };
+  } catch {
+    // Lost installation access is reconciled by the installation-removal
+    // crons; starting a reindex here would only fail at the same token mint.
+    return { status: "unavailable" };
   }
   try {
     const metadata = await fetchAuthoritativeRepositoryMetadata(

@@ -398,9 +398,7 @@ export const dailySyncAllRepositories = internalAction({
         // Push webhooks index every default-branch change; this daily pass
         // only catches missed deliveries. An unchanged head costs two GitHub
         // requests and no database work, and a transient GitHub failure is
-        // left for the next pass instead of forcing a blind reindex. When
-        // GitHub reports lost access, the prepare checks still run so the
-        // repository is quarantined.
+        // left for the next pass instead of forcing a blind reindex.
         const head = await fetchDefaultBranchHead({
           installationId: repo.installationId,
           githubRepositoryId: repo.githubRepositoryId,
@@ -419,14 +417,10 @@ export const dailySyncAllRepositories = internalAction({
           {
             repositoryId: repo._id,
             scheduleDelayMs: scheduled * 30_000,
-            ...(head.status === "head"
-              ? {
-                  source: {
-                    commitSha: head.commitSha,
-                    defaultBranch: head.defaultBranch,
-                  },
-                }
-              : {}),
+            source: {
+              commitSha: head.commitSha,
+              defaultBranch: head.defaultBranch,
+            },
           },
         );
         if (!prepared.success) {
