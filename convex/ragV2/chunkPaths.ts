@@ -1,6 +1,33 @@
-import type { Id } from "../_generated/dataModel";
+import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import { RAG_OLD_CHUNK_CLEANUP_BATCH_SIZE } from "./chunkBudget";
+
+/**
+ * Bump whenever parsing, normalization, chunk IDs or searchable text change,
+ * so the next pass of every repository rebuilds all paths.
+ */
+export const RAG_CHUNKER_VERSION = 1;
+
+type ChunkLayoutState = Pick<
+  Doc<"repositories">,
+  "ragChunkLayout" | "ragChunkerVersion" | "ragFullRebuildRequested"
+>;
+
+/** Whether chunks are kept per path, so readers ignore generation numbers. */
+export function usesPathChunkLayout(repository: ChunkLayoutState): boolean {
+  return repository.ragChunkLayout === "path_v1";
+}
+
+/** Whether a RAG pass may visit only the paths flagged as changed. */
+export function canRechunkChangedPathsOnly(
+  repository: ChunkLayoutState,
+): boolean {
+  return (
+    usesPathChunkLayout(repository) &&
+    repository.ragChunkerVersion === RAG_CHUNKER_VERSION &&
+    repository.ragFullRebuildRequested !== true
+  );
+}
 
 /**
  * Delete up to `budget` chunks of one repository path. Chunks are replaced

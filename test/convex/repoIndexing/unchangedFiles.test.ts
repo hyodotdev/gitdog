@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { internal } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import schema from "../../../convex/schema";
+import { RAG_CHUNKER_VERSION } from "../../../convex/ragV2/chunkPaths";
 
 const modules = import.meta.glob("../../../convex/**/*.ts");
 type Backend = ReturnType<typeof convexTest>;
@@ -53,6 +54,7 @@ async function insertIndexingRepository(t: Backend) {
       ragIndexedChunks: 0,
       ragFailedChunks: 0,
       ragChunkLayout: "path_v1",
+      ragChunkerVersion: RAG_CHUNKER_VERSION,
       indexSyncPending: false,
       settings: {
         issueAssistantEnabled: true,
@@ -259,6 +261,32 @@ describe("unchanged file reuse", () => {
     }));
     expect(state.maps.map((map) => map.filePath)).toEqual(["kept.ts"]);
     expect(state.chunks.map((chunk) => chunk.path)).toEqual(["kept.ts"]);
+    await t.run(async (ctx) => {
+      for (const job of await ctx.db.system
+        .query("_scheduled_functions")
+        .take(100)) {
+        if (job.state.kind === "pending") await ctx.scheduler.cancel(job._id);
+      }
+    });
+  });
+
+  it("marks an owner-requested sync as a full chunk rebuild", async () => {
+    const t = convexTest(schema, modules);
+    const { repositoryId } = await insertIndexingRepository(t);
+    await t.run((ctx) =>
+      ctx.db.patch(repositoryId, {
+        indexStatus: "completed",
+        ragStatus: "completed",
+      }),
+    );
+    const prepared = await t.mutation(
+      internal.repoIndexing.mutation.prepareIncrementalIndex,
+      { repositoryId, fullRebuild: true },
+    );
+    expect(prepared.success).toBe(true);
+    expect(await t.run((ctx) => ctx.db.get(repositoryId))).toMatchObject({
+      ragFullRebuildRequested: true,
+    });
     await t.run(async (ctx) => {
       for (const job of await ctx.db.system
         .query("_scheduled_functions")

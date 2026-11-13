@@ -9,6 +9,7 @@ import {
   CURRENT_TERMS_VERSION,
 } from "../../../convex/users/legal";
 import { drainScheduledFunctions } from "../scheduling";
+import { RAG_CHUNKER_VERSION } from "../../../convex/ragV2/chunkPaths";
 
 const modules = import.meta.glob("../../../convex/**/*.ts");
 const originalFetch = globalThis.fetch;
@@ -43,6 +44,7 @@ afterEach(() => {
 async function insertRepository(
   t: Backend,
   layout: "path_v1" | undefined,
+  fields: Record<string, unknown> = {},
 ): Promise<Id<"repositories">> {
   return await t.run(async (ctx) => {
     const now = Date.now();
@@ -85,6 +87,8 @@ async function insertRepository(
       ragIndexedChunks: 0,
       ragFailedChunks: 0,
       ragChunkLayout: layout,
+      ...(layout ? { ragChunkerVersion: RAG_CHUNKER_VERSION } : {}),
+      ...fields,
       indexSyncPending: false,
       settings: {
         issueAssistantEnabled: true,
@@ -342,5 +346,117 @@ describe("incremental repository chunking", () => {
       ragStatus: "completed",
       ragChunkLayout: "path_v1",
     });
+  });
+
+  it("rebuilds every path when the chunker version changed or a rebuild was requested", async () => {
+    for (const fields of [
+      { ragChunkerVersion: RAG_CHUNKER_VERSION - 1 },
+      { ragFullRebuildRequested: true },
+    ]) {
+      const t = convexTest(schema, modules);
+      fetchedUrls = [];
+      const repositoryId = await insertRepository(t, "path_v1", fields);
+      await insertFile(
+        t,
+        repositoryId,
+        "src/alpha.ts",
+        "export function alphaRechunked() { return 1; }",
+        false,
+      );
+      await insertChunk(t, repositoryId, "src/alpha.ts", "alphaOutdated", 2);
+
+      await runRagPass(t, repositoryId);
+
+      expect(fetchedUrls).toHaveLength(1);
+      const repository = await t.run((ctx) => ctx.db.get(repositoryId));
+      expect(repository).toMatchObject({
+        ragStatus: "completed",
+        ragChunkLayout: "path_v1",
+        ragChunkerVersion: RAG_CHUNKER_VERSION,
+      });
+      expect(repository?.ragFullRebuildRequested).toBeUndefined();
+      expect(await search(t, repositoryId, "alphaOutdated")).toEqual([]);
+      expect(await search(t, repositoryId, "alphaRechunked")).toEqual([
+        "src/alpha.ts",
+      ]);
+    }
+  });
+
+  it("fails the pass and keeps the flag when a changed path has no cached source", async () => {
+    const t = convexTest(schema, modules);
+    const repositoryId = await insertRepository(t, "path_v1");
+    await t.run(async (ctx) => {
+      const now = Date.now();
+      await ctx.db.insert("repoFileMap", {
+        repositoryId,
+        filePath: "src/lost.ts",
+        sha256: "sha-without-blob",
+        language: "typescript",
+        size: 10,
+        isText: true,
+        indexVersion: 3,
+        ragPending: true,
+        createdAt: now,
+        updatedAt: now,
+      });
+    });
+    const chunkId = await insertChunk(
+      t,
+      repositoryId,
+      "src/lost.ts",
+      "lostPrevious",
+      2,
+    );
+
+    await runRagPass(t, repositoryId);
+
+    const state = await t.run(async (ctx) => ({
+      repository: await ctx.db.get(repositoryId),
+      chunk: await ctx.db.get(chunkId),
+      map: await ctx.db
+        .query("repoFileMap")
+        .withIndex("by_repository_and_path", (q) =>
+          q.eq("repositoryId", repositoryId).eq("filePath", "src/lost.ts"),
+        )
+        .first(),
+    }));
+    expect(state.repository?.ragStatus).toBe("failed");
+    expect(state.chunk).not.toBeNull();
+    expect(state.map?.ragPending).toBe(true);
+  });
+
+  it("serves only the newest copy of a chunk ID", async () => {
+    for (const layout of ["path_v1", undefined] as const) {
+      const t = convexTest(schema, modules);
+      const repositoryId = await insertRepository(t, layout);
+      await t.run((ctx) =>
+        ctx.db.patch(repositoryId, { ragStatus: "completed" }),
+      );
+      await insertChunk(t, repositoryId, "src/dup.ts", "dupSymbol", 2);
+      const newestId = await insertChunk(
+        t,
+        repositoryId,
+        "src/dup.ts",
+        "dupSymbol",
+        3,
+      );
+
+      const results = await t.query(
+        internal.ragV2.internalQuery.keywordSearch,
+        { repositoryId, indexVersion: 3, query: "dupSymbol", topK: 20 },
+      );
+      expect(results).toHaveLength(1);
+      const byId = await t.query(internal.ragV2.internalQuery.getChunksByIds, {
+        repositoryId,
+        indexVersion: 3,
+        chunkIds: ["src/dup.ts#1#1"],
+      });
+      expect(byId.map((chunk) => chunk._id)).toEqual([newestId]);
+      const page = await t.query(
+        internal.ragV2.internalQuery.getSearchableChunksPage,
+        { repositoryId, indexVersion: 3 },
+      );
+      expect(page.chunks).toHaveLength(1);
+    }
   });
 });

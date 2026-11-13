@@ -26,7 +26,11 @@ import {
 } from "../github/installationAccess";
 import { quarantineRepositoryForMissingInstallation } from "../repositories/accessLifecycle";
 import { satisfiesCurrentLegalAttestationRequirement } from "../users/legal";
-import { deleteChunksForPath } from "./chunkPaths";
+import {
+  canRechunkChangedPathsOnly,
+  deleteChunksForPath,
+  RAG_CHUNKER_VERSION,
+} from "./chunkPaths";
 
 interface RagChunkInput {
   chunkId: string;
@@ -971,6 +975,8 @@ export const updateRagStatus = internalMutation({
         // exactly one chunk set per current path.
         if (args.expectedPhase === "cleanup") {
           updates.ragChunkLayout = "path_v1";
+          updates.ragChunkerVersion = RAG_CHUNKER_VERSION;
+          updates.ragFullRebuildRequested = undefined;
         }
         updates.ragLastIndexedAt = now;
         updates.ragError = undefined;
@@ -1282,7 +1288,7 @@ export const cleanupRagGeneration = internalMutation({
     if (!repo || !ownsRagPhase(repo, args.indexVersion, "cleanup")) {
       return null;
     }
-    if (repo.ragChunkLayout !== "path_v1") {
+    if (!canRechunkChangedPathsOnly(repo)) {
       const oldChunks = await ctx.db
         .query("repoChunks")
         .withIndex("by_index_version", (q) =>

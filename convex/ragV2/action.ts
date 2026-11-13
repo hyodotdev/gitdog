@@ -15,6 +15,7 @@ import { v } from "convex/values";
 import { internalAction } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { normalizeCodeChunksForStorage, parseCodeIntoChunks } from "./parser";
+import { canRechunkChangedPathsOnly } from "./chunkPaths";
 import { requireStrictCurrentAiLegalAttestation } from "../_ai/legalAttestation";
 import {
   buildRagChunkPublicationBatches,
@@ -653,7 +654,7 @@ export const generateChunkEmbeddings = internalAction({
 
       // Once a repository has per-path chunks, only paths whose content
       // changed are visited; unchanged files cost no chunk reads or writes.
-      const pendingOnly = repo.ragChunkLayout === "path_v1";
+      const pendingOnly = canRechunkChangedPathsOnly(repo);
       const filePage = await ctx.runQuery(
         internal.repoIndexing.internalQuery.getRepositoryFilesPage,
         {
@@ -734,7 +735,11 @@ export const generateChunkEmbeddings = internalAction({
           return nextPositionAfterFile(position);
         };
         if (fileMap.isText === false) return await skipFile("non-text source");
-        if (fileMap.hasBlob === false) return await skipFile("uncached source");
+        if (fileMap.hasBlob === false) {
+          // Keep the old chunks and the flag; the pass fails and a later
+          // generation retries this path.
+          throw new Error("no cached source");
+        }
         if (fileMap.size > MAX_RAG_SOURCE_BYTES) {
           return await skipFile(
             `oversized source (${fileMap.size} declared bytes)`,

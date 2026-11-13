@@ -118,6 +118,9 @@ export const initializeIndexing = mutation({
     await ctx.db.patch(args.repositoryId, {
       indexStatus: "pending",
       indexVersion: newVersion,
+      // A reindex the owner asks for rebuilds every chunk, not only those of
+      // changed files.
+      ragFullRebuildRequested: true,
       indexError: undefined,
       ragStatus: "pending",
       ragError: undefined,
@@ -2235,6 +2238,8 @@ export const prepareIncrementalIndex = internalMutation({
     source: v.optional(
       v.object({ commitSha: v.string(), defaultBranch: v.string() }),
     ),
+    // Owner-requested sync: rebuild every path's chunks.
+    fullRebuild: v.optional(v.boolean()),
   },
   handler: async (
     ctx,
@@ -2369,6 +2374,7 @@ export const prepareIncrementalIndex = internalMutation({
     // This locks the repository - no other trigger can start until completed
     await ctx.db.patch(repo._id, {
       indexVersion: newVersion,
+      ...(args.fullRebuild === true ? { ragFullRebuildRequested: true } : {}),
       indexStatus: "pending", // Lock: only "completed" can transition here
       indexError: undefined,
       ragStatus: "pending",

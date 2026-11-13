@@ -723,6 +723,10 @@ const applicationTables = {
     // Set once a RAG pass finishes with per-path chunk replacement. Until then
     // a pass rebuilds every file and sweeps chunks of older generations.
     ragChunkLayout: v.optional(v.literal("path_v1")),
+    // Chunker version that wrote the per-path chunks; a mismatch, or an
+    // explicit rebuild request, makes the next pass rebuild every path.
+    ragChunkerVersion: v.optional(v.number()),
+    ragFullRebuildRequested: v.optional(v.boolean()),
     indexSyncPending: v.boolean(), // Coalesce pushes received during file/RAG indexing
 
     // Repository disconnect is a durable bounded cleanup workflow. The row is
