@@ -42,6 +42,7 @@ export const EMPTY_USER_KEY_TOTALS: PeriodTotals["userKey"] = {
   baseCostCents: 0,
 };
 
+const COST_PRECISION = 1_000_000;
 const INVALID_ROW = "Token usage row cannot be added to period totals";
 
 function addCount(current: number, value: number, sign: 1 | -1 = 1): number {
@@ -55,8 +56,12 @@ function addCost(current: number, value: number, sign: 1 | -1 = 1): number {
   if (!Number.isFinite(value) || value < 0 || value > Number.MAX_SAFE_INTEGER) {
     throw new Error(INVALID_ROW);
   }
-  // Subtraction can leave float dust; costs are never negative.
-  const total = Math.max(0, current + sign * value);
+  // Round to a millionth of a cent so subtraction leaves no float dust;
+  // costs are never negative.
+  const total = Math.max(
+    0,
+    Math.round((current + sign * value) * COST_PRECISION) / COST_PRECISION,
+  );
   if (!Number.isFinite(total) || total > Number.MAX_SAFE_INTEGER) {
     throw new Error(INVALID_ROW);
   }
@@ -64,6 +69,7 @@ function addCost(current: number, value: number, sign: 1 | -1 = 1): number {
 }
 
 const EMPTY_REPOSITORY_ENTRY: Omit<RepositoryEntry, "repositoryId"> = {
+  rowCount: 0,
   totalTokens: 0,
   inputTokens: 0,
   outputTokens: 0,
@@ -80,6 +86,7 @@ function applyToRepositoryEntry(
   row: UsageRow,
   sign: 1 | -1,
 ): RepositoryEntry {
+  entry = { ...entry, rowCount: addCount(entry.rowCount, 1, sign) };
   if (row.keySource === "user") {
     return {
       ...entry,

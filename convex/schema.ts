@@ -342,6 +342,8 @@ const applicationTables = {
     repositories: v.array(
       v.object({
         repositoryId: v.optional(v.id("repositories")),
+        // Rows of either key source attributed to this entry.
+        rowCount: v.number(),
         totalTokens: v.number(),
         inputTokens: v.number(),
         outputTokens: v.number(),

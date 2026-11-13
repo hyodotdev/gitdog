@@ -260,15 +260,9 @@ export const getUsageByRepository = query({
       periodEnd,
     );
     if (period && period.repositoriesOverflow !== true) {
-      // Entries emptied by a repository disconnect are not reported.
+      // Like the row path: one entry per repository that still has rows.
       return period.repositories
-        .filter(
-          (entry) =>
-            entry.totalTokens > 0 ||
-            entry.chatActions > 0 ||
-            entry.totalCostCents > 0 ||
-            entry.userKeyActions > 0,
-        )
+        .filter((entry) => entry.rowCount > 0)
         .map((entry) => ({
           repositoryId: entry.repositoryId ?? "unknown",
           totalTokens: entry.totalTokens,

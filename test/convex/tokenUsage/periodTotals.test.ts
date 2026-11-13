@@ -336,4 +336,85 @@ describe("token usage period totals", () => {
     await drainScheduledFunctions(t);
     expect((await readTotals(t, userId))?.gitdog.totalTokens).toBe(321);
   });
+
+  it("reports repositories like the row path after a disconnect and for zero-amount rows", async () => {
+    const t = convexTest(schema, modules);
+    const userId = await t.run((ctx) => ctx.db.insert("users", {}));
+    const detachedRepository = await insertRepository(t, userId);
+    const zeroRepository = await insertRepository(t, userId);
+    await t.run(async (ctx) => {
+      await insertTokenUsage(
+        ctx,
+        usageRow(userId, now() - 3_000, 333, {
+          repositoryId: detachedRepository,
+          baseCostCents: 0.1 + 0.2,
+          totalCostCents: 0.1 + 0.2 + 0.7,
+        }),
+      );
+      await insertTokenUsage(
+        ctx,
+        usageRow(userId, now() - 2_000, 10, {
+          repositoryId: zeroRepository,
+          inputTokens: 0,
+          outputTokens: 10,
+          baseCostCents: 0,
+          serviceFeeCents: 0,
+          totalCostCents: 0,
+          usageType: "embedding",
+        }),
+      );
+      const rows = await ctx.db
+        .query("tokenUsage")
+        .withIndex("by_repository", (q) =>
+          q.eq("repositoryId", detachedRepository),
+        )
+        .collect();
+      for (const row of rows) {
+        await detachUsageRepositoryInPeriodTotals(ctx, row);
+        await ctx.db.patch(row._id, { repositoryId: undefined });
+      }
+    });
+    const totals = await readTotals(t, userId);
+    const detachedEntry = totals?.repositories.find(
+      (entry) => entry.repositoryId === detachedRepository,
+    );
+    expect(detachedEntry).toMatchObject({
+      rowCount: 0,
+      baseCostCents: 0,
+      totalCostCents: 0,
+    });
+
+    const asUser = t.withIdentity({ subject: `${userId}|session` });
+    const fromTotals = await asUser.query(
+      api.tokenUsage.query.getUsageByRepository,
+      {},
+    );
+    await t.run(async (ctx) => {
+      for (const doc of await ctx.db
+        .query("tokenUsagePeriodTotals")
+        .collect()) {
+        await ctx.db.delete(doc._id);
+      }
+    });
+    const fromRows = await asUser.query(
+      api.tokenUsage.query.getUsageByRepository,
+      {},
+    );
+    const byRepository = (list: typeof fromRows) =>
+      Object.fromEntries(
+        list.map((entry) => [
+          entry.repositoryId,
+          {
+            ...entry,
+            totalCostCents: Number(entry.totalCostCents.toFixed(6)),
+            totalBaseCostCents: Number(entry.totalBaseCostCents.toFixed(6)),
+            totalServiceFeeCents: Number(entry.totalServiceFeeCents.toFixed(6)),
+          },
+        ]),
+      );
+    expect(byRepository(fromTotals)).toEqual(byRepository(fromRows));
+    expect(fromTotals.map((entry) => entry.repositoryId).sort()).toEqual(
+      ["unknown", zeroRepository].sort(),
+    );
+  });
 });
