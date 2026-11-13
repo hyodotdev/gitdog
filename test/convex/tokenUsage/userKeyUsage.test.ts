@@ -189,6 +189,22 @@ async function saveKey(
   });
 }
 
+async function savedIv(
+  t: ReturnType<typeof convexTest>,
+  userId: Id<"users">,
+  provider: "anthropic" | "openai",
+) {
+  const row = await t.run(async (ctx) =>
+    ctx.db
+      .query("providerApiKeys")
+      .withIndex("by_user_and_provider", (q) =>
+        q.eq("userId", userId).eq("provider", provider),
+      )
+      .unique(),
+  );
+  return row!.iv;
+}
+
 async function exhaustFreeQuota(
   t: ReturnType<typeof convexTest>,
   fixture: Fixture,
@@ -397,6 +413,7 @@ describe("generation on the owner's own provider key", () => {
       {
         userId: fixture.userId,
         provider: "anthropic",
+        keyIv: await savedIv(t, fixture.userId, "anthropic"),
         code: "invalid",
         httpStatus: 401,
       },
@@ -812,6 +829,7 @@ describe("provider resolution with user keys", () => {
       {
         userId: fixture.userId,
         provider: "anthropic",
+        keyIv: await savedIv(t, fixture.userId, "anthropic"),
         code: "out_of_credit",
       },
     );
@@ -946,6 +964,7 @@ describe("user key recovery and server key problems", () => {
       {
         userId: fixture.userId,
         provider: "anthropic",
+        keyIv: await savedIv(t, fixture.userId, "anthropic"),
         code: "out_of_credit",
       },
     );
@@ -1031,6 +1050,7 @@ describe("round 3 provider key state", () => {
       {
         userId: fixture.userId,
         provider: "anthropic",
+        keyIv: await savedIv(t, fixture.userId, "anthropic"),
         code: "out_of_credit",
       },
     );
@@ -1160,5 +1180,70 @@ describe("round 6 recovery", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(claudeResponse());
     await provider.chat(question);
     expect((await key()).unreadableAt).toBeUndefined();
+  });
+});
+
+describe("user key reports from a running action", () => {
+  it("clears a failure another action recorded once a newer request on the same key succeeds", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await insertFixture(t);
+    await saveKey(t, fixture.userId, "anthropic", ANTHROPIC_KEY);
+    // Resolved while the key was healthy.
+    const provider = await resolveGenerationProvider(actionCtx(t), {
+      userId: fixture.userId,
+    });
+    await t.mutation(
+      internal.providerApiKeys.internalMutation.recordKeyFailure,
+      {
+        userId: fixture.userId,
+        provider: "anthropic",
+        code: "out_of_credit",
+        keyIv: await savedIv(t, fixture.userId, "anthropic"),
+      },
+    );
+    await expect(
+      resolveGenerationProvider(actionCtx(t), { userId: fixture.userId }),
+    ).rejects.toMatchObject({ code: "out_of_credit" });
+    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 1_000);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(claudeResponse());
+    await provider.chat(question);
+    const [key] = await t.run(async (ctx) =>
+      ctx.db.query("providerApiKeys").collect(),
+    );
+    expect(key).toMatchObject({ status: "active" });
+    expect(key.lastError).toBeUndefined();
+    await expect(
+      resolveGenerationProvider(actionCtx(t), { userId: fixture.userId }),
+    ).resolves.toMatchObject({ keySource: "user" });
+  });
+
+  it("does not mark a replacement key rejected when the replaced key fails", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await insertFixture(t);
+    await saveKey(t, fixture.userId, "anthropic", ANTHROPIC_KEY);
+    const provider = await resolveGenerationProvider(actionCtx(t), {
+      userId: fixture.userId,
+    });
+    await saveKey(
+      t,
+      fixture.userId,
+      "anthropic",
+      `sk-ant-api03-${"c".repeat(40)}`,
+    );
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("{}", { status: 401 }),
+    );
+    await expect(provider.chat(question)).rejects.toMatchObject({
+      code: "invalid",
+    });
+    const state = await t.run(async (ctx) => ({
+      keys: await ctx.db.query("providerApiKeys").collect(),
+      notifications: await ctx.db.query("notifications").collect(),
+    }));
+    expect(state.notifications).toEqual([]);
+    expect(state.keys).toEqual([
+      expect.objectContaining({ status: "active", last4: "cccc" }),
+    ]);
+    expect(state.keys[0].lastError).toBeUndefined();
   });
 });

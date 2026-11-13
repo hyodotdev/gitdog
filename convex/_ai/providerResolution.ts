@@ -81,8 +81,9 @@ class UserKeyProvider implements AiProvider {
     private readonly userId: Id<"users">,
     private readonly keyProvider: KeyProvider,
     private readonly inner: AiProvider,
-    // Set when the saved key last failed, so a success clears that state.
-    private recovery?: { keyIv: string },
+    // The saved key this provider decrypted (its iv changes on every save),
+    // so failures and successes are reported against that key only.
+    private readonly keyIv: string,
   ) {}
   get name() {
     return this.inner.name;
@@ -101,7 +102,13 @@ class UserKeyProvider implements AiProvider {
     try {
       await this.ctx.runMutation(
         internal.providerApiKeys.internalMutation.recordKeyFailure,
-        { userId: this.userId, provider: this.keyProvider, code, httpStatus },
+        {
+          userId: this.userId,
+          provider: this.keyProvider,
+          code,
+          httpStatus,
+          keyIv: this.keyIv,
+        },
       );
     } catch {
       /* Best effort: the request already failed with an actionable error. */
@@ -115,22 +122,21 @@ class UserKeyProvider implements AiProvider {
     const requestStartedAt = Date.now();
     try {
       const result = await this.inner.chat(messages, options);
-      if (this.recovery) {
-        const { keyIv } = this.recovery;
-        this.recovery = undefined;
-        try {
-          await this.ctx.runMutation(
-            internal.providerApiKeys.internalMutation.markKeyWorking,
-            {
-              userId: this.userId,
-              provider: this.keyProvider,
-              keyIv,
-              requestStartedAt,
-            },
-          );
-        } catch {
-          /* Best effort: the next success tries again. */
-        }
+      // Reported on every success: another action may have recorded a
+      // failure on this key meanwhile. The mutation only reads when the key
+      // is already healthy.
+      try {
+        await this.ctx.runMutation(
+          internal.providerApiKeys.internalMutation.markKeyWorking,
+          {
+            userId: this.userId,
+            provider: this.keyProvider,
+            keyIv: this.keyIv,
+            requestStartedAt,
+          },
+        );
+      } catch {
+        /* Best effort: the next success tries again. */
       }
       return result;
     } catch (error) {
@@ -194,11 +200,7 @@ async function userKeyLeaf(
     row.provider === "anthropic"
       ? new ClaudeProvider(apiKey, undefined, { enforceAccessDeadline: false })
       : new OpenAIProvider(apiKey),
-    row.status !== "active" ||
-      row.lastError !== undefined ||
-      row.unreadableAt !== undefined
-      ? { keyIv: row.iv }
-      : undefined,
+    row.iv,
   );
 }
 

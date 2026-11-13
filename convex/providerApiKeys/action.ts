@@ -200,13 +200,14 @@ export const revalidate = action({
             provider: args.provider,
             code: "invalid",
             httpStatus: result.httpStatus,
+            keyIv: row.iv,
           },
         );
       rejectValidation(args.provider, result);
     }
     await ctx.runMutation(
       internal.providerApiKeys.internalMutation.markValidated,
-      { userId, provider: args.provider },
+      { userId, provider: args.provider, keyIv: row.iv },
     );
     return { provider: args.provider, status: "active" };
   },

@@ -131,6 +131,9 @@ export const recordKeyFailure = internalMutation({
       v.literal("provider_error"),
     ),
     httpStatus: v.optional(v.number()),
+    // The saved key that failed; a report about a key since replaced is
+    // ignored.
+    keyIv: v.string(),
   },
   handler: async (ctx, args) => {
     const row = await ctx.db
@@ -139,7 +142,7 @@ export const recordKeyFailure = internalMutation({
         q.eq("userId", args.userId).eq("provider", args.provider),
       )
       .unique();
-    if (!row) return;
+    if (!row || row.iv !== args.keyIv) return;
     const now = Date.now();
     const nextStatus =
       args.code === "invalid" || args.code === "out_of_credit"
@@ -165,7 +168,13 @@ export const recordKeyFailure = internalMutation({
 });
 
 export const markValidated = internalMutation({
-  args: { userId: v.id("users"), provider: providerValidator },
+  args: {
+    userId: v.id("users"),
+    provider: providerValidator,
+    // The saved key that was checked; a check of a key since replaced is
+    // ignored.
+    keyIv: v.string(),
+  },
   handler: async (ctx, args) => {
     const row = await ctx.db
       .query("providerApiKeys")
@@ -173,7 +182,7 @@ export const markValidated = internalMutation({
         q.eq("userId", args.userId).eq("provider", args.provider),
       )
       .unique();
-    if (!row) return;
+    if (!row || row.iv !== args.keyIv) return;
     const now = Date.now();
     await ctx.db.patch(row._id, {
       status: "active",

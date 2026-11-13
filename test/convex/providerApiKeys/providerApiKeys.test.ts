@@ -48,6 +48,22 @@ async function signedIn(t: ReturnType<typeof convexTest>) {
   };
 }
 
+async function currentIv(
+  t: ReturnType<typeof convexTest>,
+  userId: Id<"users">,
+  provider: "anthropic" | "openai",
+) {
+  const row = await t.run(async (ctx) =>
+    ctx.db
+      .query("providerApiKeys")
+      .withIndex("by_user_and_provider", (q) =>
+        q.eq("userId", userId).eq("provider", provider),
+      )
+      .unique(),
+  );
+  return row!.iv;
+}
+
 describe("provider key encryption", () => {
   it("round-trips and binds the ciphertext to its user and provider", async () => {
     const encrypted = await encryptProviderKey(
@@ -303,7 +319,13 @@ describe("provider key management", () => {
     });
     await t.mutation(
       internal.providerApiKeys.internalMutation.recordKeyFailure,
-      { userId, provider: "openai", code: "out_of_credit", httpStatus: 429 },
+      {
+        userId,
+        provider: "openai",
+        code: "out_of_credit",
+        httpStatus: 429,
+        keyIv: await currentIv(t, userId, "openai"),
+      },
     );
     await expect(as.query(api.providerApiKeys.query.list, {})).resolves.toEqual(
       [
@@ -337,11 +359,12 @@ describe("provider key failure notices", () => {
       provider: "anthropic",
       apiKey: ANTHROPIC_KEY,
     });
-    const fail = (code: "invalid" | "out_of_credit" | "rate_limited") =>
+    const fail = async (code: "invalid" | "out_of_credit" | "rate_limited") =>
       t.mutation(internal.providerApiKeys.internalMutation.recordKeyFailure, {
         userId,
         provider: "anthropic",
         code,
+        keyIv: await currentIv(t, userId, "anthropic"),
       });
     await fail("out_of_credit");
     await fail("out_of_credit");
@@ -401,17 +424,19 @@ describe("provider key notice transitions", () => {
       provider: "openai",
       apiKey: OPENAI_KEY,
     });
-    const fail = (code: "invalid" | "out_of_credit") =>
+    const fail = async (code: "invalid" | "out_of_credit") =>
       t.mutation(internal.providerApiKeys.internalMutation.recordKeyFailure, {
         userId,
         provider: "openai",
         code,
+        keyIv: await currentIv(t, userId, "openai"),
       });
     await fail("invalid");
     await fail("out_of_credit");
     await t.mutation(internal.providerApiKeys.internalMutation.markValidated, {
       userId,
       provider: "openai",
+      keyIv: await currentIv(t, userId, "openai"),
     });
     await fail("invalid");
     const savedIv = async () =>
@@ -455,5 +480,63 @@ describe("provider key notice transitions", () => {
       (await t.run(async (ctx) => ctx.db.query("notifications").collect()))
         .length,
     ).toBe(5);
+  });
+});
+
+describe("provider key reports after replacement", () => {
+  it("ignores a failure or a check reported on a key the owner has since replaced", async () => {
+    const t = convexTest(schema, modules);
+    const { userId, as } = await signedIn(t);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("{}", { status: 200 }),
+    );
+    await as.action(api.providerApiKeys.action.save, {
+      provider: "anthropic",
+      apiKey: ANTHROPIC_KEY,
+    });
+    const replacedIv = await currentIv(t, userId, "anthropic");
+    await as.action(api.providerApiKeys.action.save, {
+      provider: "anthropic",
+      apiKey: `sk-ant-api03-${"c".repeat(40)}`,
+    });
+    for (const code of ["invalid", "out_of_credit"] as const)
+      await t.mutation(
+        internal.providerApiKeys.internalMutation.recordKeyFailure,
+        {
+          userId,
+          provider: "anthropic",
+          code,
+          httpStatus: 401,
+          keyIv: replacedIv,
+        },
+      );
+    const state = await t.run(async (ctx) => ({
+      keys: await ctx.db.query("providerApiKeys").collect(),
+      notifications: await ctx.db.query("notifications").collect(),
+    }));
+    expect(state.notifications).toEqual([]);
+    expect(state.keys).toEqual([
+      expect.objectContaining({ status: "active", last4: "cccc" }),
+    ]);
+    expect(state.keys[0].lastError).toBeUndefined();
+
+    // A check of the replaced key does not clear the current key's failure.
+    await t.mutation(
+      internal.providerApiKeys.internalMutation.recordKeyFailure,
+      {
+        userId,
+        provider: "anthropic",
+        code: "out_of_credit",
+        keyIv: await currentIv(t, userId, "anthropic"),
+      },
+    );
+    await t.mutation(internal.providerApiKeys.internalMutation.markValidated, {
+      userId,
+      provider: "anthropic",
+      keyIv: replacedIv,
+    });
+    await expect(as.query(api.providerApiKeys.query.list, {})).resolves.toEqual(
+      [expect.objectContaining({ status: "out_of_credit" })],
+    );
   });
 });
