@@ -17,6 +17,7 @@ import {
 import { refreshFreeSubscriptionPeriod } from "../subscriptions/quotaEntitlement";
 import { debitPurchasedTokenWallet } from "../subscriptions/wallet";
 import { readQuotaTokenUsage } from "./quota";
+import { buildPeriodTotalsStep, ensurePeriodTotals } from "./periodTotals";
 import {
   getUsageHourStart,
   hasUsageTotals,
@@ -1240,5 +1241,54 @@ export const backfillAllUsageTotals = internalMutation({
       );
     }
     return { scheduled: page.page.length, done: page.isDone };
+  },
+});
+
+/** Continue one aggregate's paged build; see buildPeriodTotalsStep. */
+export const buildUsagePeriodTotals = internalMutation({
+  args: { totalsId: v.id("tokenUsagePeriodTotals") },
+  handler: async (ctx, args) => await buildPeriodTotalsStep(ctx, args.totalsId),
+});
+
+/**
+ * Create (and build) the aggregate of each user's current entitlement
+ * period, one page of users at a time. Safe to rerun and to run during live
+ * writes; quota reads keep the row path until an aggregate is complete.
+ *
+ *   bunx convex run tokenUsage/internalMutation:backfillUsagePeriodTotals '{}'
+ */
+export const backfillUsagePeriodTotals = internalMutation({
+  args: { cursor: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    const page = await ctx.db.query("users").paginate({
+      cursor: args.cursor ?? null,
+      numItems: USAGE_TOTALS_BACKFILL_USER_BATCH,
+    });
+    const now = Date.now();
+    let ensured = 0;
+    for (const user of page.page) {
+      const entitlement = getEffectiveSubscriptionEntitlement(
+        await getSubscriptionForEntitlement(ctx, user._id, now),
+        now,
+      );
+      if (
+        await ensurePeriodTotals(
+          ctx,
+          user._id,
+          entitlement.periodStart,
+          entitlement.periodEnd,
+        )
+      ) {
+        ensured++;
+      }
+    }
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.tokenUsage.internalMutation.backfillUsagePeriodTotals,
+        { cursor: page.continueCursor },
+      );
+    }
+    return { scanned: page.page.length, ensured, done: page.isDone };
   },
 });

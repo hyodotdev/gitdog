@@ -1748,6 +1748,78 @@ async function fetchAuthoritativeRepositoryMetadata(
   };
 }
 
+async function fetchBranchHeadSha(
+  githubRepo: string,
+  branch: string,
+  token: string,
+): Promise<string | null> {
+  const response = await fetchGitHub(
+    `https://api.github.com/repos/${githubRepo}/commits/${encodeURIComponent(branch)}`,
+    token,
+    "fetch default branch head",
+  );
+  if (!response.ok) {
+    await response.body?.cancel();
+    return null;
+  }
+  const data = (await response.json()) as { sha?: unknown };
+  return typeof data.sha === "string" && /^[a-f0-9]{40}$/i.test(data.sha)
+    ? data.sha.toLowerCase()
+    : null;
+}
+
+export type DefaultBranchHead =
+  | { status: "head"; commitSha: string; defaultBranch: string }
+  // Transient or unknown failure; try again on the next pass.
+  | { status: "unavailable" };
+
+/**
+ * Read the authoritative default branch and its head with one installation
+ * token, so a periodic sync can compare it with the indexed commit before
+ * touching the database.
+ */
+export async function fetchDefaultBranchHead(args: {
+  installationId: number;
+  githubRepositoryId: number;
+}): Promise<DefaultBranchHead> {
+  const appId = process.env.GITHUB_APP_ID;
+  const privateKey = process.env.GITHUB_APP_PRIVATE_KEY;
+  if (!appId || !privateKey) return { status: "unavailable" };
+  let token: string;
+  try {
+    token = await getRepositoryInstallationToken(
+      args.installationId,
+      args.githubRepositoryId,
+      appId,
+      privateKey,
+    );
+  } catch {
+    // Lost installation access is reconciled by the installation-removal
+    // crons; starting a reindex here would only fail at the same token mint.
+    return { status: "unavailable" };
+  }
+  try {
+    const metadata = await fetchAuthoritativeRepositoryMetadata(
+      args.githubRepositoryId,
+      token,
+    );
+    const sha = await fetchBranchHeadSha(
+      metadata.githubRepo,
+      metadata.defaultBranch,
+      token,
+    );
+    return sha
+      ? {
+          status: "head",
+          commitSha: sha,
+          defaultBranch: metadata.defaultBranch,
+        }
+      : { status: "unavailable" };
+  } catch {
+    return { status: "unavailable" };
+  }
+}
+
 async function fetchRepositorySnapshot(
   githubRepo: string,
   branch: string,
@@ -1832,10 +1904,37 @@ async function processRepositoryTreeBatch(
   indexVersion: number,
   offset: number,
 ): Promise<{ nextOffset: number; totalFiles: number }> {
-  const { batch, nextOffset, totalFiles } = getRepositoryIndexBatch(
-    files,
-    offset,
-  );
+  const {
+    batch: pageBatch,
+    nextOffset,
+    totalFiles,
+  } = getRepositoryIndexBatch(files, offset);
+
+  // Unchanged files only move to the new generation; they need no blob
+  // lookups, uploads, or re-chunking.
+  const reuse =
+    pageBatch.length === 0
+      ? { changedPaths: [] }
+      : await ctx.runMutation(
+          internal.repoIndexing.mutation.reuseUnchangedFileMaps,
+          {
+            repositoryId,
+            ...publicationIdentity,
+            expectedIndexVersion: indexVersion,
+            files: pageBatch.map((file) => ({
+              filePath: file.path,
+              sha256: file.sha,
+              language: getLanguageFromPath(file.path),
+              size: file.size ?? 0,
+              isText: isTextFile(file.path),
+            })),
+          },
+        );
+  if (reuse === "stale") {
+    throw new Error("stale repository indexing generation");
+  }
+  const changedPaths = new Set(reuse.changedPaths);
+  const batch = pageBatch.filter((file) => changedPaths.has(file.path));
 
   for (let i = 0; i < batch.length; i += FILE_INDEX_CONCURRENCY) {
     const concurrentFiles = batch.slice(i, i + FILE_INDEX_CONCURRENCY);
@@ -1931,7 +2030,7 @@ async function processRepositoryTreeBatch(
         throw new GitHubRateLimitError(
           "fetch repository file page",
           failed.reason.retryAt,
-          offset + i,
+          offset + pageBatch.indexOf(batch[i]),
         );
       }
       throw failed.reason;

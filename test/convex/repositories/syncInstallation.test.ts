@@ -21,6 +21,7 @@ const prepareIncrementalIndex = internalMutation({
     allowFailedIndexRecovery: v.optional(v.boolean()),
     allowStaleIndexRecovery: v.optional(v.boolean()),
     queueIfBusy: v.optional(v.boolean()),
+    fullRebuild: v.optional(v.boolean()),
     scheduleDelayMs: v.optional(v.number()),
   },
   handler: async (ctx, args) => {

@@ -8,6 +8,7 @@ import {
   internalAction,
   internalMutation,
 } from "../../../convex/_generated/server";
+import { REFERENCED_BLOB_RECHECK_MS } from "../../../convex/repoIndexing/mutation";
 import schema from "../../../convex/schema";
 import { assertMapFilePublished } from "../../../convex/repoIndexing/action";
 import { INDEXING_STALE_THRESHOLD_MS } from "../../../convex/repoIndexing/readiness";
@@ -1628,7 +1629,9 @@ describe("prepareIncrementalIndex", () => {
       blob: await ctx.db.get(blobId),
       url: await ctx.storage.getUrl(storageId),
     }));
-    expect(state.blob?.lastAccessedAt).toBe(cleanup.now);
+    expect(state.blob?.lastAccessedAt).toBe(
+      cleanup.now + REFERENCED_BLOB_RECHECK_MS,
+    );
     expect(state.url).not.toBeNull();
   });
 

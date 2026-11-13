@@ -3,13 +3,60 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { internal } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import schema from "../../../convex/schema";
+import * as githubHelpers from "../../../convex/github/helpers";
 import {
   CURRENT_PRIVACY_POLICY_VERSION,
   CURRENT_TERMS_VERSION,
 } from "../../../convex/users/legal";
 const modules = import.meta.glob("../../../convex/**/*.ts");
-beforeEach(() => vi.useFakeTimers());
-afterEach(() => vi.useRealTimers());
+const originalFetch = globalThis.fetch;
+const INDEXED_SHA = "a".repeat(40);
+const PUSHED_SHA = "b".repeat(40);
+let headShas: Map<string, string>;
+let defaultBranches: Map<string, string>;
+let githubRequests: string[];
+beforeEach(() => {
+  vi.useFakeTimers();
+  headShas = new Map();
+  defaultBranches = new Map();
+  githubRequests = [];
+  vi.spyOn(githubHelpers, "getRepositoryInstallationToken").mockResolvedValue(
+    "installation-token",
+  );
+  globalThis.fetch = vi.fn(async (input: string | URL | Request) => {
+    const url = String(input instanceof Request ? input.url : input);
+    githubRequests.push(url);
+    const metadata = /^https:\/\/api\.github\.com\/repositories\/(\d+)$/.exec(
+      url,
+    );
+    if (metadata) {
+      const id = Number(metadata[1]);
+      const name = id === 101 ? "owner/repo" : `owner/repo-${id - 101}`;
+      return new Response(
+        JSON.stringify({
+          id,
+          full_name: name,
+          default_branch: defaultBranches.get(name) ?? "main",
+        }),
+        { status: 200 },
+      );
+    }
+    const match =
+      /^https:\/\/api\.github\.com\/repos\/(.+)\/commits\/(.+)$/.exec(url);
+    const sha = match
+      ? (headShas.get(`${match[1]}@${decodeURIComponent(match[2])}`) ??
+        (match[2] === "main" ? headShas.get(match[1]) : undefined))
+      : undefined;
+    return sha
+      ? new Response(JSON.stringify({ sha }), { status: 200 })
+      : new Response("{}", { status: 404 });
+  }) as unknown as typeof fetch;
+});
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+  vi.restoreAllMocks();
+  vi.useRealTimers();
+});
 async function insertFixture(t: ReturnType<typeof convexTest>): Promise<{
   userId: Id<"users">;
   repositoryId: Id<"repositories">;
@@ -35,6 +82,7 @@ async function insertFixture(t: ReturnType<typeof convexTest>): Promise<{
       githubRepoKey: "owner/repo",
       name: "repo",
       githubUrl: "https://github.com/owner/repo",
+      defaultBranch: "main",
       isActive: true,
       settings: {
         issueAssistantEnabled: true,
@@ -135,6 +183,8 @@ describe("bounded periodic repository sync", () => {
       }
       return result;
     });
+    headShas.set("owner/repo", PUSHED_SHA);
+    for (let i = 1; i < 12; i++) headShas.set(`owner/repo-${i}`, PUSHED_SHA);
     const first = await t.query(
       internal.repoIndexing.internalQuery.getPeriodicSyncPage,
       {},
@@ -179,5 +229,131 @@ describe("bounded periodic repository sync", () => {
         if (job.state.kind === "pending") await ctx.scheduler.cancel(job._id);
       }
     });
+  });
+});
+
+describe("daily sync head comparison", () => {
+  async function insertIndexedRepository(
+    t: ReturnType<typeof convexTest>,
+    commitSha: string,
+  ) {
+    const f = await insertFixture(t);
+    await enableRepositoryAccess(t, f);
+    await t.run(async (ctx) => {
+      await ctx.db.patch(f.repositoryId, {
+        indexSource: { indexVersion: 1, commitSha, defaultBranch: "main" },
+      });
+    });
+    return f.repositoryId;
+  }
+
+  it("does no database work when the default branch head is already indexed", async () => {
+    const t = convexTest(schema, modules);
+    const repositoryId = await insertIndexedRepository(t, INDEXED_SHA);
+    headShas.set("owner/repo", INDEXED_SHA);
+    const before = await t.run((ctx) => ctx.db.get(repositoryId));
+
+    expect(
+      await t.action(
+        internal.repoIndexing.internalAction.dailySyncAllRepositories,
+        {},
+      ),
+    ).toEqual({ total: 1, scheduled: 0, skipped: 1, hasMore: false });
+
+    const after = await t.run(async (ctx) => ({
+      repository: await ctx.db.get(repositoryId),
+      scheduled: await ctx.db.system.query("_scheduled_functions").collect(),
+      logs: await ctx.db.query("repoIndexingLogs").collect(),
+    }));
+    expect(after.repository).toEqual(before);
+    expect(after.scheduled).toHaveLength(0);
+    expect(after.logs).toHaveLength(0);
+    expect(githubRequests).toEqual([
+      "https://api.github.com/repositories/101",
+      "https://api.github.com/repos/owner/repo/commits/main",
+    ]);
+  });
+
+  it("starts a generation pinned to the new head when the branch moved", async () => {
+    const t = convexTest(schema, modules);
+    const repositoryId = await insertIndexedRepository(t, INDEXED_SHA);
+    headShas.set("owner/repo", PUSHED_SHA);
+
+    expect(
+      await t.action(
+        internal.repoIndexing.internalAction.dailySyncAllRepositories,
+        {},
+      ),
+    ).toEqual({ total: 1, scheduled: 1, skipped: 0, hasMore: false });
+    const repository = await t.run((ctx) => ctx.db.get(repositoryId));
+    expect(repository).toMatchObject({
+      indexVersion: 2,
+      indexStatus: "pending",
+    });
+    await t.run(async (ctx) => {
+      for (const job of await ctx.db.system
+        .query("_scheduled_functions")
+        .take(100)) {
+        if (job.state.kind === "pending") await ctx.scheduler.cancel(job._id);
+      }
+    });
+  });
+
+  it("leaves the index alone when GitHub cannot report the head", async () => {
+    const t = convexTest(schema, modules);
+    const repositoryId = await insertIndexedRepository(t, INDEXED_SHA);
+    const before = await t.run((ctx) => ctx.db.get(repositoryId));
+
+    expect(
+      await t.action(
+        internal.repoIndexing.internalAction.dailySyncAllRepositories,
+        {},
+      ),
+    ).toEqual({ total: 1, scheduled: 0, skipped: 1, hasMore: false });
+    expect(await t.run((ctx) => ctx.db.get(repositoryId))).toEqual(before);
+  });
+
+  it("compares the head of a renamed default branch, not the stored one", async () => {
+    const t = convexTest(schema, modules);
+    const repositoryId = await insertIndexedRepository(t, INDEXED_SHA);
+    // The old branch still exists at the indexed commit.
+    headShas.set("owner/repo@main", INDEXED_SHA);
+    defaultBranches.set("owner/repo", "trunk");
+    headShas.set("owner/repo@trunk", PUSHED_SHA);
+
+    expect(
+      await t.action(
+        internal.repoIndexing.internalAction.dailySyncAllRepositories,
+        {},
+      ),
+    ).toMatchObject({ scheduled: 1, skipped: 0 });
+    expect(await t.run((ctx) => ctx.db.get(repositoryId))).toMatchObject({
+      indexVersion: 2,
+    });
+    await t.run(async (ctx) => {
+      for (const job of await ctx.db.system
+        .query("_scheduled_functions")
+        .take(100)) {
+        if (job.state.kind === "pending") await ctx.scheduler.cancel(job._id);
+      }
+    });
+  });
+
+  it("skips without database work when the installation token cannot be minted", async () => {
+    const t = convexTest(schema, modules);
+    const repositoryId = await insertIndexedRepository(t, INDEXED_SHA);
+    const before = await t.run((ctx) => ctx.db.get(repositoryId));
+    vi.spyOn(githubHelpers, "getRepositoryInstallationToken").mockRejectedValue(
+      new Error(
+        "GitHub repository-scoped installation token request failed (HTTP 404)",
+      ),
+    );
+    expect(
+      await t.action(
+        internal.repoIndexing.internalAction.dailySyncAllRepositories,
+        {},
+      ),
+    ).toMatchObject({ scheduled: 0, skipped: 1 });
+    expect(await t.run((ctx) => ctx.db.get(repositoryId))).toEqual(before);
   });
 });

@@ -17,6 +17,7 @@ import {
   assertRagChunkStorageBounds,
   MAX_RAG_EMBEDDING_CACHE_BATCHES_PER_REPOSITORY,
   RAG_EMBEDDING_PROVIDER_MAX_ATTEMPTS,
+  RAG_OLD_CHUNK_CLEANUP_BATCH_SIZE,
   RAG_EMBEDDING_RESERVATION_MAX_WAITS,
 } from "./chunkBudget";
 import {
@@ -25,6 +26,12 @@ import {
 } from "../github/installationAccess";
 import { quarantineRepositoryForMissingInstallation } from "../repositories/accessLifecycle";
 import { satisfiesCurrentLegalAttestationRequirement } from "../users/legal";
+import {
+  canRechunkChangedPathsOnly,
+  deleteChunksForPath,
+  isChangedPathsPass,
+  RAG_CHUNKER_VERSION,
+} from "./chunkPaths";
 
 interface RagChunkInput {
   chunkId: string;
@@ -318,11 +325,16 @@ export const claimRagGeneration = internalMutation({
       previousScheduleId: repo.indexWatchdogScheduleId,
       previousSequence: repo.indexWatchdogSequence,
     });
+    const changedOnly = canRechunkChangedPathsOnly(repo);
+    // A changed-paths pass starts from the chunks already stored.
+    const baselineChunks = changedOnly ? (repo.ragLiveChunks ?? 0) : 0;
     await ctx.db.patch(args.repositoryId, {
       ragStatus: "indexing",
       ragError: undefined,
-      ragTotalChunks: 0,
-      ragIndexedChunks: 0,
+      ragPassMode: changedOnly ? "changed" : "full",
+      ragPassChunkerVersion: RAG_CHUNKER_VERSION,
+      ragTotalChunks: baselineChunks,
+      ragIndexedChunks: baselineChunks,
       ragFailedChunks: 0,
       ragEmbeddingMode: args.embeddingMode,
       ragEmbeddingBillingTier:
@@ -965,6 +977,23 @@ export const updateRagStatus = internalMutation({
 
     switch (args.status) {
       case "completed":
+        // A pass that reached completion through its cleanup phase leaves
+        // exactly one chunk set per current path.
+        if (args.expectedPhase === "cleanup") {
+          updates.ragChunkLayout = "path_v1";
+          // Stamp the chunker the pass was claimed with. If the deployed
+          // chunker changed mid-pass, the mismatch makes the next pass a
+          // full rebuild. A pass claimed before pinning leaves it unset.
+          updates.ragChunkerVersion = repo.ragPassChunkerVersion;
+          if (repo.ragPassMode === "full") {
+            updates.ragFullRebuildRequested = undefined;
+          }
+          if (args.indexedChunks !== undefined) {
+            updates.ragLiveChunks = args.indexedChunks;
+          }
+        }
+        updates.ragPassMode = undefined;
+        updates.ragPassChunkerVersion = undefined;
         updates.ragLastIndexedAt = now;
         updates.ragError = undefined;
         updates.ragIndexPhase = undefined;
@@ -975,6 +1004,14 @@ export const updateRagStatus = internalMutation({
         updates.ragProcessedFiles = undefined;
         break;
       case "failed":
+        // A changed-paths pass replaced whole paths, so its running count
+        // still matches the stored chunks. A failed full pass is redone in
+        // full, which recounts from zero.
+        if (isChangedPathsPass(repo) && args.indexedChunks !== undefined) {
+          updates.ragLiveChunks = args.indexedChunks;
+        }
+        updates.ragPassMode = undefined;
+        updates.ragPassChunkerVersion = undefined;
         updates.ragError = args.error ?? "Unknown RAG indexing error";
         updates.ragIndexPhase = undefined;
         updates.ragIndexCursor = undefined;
@@ -1209,6 +1246,102 @@ export const upsertChunks = internalMutation({
     }
 
     return chunkIds;
+  },
+});
+
+function ownsRagPhase(
+  repo: Doc<"repositories">,
+  indexVersion: number,
+  phase: "files" | "cleanup",
+): boolean {
+  return (
+    ownsActiveRepositoryLifecycle(repo) &&
+    repo.indexVersion === indexVersion &&
+    repo.indexStatus === "completed" &&
+    repo.ragStatus === "indexing" &&
+    repo.ragIndexPhase === phase &&
+    repo.ragContinuationToken === undefined
+  );
+}
+
+/**
+ * Remove one bounded batch of a path's chunks before the path is re-chunked.
+ * Readers are pinned to a completed generation, so a path being rebuilt is
+ * never served half-written.
+ */
+export const deleteChunksForPathInGeneration = internalMutation({
+  args: {
+    repositoryId: v.id("repositories"),
+    indexVersion: v.number(),
+    path: v.string(),
+  },
+  returns: v.object({ deleted: v.number(), done: v.boolean() }),
+  handler: async (ctx, args) => {
+    const repo = await ctx.db.get(args.repositoryId);
+    if (!repo || !ownsRagPhase(repo, args.indexVersion, "files")) {
+      throw new Error(
+        `stale RAG chunk upsert for index version ${args.indexVersion}`,
+      );
+    }
+    return await deleteChunksForPath(ctx, args.repositoryId, args.path);
+  },
+});
+
+const RAG_PENDING_CLEAR_BATCH_SIZE = 200;
+
+/**
+ * Finish a generation's chunk bookkeeping in bounded steps. A pass that
+ * rebuilt every path (no per-path layout yet) first sweeps chunks of older
+ * generations; every pass then clears the re-chunk flags it consumed.
+ */
+export const cleanupRagGeneration = internalMutation({
+  args: {
+    repositoryId: v.id("repositories"),
+    indexVersion: v.number(),
+  },
+  returns: v.union(
+    v.null(),
+    v.object({
+      deleted: v.number(),
+      cleared: v.number(),
+      hasMore: v.boolean(),
+    }),
+  ),
+  handler: async (ctx, args) => {
+    const repo = await ctx.db.get(args.repositoryId);
+    if (!repo || !ownsRagPhase(repo, args.indexVersion, "cleanup")) {
+      return null;
+    }
+    if (!isChangedPathsPass(repo)) {
+      const oldChunks = await ctx.db
+        .query("repoChunks")
+        .withIndex("by_index_version", (q) =>
+          q
+            .eq("repositoryId", args.repositoryId)
+            .lt("indexVersion", args.indexVersion),
+        )
+        .take(RAG_OLD_CHUNK_CLEANUP_BATCH_SIZE);
+      for (const chunk of oldChunks) {
+        await ctx.db.delete(chunk._id);
+      }
+      if (oldChunks.length === RAG_OLD_CHUNK_CLEANUP_BATCH_SIZE) {
+        return { deleted: oldChunks.length, cleared: 0, hasMore: true };
+      }
+    }
+    const pending = await ctx.db
+      .query("repoFileMap")
+      .withIndex("by_repository_rag_pending_and_path", (q) =>
+        q.eq("repositoryId", args.repositoryId).eq("ragPending", true),
+      )
+      .take(RAG_PENDING_CLEAR_BATCH_SIZE);
+    for (const fileMap of pending) {
+      await ctx.db.patch(fileMap._id, { ragPending: undefined });
+    }
+    return {
+      deleted: 0,
+      cleared: pending.length,
+      hasMore: pending.length === RAG_PENDING_CLEAR_BATCH_SIZE,
+    };
   },
 });
 

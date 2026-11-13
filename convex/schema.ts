@@ -308,6 +308,64 @@ const applicationTables = {
     updatedAt: v.number(),
   }).index("by_user_and_hour", ["userId", "hourStart"]),
 
+  // Running sums of every tokenUsage row of one user whose createdAt falls in
+  // [periodStart, periodEnd). Updated in the same transaction as each usage
+  // insert, so quota checks and usage pages read one document. While
+  // builtThrough is set, a paged build is still adding rows created before
+  // it and readers fall back to the rows.
+  tokenUsagePeriodTotals: defineTable({
+    userId: v.id("users"),
+    periodStart: v.number(),
+    periodEnd: v.number(),
+    builtThrough: v.optional(v.number()),
+    // Window the build reads per step; halved when a window has too many rows.
+    buildWindowMs: v.optional(v.number()),
+    // Set when the build cannot finish (rows too dense or invalid); readers
+    // then keep the row path for this period for good.
+    buildAbandonedAt: v.optional(v.number()),
+    // Rows that count toward Gitdog quota (keySource undefined).
+    gitdog: v.object({
+      rowCount: v.number(),
+      inputTokens: v.number(),
+      outputTokens: v.number(),
+      totalTokens: v.number(),
+      purchasedTokensDebited: v.number(),
+      baseCostCents: v.number(),
+      serviceFeeCents: v.number(),
+      totalCostCents: v.number(),
+      chatActions: v.number(),
+      embeddingTokens: v.number(),
+    }),
+    // Rows on the user's own provider key; never quota.
+    userKey: v.object({
+      rowCount: v.number(),
+      inputTokens: v.number(),
+      outputTokens: v.number(),
+      totalTokens: v.number(),
+      baseCostCents: v.number(),
+    }),
+    repositories: v.array(
+      v.object({
+        repositoryId: v.optional(v.id("repositories")),
+        // Rows of either key source attributed to this entry.
+        rowCount: v.number(),
+        totalTokens: v.number(),
+        inputTokens: v.number(),
+        outputTokens: v.number(),
+        baseCostCents: v.number(),
+        serviceFeeCents: v.number(),
+        totalCostCents: v.number(),
+        chatActions: v.number(),
+        userKeyTokens: v.number(),
+        userKeyActions: v.number(),
+      }),
+    ),
+    // Set when the per-repository breakdown hit its size cap.
+    repositoriesOverflow: v.optional(v.boolean()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_user_and_period_start", ["userId", "periodStart", "periodEnd"]),
+
   // Present once every usage row of the user is covered by hourly totals.
   // Users without this row keep reading the raw usage rows.
   tokenUsageTotalsStates: defineTable({
@@ -667,6 +725,20 @@ const applicationTables = {
     ragIndexChunkOffset: v.optional(v.number()),
     ragContinuationToken: v.optional(v.string()),
     ragProcessedFiles: v.optional(v.number()),
+    // Set once a RAG pass finishes with per-path chunk replacement. Until then
+    // a pass rebuilds every file and sweeps chunks of older generations.
+    ragChunkLayout: v.optional(v.literal("path_v1")),
+    // Chunker version that wrote the per-path chunks; a mismatch, or an
+    // explicit rebuild request, makes the next pass rebuild every path.
+    ragChunkerVersion: v.optional(v.number()),
+    ragFullRebuildRequested: v.optional(v.boolean()),
+    // Pinned when a RAG pass is claimed, so a deploy mid-pass cannot change
+    // which files it visits or how it cleans up.
+    ragPassMode: v.optional(v.union(v.literal("changed"), v.literal("full"))),
+    ragPassChunkerVersion: v.optional(v.number()),
+    // Chunks currently stored for the repository, carried across passes that
+    // rewrite only changed paths.
+    ragLiveChunks: v.optional(v.number()),
     indexSyncPending: v.boolean(), // Coalesce pushes received during file/RAG indexing
 
     // Repository disconnect is a durable bounded cleanup workflow. The row is
@@ -749,7 +821,9 @@ const applicationTables = {
       "disconnectCleanupPending",
       "updatedAt",
     ])
-    .index("by_index_status", ["indexStatus"]),
+    .index("by_index_status", ["indexStatus"])
+    .index("by_active_and_index_status", ["isActive", "indexStatus"])
+    .index("by_active_and_rag_status", ["isActive", "ragStatus"]),
 
   // ============================================
   // TICKETS (one per issue or discussion lifecycle)
@@ -1148,6 +1222,8 @@ const applicationTables = {
       "indexVersion",
       "chunkId",
     ])
+    .index("by_repository_and_path", ["repositoryId", "path"])
+    .index("by_repository_and_chunk", ["repositoryId", "chunkId"])
     .searchIndex("search_text", {
       searchField: "searchableText",
       filterFields: ["repositoryId", "repositoryIndexKey", "language"],
@@ -1189,11 +1265,19 @@ const applicationTables = {
     size: v.number(),
     isText: v.boolean(), // Whether file is text or binary
     indexVersion: v.number(),
+    // True while this path's chunks do not reflect sha256. Only these paths
+    // are re-chunked; a successful RAG pass clears the flag.
+    ragPending: v.optional(v.boolean()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index("by_repository", ["repositoryId"])
     .index("by_repository_and_path", ["repositoryId", "filePath"])
+    .index("by_repository_rag_pending_and_path", [
+      "repositoryId",
+      "ragPending",
+      "filePath",
+    ])
     .index("by_repository_version_and_path", [
       "repositoryId",
       "indexVersion",

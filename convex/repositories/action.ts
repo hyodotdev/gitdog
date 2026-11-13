@@ -278,6 +278,7 @@ export const syncRepository = action({
         allowFailedIndexRecovery: true,
         allowStaleIndexRecovery: true,
         queueIfBusy: false,
+        fullRebuild: true,
       },
     );
     if (!prepareResult.success) {

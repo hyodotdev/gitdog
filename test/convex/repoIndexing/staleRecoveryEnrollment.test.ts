@@ -256,4 +256,27 @@ describe("repository watchdog enrollment", () => {
       ]),
     );
   });
+
+  it("reads only repositories with index work in progress", async () => {
+    const t = convexTest(schema, modules);
+    const idle = await insertRepository(t, "idle", {
+      indexStatus: "completed",
+      ragStatus: "completed",
+    });
+    const filesRunning = await insertRepository(t, "files", {
+      indexStatus: "indexing",
+    });
+    const searchQueued = await insertRepository(t, "search", {
+      indexStatus: "completed",
+      ragStatus: "pending",
+    });
+    const page = await t.query(
+      internal.repoIndexing.internalQuery.getActiveRepositoryRecoveryPage,
+      {},
+    );
+    const ids = page.repositories.map((repository) => repository._id);
+    expect(ids).toEqual(expect.arrayContaining([filesRunning, searchQueued]));
+    expect(ids).not.toContain(idle);
+    expect(page.hasMore).toBe(false);
+  });
 });

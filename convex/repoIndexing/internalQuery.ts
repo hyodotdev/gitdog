@@ -3,7 +3,10 @@ import type { Doc } from "../_generated/dataModel";
 import { v } from "convex/values";
 import { paginatedCollect } from "../_utils/pagination";
 import { readRepositoryAiAccessSnapshot } from "../repositories/aiReadiness";
-import { getIncrementalIndexEligibility } from "./readiness";
+import {
+  getIncrementalIndexEligibility,
+  hasIncrementalIndexWorkInProgress,
+} from "./readiness";
 
 interface RepositoryFilePageItem {
   path: string;
@@ -11,6 +14,9 @@ interface RepositoryFilePageItem {
   language: string | undefined;
   size: number;
   isText: boolean;
+  // Pending-only pages also list paths without chunkable content so their
+  // previous chunks are removed.
+  hasBlob?: boolean;
 }
 
 const STALE_FILE_BLOB_BATCH_SIZE = 100;
@@ -51,6 +57,42 @@ export const getActiveRepositoryRecoveryPage = internalQuery({
   },
   handler: async (ctx, args): Promise<ActiveRepositoryRecoveryPage> => {
     const limit = Math.min(Math.max(Math.floor(args.limit ?? 25), 1), 50);
+    if (args.cursor === undefined) {
+      // Only repositories with index work in progress can need a watchdog,
+      // so an idle deployment reads nothing here.
+      const ranges = await Promise.all([
+        ...(["pending", "indexing"] as const).map((indexStatus) =>
+          ctx.db
+            .query("repositories")
+            .withIndex("by_active_and_index_status", (q) =>
+              q.eq("isActive", true).eq("indexStatus", indexStatus),
+            )
+            .take(limit + 1),
+        ),
+        ...(["pending", "indexing"] as const).map((ragStatus) =>
+          ctx.db
+            .query("repositories")
+            .withIndex("by_active_and_rag_status", (q) =>
+              q.eq("isActive", true).eq("ragStatus", ragStatus),
+            )
+            .take(limit + 1),
+        ),
+      ]);
+      if (ranges.every((range) => range.length <= limit)) {
+        const seen = new Set<string>();
+        const repositories = ranges
+          .flat()
+          .filter((repository) => {
+            if (seen.has(repository._id)) return false;
+            seen.add(repository._id);
+            return hasIncrementalIndexWorkInProgress(repository);
+          })
+          .map(toRecoveryRepository);
+        return { repositories, cursor: null, hasMore: false };
+      }
+      // Too many in-progress repositories for one bounded read: fall back to
+      // the paginated sweep of every active repository.
+    }
     const page = await ctx.db
       .query("repositories")
       .withIndex("by_active", (q) => q.eq("isActive", true))
@@ -60,31 +102,37 @@ export const getActiveRepositoryRecoveryPage = internalQuery({
       });
 
     return {
-      repositories: page.page.map((repository) => ({
-        _id: repository._id,
-        githubRepo: repository.githubRepo,
-        githubRepositoryId: repository.githubRepositoryId,
-        isActive: repository.isActive,
-        updatedAt: repository.updatedAt,
-        indexVersion: repository.indexVersion,
-        indexStatus: repository.indexStatus,
-        ragStatus: repository.ragStatus,
-        indexProgressAt: repository.indexProgressAt,
-        ...(repository.indexRateLimitRetryAt === undefined
-          ? {}
-          : { indexRateLimitRetryAt: repository.indexRateLimitRetryAt }),
-        ...(repository.indexWatchdogToken === undefined
-          ? {}
-          : { indexWatchdogToken: repository.indexWatchdogToken }),
-        ...(repository.indexWatchdogScheduleId === undefined
-          ? {}
-          : { indexWatchdogScheduleId: repository.indexWatchdogScheduleId }),
-      })),
+      repositories: page.page.map(toRecoveryRepository),
       cursor: page.isDone ? null : page.continueCursor,
       hasMore: !page.isDone,
     };
   },
 });
+
+function toRecoveryRepository(
+  repository: Doc<"repositories">,
+): ActiveRepositoryRecoveryPage["repositories"][number] {
+  return {
+    _id: repository._id,
+    githubRepo: repository.githubRepo,
+    githubRepositoryId: repository.githubRepositoryId,
+    isActive: repository.isActive,
+    updatedAt: repository.updatedAt,
+    indexVersion: repository.indexVersion,
+    indexStatus: repository.indexStatus,
+    ragStatus: repository.ragStatus,
+    indexProgressAt: repository.indexProgressAt,
+    ...(repository.indexRateLimitRetryAt === undefined
+      ? {}
+      : { indexRateLimitRetryAt: repository.indexRateLimitRetryAt }),
+    ...(repository.indexWatchdogToken === undefined
+      ? {}
+      : { indexWatchdogToken: repository.indexWatchdogToken }),
+    ...(repository.indexWatchdogScheduleId === undefined
+      ? {}
+      : { indexWatchdogScheduleId: repository.indexWatchdogScheduleId }),
+  };
+}
 
 /** Read one exact bounded page after validating repository generation ownership. */
 export const getIndexTreeSnapshotPage = internalQuery({
@@ -294,6 +342,7 @@ export const getRepositoryFilesPage = internalQuery({
     indexVersion: v.number(),
     cursor: v.optional(v.string()),
     limit: v.optional(v.number()),
+    pendingOnly: v.optional(v.boolean()),
   },
   handler: async (ctx, args): Promise<RepositoryFilesPage> => {
     const access = await readRepositoryAiAccessSnapshot(
@@ -306,6 +355,41 @@ export const getRepositoryFilesPage = internalQuery({
     }
 
     const pageSize = args.limit ?? 100;
+
+    if (args.pendingOnly === true) {
+      // Only paths whose content changed since their chunks were written.
+      const pending = await ctx.db
+        .query("repoFileMap")
+        .withIndex("by_repository_rag_pending_and_path", (q) =>
+          q.eq("repositoryId", args.repositoryId).eq("ragPending", true),
+        )
+        .paginate({ numItems: pageSize, cursor: args.cursor ?? null });
+      const files = await Promise.all(
+        pending.page
+          .filter((fileMap) => fileMap.indexVersion === args.indexVersion)
+          .map(async (fileMap): Promise<RepositoryFilePageItem> => {
+            const blob = fileMap.isText
+              ? await ctx.db
+                  .query("repoFileBlobs")
+                  .withIndex("by_sha256", (q) => q.eq("sha256", fileMap.sha256))
+                  .first()
+              : null;
+            return {
+              path: fileMap.filePath,
+              url: blob ? await ctx.storage.getUrl(blob.storageId) : null,
+              language: fileMap.language,
+              size: fileMap.size,
+              isText: fileMap.isText,
+              hasBlob: blob !== null,
+            };
+          }),
+      );
+      return {
+        files,
+        cursor: pending.isDone ? null : pending.continueCursor,
+        hasMore: !pending.isDone,
+      };
+    }
 
     const page = await ctx.db
       .query("repoFileMap")
@@ -577,7 +661,23 @@ export const getPeriodicSyncPage = internalQuery({
     return {
       repositories: result.page
         .filter((repo) => getIncrementalIndexEligibility(repo).allowed)
-        .map((repo) => ({ _id: repo._id, githubRepo: repo.githubRepo })),
+        .map((repo) => ({
+          _id: repo._id,
+          githubRepo: repo.githubRepo,
+          installationId: repo.installationId,
+          githubRepositoryId: repo.githubRepositoryId,
+          defaultBranch: repo.defaultBranch,
+          // Only a completed, unfailed generation proves its commit is indexed.
+          indexedSource:
+            repo.indexStatus === "completed" &&
+            repo.ragStatus === "completed" &&
+            repo.indexSource?.indexVersion === repo.indexVersion
+              ? {
+                  commitSha: repo.indexSource.commitSha,
+                  defaultBranch: repo.indexSource.defaultBranch,
+                }
+              : null,
+        })),
       scanned: result.page.length,
       isDone: result.isDone,
       continueCursor: result.continueCursor,

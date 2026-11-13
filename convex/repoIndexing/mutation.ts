@@ -27,6 +27,7 @@ import {
   scheduleRepositoryTreeSnapshotCleanup,
 } from "./treeSnapshot";
 import { RAG_OLD_CHUNK_CLEANUP_BATCH_SIZE } from "../ragV2/chunkBudget";
+import { deleteChunksForPath } from "../ragV2/chunkPaths";
 import { quarantineRepositoryForMissingInstallation } from "../repositories/accessLifecycle";
 import {
   getExactGitHubInstallation,
@@ -48,6 +49,9 @@ const rateLimitedIndexContinuationArgs = {
 };
 
 const INSTALLATION_ACCESS_RETRY_MS = 5 * 60 * 1_000;
+// With the one-week stale threshold, a referenced blob is checked about
+// every five weeks.
+export const REFERENCED_BLOB_RECHECK_MS = 28 * 24 * 60 * 60 * 1_000;
 
 async function hasReadyRepositoryInstallation(
   ctx: MutationCtx,
@@ -117,6 +121,9 @@ export const initializeIndexing = mutation({
     await ctx.db.patch(args.repositoryId, {
       indexStatus: "pending",
       indexVersion: newVersion,
+      // A reindex the owner asks for rebuilds every chunk, not only those of
+      // changed files.
+      ragFullRebuildRequested: true,
       indexError: undefined,
       ragStatus: "pending",
       ragError: undefined,
@@ -1669,6 +1676,10 @@ async function upsertFileMapForPublication(
       size: args.size,
       isText: args.isText,
       indexVersion: args.expectedIndexVersion,
+      ragPending:
+        existing.ragPending === true || !isUnchangedFileMap(existing, args)
+          ? true
+          : undefined,
       updatedAt: now,
     });
     return existing._id;
@@ -1681,10 +1692,95 @@ async function upsertFileMapForPublication(
     size: args.size,
     isText: args.isText,
     indexVersion: args.expectedIndexVersion,
+    ragPending: true,
     createdAt: now,
     updatedAt: now,
   });
 }
+
+type FileMapIdentity = Pick<
+  Doc<"repoFileMap">,
+  "sha256" | "language" | "size" | "isText"
+>;
+
+/** The same blob at the same path needs no new blob work and no re-chunking. */
+export function isUnchangedFileMap(
+  existing: FileMapIdentity,
+  next: FileMapIdentity,
+): boolean {
+  return (
+    existing.sha256 === next.sha256 &&
+    existing.isText === next.isText &&
+    existing.size === next.size &&
+    existing.language === next.language
+  );
+}
+
+export const MAX_UNCHANGED_FILE_MAP_BATCH = 64;
+
+/**
+ * Carry every unchanged file of one tree page into the new generation in a
+ * single transaction. Only the generation number of each map row changes;
+ * blobs and chunks are not touched. Returns the paths that still need the
+ * per-file blob workflow, or "stale" when the generation lost ownership.
+ */
+export const reuseUnchangedFileMaps = internalMutation({
+  args: {
+    repositoryId: v.id("repositories"),
+    expectedUserId: v.id("users"),
+    expectedInstallationId: v.number(),
+    expectedGithubRepositoryId: v.number(),
+    expectedGithubRepo: v.string(),
+    expectedIndexVersion: v.number(),
+    files: v.array(
+      v.object({
+        filePath: v.string(),
+        sha256: v.string(),
+        language: v.optional(v.string()),
+        size: v.number(),
+        isText: v.boolean(),
+      }),
+    ),
+  },
+  returns: v.union(
+    v.literal("stale"),
+    v.object({ changedPaths: v.array(v.string()) }),
+  ),
+  handler: async (ctx, args) => {
+    if (args.files.length > MAX_UNCHANGED_FILE_MAP_BATCH) {
+      throw new Error("Unchanged file map batch is too large");
+    }
+    const first = args.files[0];
+    if (!first) return { changedPaths: [] };
+    if (
+      !(await ownsExactFileBlobPublication(ctx, {
+        ...args,
+        ...first,
+      }))
+    ) {
+      return "stale" as const;
+    }
+    const changedPaths: string[] = [];
+    for (const file of args.files) {
+      const existing = await ctx.db
+        .query("repoFileMap")
+        .withIndex("by_repository_and_path", (q) =>
+          q.eq("repositoryId", args.repositoryId).eq("filePath", file.filePath),
+        )
+        .first();
+      if (!existing || !isUnchangedFileMap(existing, file)) {
+        changedPaths.push(file.filePath);
+        continue;
+      }
+      if (existing.indexVersion !== args.expectedIndexVersion) {
+        await ctx.db.patch(existing._id, {
+          indexVersion: args.expectedIndexVersion,
+        });
+      }
+    }
+    return { changedPaths };
+  },
+});
 
 export const storeFileBlob = internalMutation({
   args: {
@@ -1920,13 +2016,35 @@ export const continueFileMapCleanup = internalMutation({
       )
       .take(batchSize);
 
+    // A path missing from the new tree loses its chunks with its map row.
+    let chunkBudget = RAG_OLD_CHUNK_CLEANUP_BATCH_SIZE;
+    let deletedMaps = 0;
+    let deletedChunks = 0;
+    let chunkBudgetExhausted = false;
     for (const fileMap of oldFileMaps) {
+      const chunks = await deleteChunksForPath(
+        ctx,
+        args.repositoryId,
+        fileMap.filePath,
+        chunkBudget,
+      );
+      chunkBudget -= chunks.deleted;
+      deletedChunks += chunks.deleted;
+      if (!chunks.done) {
+        chunkBudgetExhausted = true;
+        break;
+      }
       await ctx.db.delete(fileMap._id);
+      deletedMaps++;
     }
 
     const now = Date.now();
-    const hasMore = oldFileMaps.length === batchSize;
-    const deletedTotal = (args.deletedTotal ?? 0) + oldFileMaps.length;
+    const hasMore = oldFileMaps.length === batchSize || chunkBudgetExhausted;
+    const deletedTotal = (args.deletedTotal ?? 0) + deletedMaps;
+    const liveChunks =
+      repo.ragLiveChunks === undefined
+        ? {}
+        : { ragLiveChunks: Math.max(0, repo.ragLiveChunks - deletedChunks) };
     const watchdog = await armIndexWatchdog(ctx, {
       repositoryId: args.repositoryId,
       expectedIndexVersion: args.expectedIndexVersion,
@@ -1935,6 +2053,7 @@ export const continueFileMapCleanup = internalMutation({
     });
     if (hasMore) {
       await ctx.db.patch(args.repositoryId, {
+        ...liveChunks,
         indexWatchdogToken: watchdog.token,
         indexWatchdogScheduleId: watchdog.scheduleId,
         indexWatchdogSequence: watchdog.sequence,
@@ -1967,6 +2086,7 @@ export const continueFileMapCleanup = internalMutation({
 
     await scheduleRepositoryTreeSnapshotCleanup(ctx, repo.indexTreeSnapshotId);
     await ctx.db.patch(args.repositoryId, {
+      ...liveChunks,
       indexStatus: "completed",
       indexError: undefined,
       lastIndexedAt: now,
@@ -2036,8 +2156,9 @@ export const continueFileMapCleanup = internalMutation({
 });
 
 /**
- * Clean up old chunks (from previous versions, internal only)
- * Split into separate mutations to avoid multiple pagination error
+ * Clean up chunks of older generations. RAG passes now use
+ * ragV2/internalMutation:cleanupRagGeneration; this stays for actions that
+ * were already running when that change deployed.
  */
 export const cleanupOldChunks = internalMutation({
   args: {
@@ -2091,8 +2212,11 @@ export const deleteFileBlobIfStale = internalMutation({
       .withIndex("by_sha256", (q) => q.eq("sha256", blob.sha256))
       .first();
     if (referencedFile) {
+      // Unchanged files reuse their blobs without touching them, so a
+      // referenced blob is rechecked once per REFERENCED_BLOB_RECHECK_MS
+      // instead of coming back into the stale window every week.
       await ctx.db.patch(args.blobId, {
-        lastAccessedAt: Date.now(),
+        lastAccessedAt: Date.now() + REFERENCED_BLOB_RECHECK_MS,
       });
       return false;
     }
@@ -2128,6 +2252,8 @@ export const prepareIncrementalIndex = internalMutation({
     source: v.optional(
       v.object({ commitSha: v.string(), defaultBranch: v.string() }),
     ),
+    // Owner-requested sync: rebuild every path's chunks.
+    fullRebuild: v.optional(v.boolean()),
   },
   handler: async (
     ctx,
@@ -2262,6 +2388,7 @@ export const prepareIncrementalIndex = internalMutation({
     // This locks the repository - no other trigger can start until completed
     await ctx.db.patch(repo._id, {
       indexVersion: newVersion,
+      ...(args.fullRebuild === true ? { ragFullRebuildRequested: true } : {}),
       indexStatus: "pending", // Lock: only "completed" can transition here
       indexError: undefined,
       ragStatus: "pending",

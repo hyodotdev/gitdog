@@ -15,13 +15,13 @@ import { v } from "convex/values";
 import { internalAction } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { normalizeCodeChunksForStorage, parseCodeIntoChunks } from "./parser";
+import { isChangedPathsPass } from "./chunkPaths";
 import { requireStrictCurrentAiLegalAttestation } from "../_ai/legalAttestation";
 import {
   buildRagChunkPublicationBatches,
   getUtf8ByteLength,
   MAX_RAG_PROVIDER_BATCH_ITEMS,
   MAX_RAG_SOURCE_BYTES,
-  RAG_OLD_CHUNK_CLEANUP_BATCH_SIZE,
 } from "./chunkBudget";
 
 // Type for code chunks
@@ -62,6 +62,7 @@ interface RepositoryFileForEmbedding {
   language: string | undefined;
   size: number;
   isText: boolean;
+  hasBlob?: boolean;
 }
 
 type RagIndexPhase = "files" | "cleanup";
@@ -87,6 +88,11 @@ type RagWorkCheckpoint = {
 
 const MAX_SEARCH_FILTER_LANGUAGES = 8;
 const FILE_PAGE_SIZE = 8;
+// One run covers at most the rest of one file page, bounded by chunk batches
+// and wall time, before it checkpoints and schedules its successor.
+const RAG_MAX_WORK_UNITS_PER_RUN = 16;
+const RAG_RUN_TIME_BUDGET_MS = 60_000;
+const RAG_MAX_PATH_DELETE_BATCHES = 64;
 const FILE_FETCH_TIMEOUT_MS = 15000;
 const RAG_SOURCE_FETCH_RETRY_BASE_DELAY_MS = 15_000;
 const RAG_SOURCE_FETCH_RETRY_MAX_DELAY_MS = 5 * 60_000;
@@ -230,6 +236,7 @@ export const generateChunkEmbeddings = internalAction({
     let successCount = 0;
     let errorCount = 0;
     let processedFileMaps = 0;
+    let claimedInitialCall = false;
 
     const repo = await ctx.runQuery(
       internal.repositories.internalQuery.getById,
@@ -242,6 +249,9 @@ export const generateChunkEmbeddings = internalAction({
       throw new Error("Repository not found");
     }
 
+    // The repository as read after this run's claim; its pinned pass mode
+    // decides which files the pass visits.
+    let passRepo: typeof repo = repo;
     const isInitialCall =
       args.phase === undefined &&
       args.cursor === undefined &&
@@ -336,10 +346,12 @@ export const generateChunkEmbeddings = internalAction({
         };
       }
 
+      // The claim pinned the pass mode and its starting chunk count.
       totalChunks = 0;
       successCount = 0;
       errorCount = 0;
       processedFileMaps = 0;
+      claimedInitialCall = true;
       currentWork = {
         phase: "files",
         cursor: undefined,
@@ -447,6 +459,12 @@ export const generateChunkEmbeddings = internalAction({
           repositoryId: args.repositoryId,
         },
       );
+      passRepo = currentRepo ?? passRepo;
+      if (claimedInitialCall && currentRepo) {
+        totalChunks = currentRepo.ragTotalChunks;
+        successCount = currentRepo.ragIndexedChunks;
+        claimedInitialCall = false;
+      }
       const isCurrent =
         currentRepo?.indexVersion === indexVersion &&
         currentRepo.indexStatus === "completed" &&
@@ -605,13 +623,20 @@ export const generateChunkEmbeddings = internalAction({
         }
 
         const cleanupResult = await ctx.runMutation(
-          internal.repoIndexing.mutation.cleanupOldChunks,
-          {
-            repositoryId: args.repositoryId,
-            currentVersion: indexVersion,
-            batchSize: RAG_OLD_CHUNK_CLEANUP_BATCH_SIZE,
-          },
+          internal.ragV2.internalMutation.cleanupRagGeneration,
+          { repositoryId: args.repositoryId, indexVersion },
         );
+        if (!cleanupResult) {
+          console.warn(
+            `[RAG V2] Cleanup for generation ${indexVersion} lost ownership`,
+          );
+          return {
+            success: false,
+            totalChunks,
+            successCount,
+            errorCount,
+          };
+        }
 
         if (cleanupResult.hasMore) {
           await advanceRagWork({
@@ -639,6 +664,9 @@ export const generateChunkEmbeddings = internalAction({
         };
       }
 
+      // Once a repository has per-path chunks, only paths whose content
+      // changed are visited; unchanged files cost no chunk reads or writes.
+      const pendingOnly = isChangedPathsPass(passRepo);
       const filePage = await ctx.runQuery(
         internal.repoIndexing.internalQuery.getRepositoryFilesPage,
         {
@@ -646,6 +674,7 @@ export const generateChunkEmbeddings = internalAction({
           indexVersion,
           cursor: currentWork.cursor,
           limit: FILE_PAGE_SIZE,
+          ...(pendingOnly ? { pendingOnly: true } : {}),
         },
       );
       const fileMaps = filePage.files;
@@ -674,12 +703,14 @@ export const generateChunkEmbeddings = internalAction({
         };
       };
 
-      const nextPositionAfterFile = (): RagWorkPosition => {
-        const nextFileOffset = currentWork.fileOffset + 1;
+      const nextPositionAfterFile = (
+        position: RagWorkPosition,
+      ): RagWorkPosition => {
+        const nextFileOffset = position.fileOffset + 1;
         if (nextFileOffset < fileMaps.length) {
           return {
             phase: "files",
-            cursor: currentWork.cursor,
+            cursor: position.cursor,
             fileOffset: nextFileOffset,
             chunkOffset: 0,
           };
@@ -688,125 +719,167 @@ export const generateChunkEmbeddings = internalAction({
         return nextPositionAfterPage();
       };
 
-      const fileMap = fileMaps[currentWork.fileOffset] as
-        RepositoryFileForEmbedding | undefined;
-      if (!fileMap) {
-        const nextWork = nextPositionAfterPage();
-        if (nextWork.phase === "cleanup" && errorCount > 0) {
-          await updateRagStatus(
-            "failed",
-            `RAG embedding completed with ${errorCount} errors`,
+      const deletePathChunks = async (path: string): Promise<void> => {
+        for (let batch = 0; batch < RAG_MAX_PATH_DELETE_BATCHES; batch++) {
+          const deleted = await ctx.runMutation(
+            internal.ragV2.internalMutation.deleteChunksForPathInGeneration,
+            { repositoryId: args.repositoryId, indexVersion, path },
           );
-        } else {
-          await advanceRagWork(nextWork);
+          // A changed-paths pass carries the stored count, so replaced
+          // chunks leave it; a full pass counts only what it writes.
+          if (pendingOnly) {
+            totalChunks = Math.max(0, totalChunks - deleted.deleted);
+            successCount = Math.max(0, successCount - deleted.deleted);
+          }
+          if (deleted.done) return;
         }
-        return {
-          success: errorCount === 0,
-          totalChunks,
-          successCount,
-          errorCount,
-        };
-      }
+        throw new Error("Repository path has too many stale chunks");
+      };
 
-      let nextWork: RagWorkPosition;
-      try {
-        if (fileMap.isText === false) {
+      // Parsed chunks of the file being worked on, so later chunk batches of
+      // the same file in this run do not fetch and parse it again.
+      let parsedFile: { path: string; chunks: Array<CodeChunk> } | undefined;
+
+      const processFileUnit = async (
+        fileMap: RepositoryFileForEmbedding,
+        position: RagWorkPosition,
+      ): Promise<RagWorkPosition> => {
+        const skipFile = async (reason: string): Promise<RagWorkPosition> => {
           console.warn(
-            `[RAG V2] Skipping non-text source at file offset ${currentWork.fileOffset}`,
+            `[RAG V2] Skipping ${reason} at file offset ${position.fileOffset}`,
           );
+          await deletePathChunks(fileMap.path);
           processedFileMaps++;
-          nextWork = nextPositionAfterFile();
-        } else if (fileMap.size > MAX_RAG_SOURCE_BYTES) {
-          console.warn(
-            `[RAG V2] Skipping oversized source at file offset ${currentWork.fileOffset} (${fileMap.size} declared bytes)`,
+          return nextPositionAfterFile(position);
+        };
+        if (fileMap.isText === false) return await skipFile("non-text source");
+        if (fileMap.hasBlob === false) {
+          // Keep the old chunks and the flag; the pass fails and a later
+          // generation retries this path.
+          throw new Error("no cached source");
+        }
+        if (fileMap.size > MAX_RAG_SOURCE_BYTES) {
+          return await skipFile(
+            `oversized source (${fileMap.size} declared bytes)`,
           );
-          processedFileMaps++;
-          nextWork = nextPositionAfterFile();
-        } else {
+        }
+
+        let chunks = parsedFile?.path === fileMap.path ? parsedFile.chunks : [];
+        if (parsedFile?.path !== fileMap.path) {
           if (!fileMap.url) {
             throw new Error("no storage URL");
           }
-
           const content = await fetchRagSourceContent(fileMap.url);
           const contentBytes = getUtf8ByteLength(content);
           if (contentBytes > MAX_RAG_SOURCE_BYTES) {
-            console.warn(
-              `[RAG V2] Skipping oversized source at file offset ${currentWork.fileOffset} (${contentBytes} UTF-8 bytes)`,
+            return await skipFile(
+              `oversized source (${contentBytes} UTF-8 bytes)`,
             );
-            processedFileMaps++;
-            nextWork = nextPositionAfterFile();
-          } else {
-            const chunks = normalizeCodeChunksForStorage(
-              parseCodeIntoChunks(fileMap.path, content, fileMap.language),
-            );
-            if (currentWork.chunkOffset === 0) {
-              totalChunks += chunks.length;
-            }
-
-            if (currentWork.chunkOffset > chunks.length) {
-              throw new Error(
-                `chunk offset ${currentWork.chunkOffset} exceeds ${chunks.length}`,
-              );
-            }
-
-            const chunkBatch = chunks.slice(
-              currentWork.chunkOffset,
-              currentWork.chunkOffset + MAX_RAG_PROVIDER_BATCH_ITEMS,
-            );
-            if (chunkBatch.length > 0) await processChunks(chunkBatch);
-
-            const nextChunkOffset = currentWork.chunkOffset + chunkBatch.length;
-            if (nextChunkOffset < chunks.length) {
-              nextWork = {
-                phase: "files",
-                cursor: currentWork.cursor,
-                fileOffset: currentWork.fileOffset,
-                chunkOffset: nextChunkOffset,
-              };
-            } else {
-              processedFileMaps++;
-              nextWork = nextPositionAfterFile();
-            }
           }
-        }
-      } catch (error) {
-        if (error instanceof RetryableRagSourceFetchError) {
-          const retry = getNextRagSourceFetchRetry(
-            args.transientFileFetchAttempt,
+          chunks = normalizeCodeChunksForStorage(
+            parseCodeIntoChunks(fileMap.path, content, fileMap.language),
           );
-          if (!retry) {
-            const terminalError = `Repository source fetch at file offset ${currentWork.fileOffset} exhausted ${RAG_SOURCE_FETCH_RETRY_MAX_ATTEMPT} retries; retry repository indexing to resume`;
-            await updateRagStatus("failed", terminalError);
-            console.error(`[RAG V2] ${terminalError}`);
+          parsedFile = { path: fileMap.path, chunks };
+        }
+
+        if (position.chunkOffset === 0) {
+          totalChunks += chunks.length;
+          await deletePathChunks(fileMap.path);
+        }
+
+        if (position.chunkOffset > chunks.length) {
+          throw new Error(
+            `chunk offset ${position.chunkOffset} exceeds ${chunks.length}`,
+          );
+        }
+
+        const chunkBatch = chunks.slice(
+          position.chunkOffset,
+          position.chunkOffset + MAX_RAG_PROVIDER_BATCH_ITEMS,
+        );
+        if (chunkBatch.length > 0) await processChunks(chunkBatch);
+
+        const nextChunkOffset = position.chunkOffset + chunkBatch.length;
+        if (nextChunkOffset < chunks.length) {
+          return {
+            phase: "files",
+            cursor: position.cursor,
+            fileOffset: position.fileOffset,
+            chunkOffset: nextChunkOffset,
+          };
+        }
+        processedFileMaps++;
+        parsedFile = undefined;
+        return nextPositionAfterFile(position);
+      };
+
+      // Work through the rest of this page in one run, so the repository
+      // checkpoint is written once per page instead of once per file.
+      const runStartedAt = Date.now();
+      let position: RagWorkPosition = currentWork;
+      let nextWork: RagWorkPosition = currentWork;
+      for (let unit = 0; ; unit++) {
+        const fileMap = fileMaps[position.fileOffset] as
+          RepositoryFileForEmbedding | undefined;
+        if (!fileMap) {
+          nextWork = nextPositionAfterPage();
+          break;
+        }
+
+        try {
+          nextWork = await processFileUnit(fileMap, position);
+        } catch (error) {
+          if (error instanceof RetryableRagSourceFetchError) {
+            const isClaimedPosition = unit === 0;
+            const retry = getNextRagSourceFetchRetry(
+              isClaimedPosition ? args.transientFileFetchAttempt : undefined,
+            );
+            if (!retry) {
+              const terminalError = `Repository source fetch at file offset ${position.fileOffset} exhausted ${RAG_SOURCE_FETCH_RETRY_MAX_ATTEMPT} retries; retry repository indexing to resume`;
+              await updateRagStatus("failed", terminalError);
+              console.error(`[RAG V2] ${terminalError}`);
+              return {
+                success: false,
+                totalChunks,
+                successCount,
+                errorCount,
+              };
+            }
+            await advanceRagWork(position, {
+              kind: "source_fetch",
+              ...retry,
+            });
+            console.warn(
+              `[RAG V2] Source fetch at file offset ${position.fileOffset} will retry without advancing its cursor`,
+            );
             return {
-              success: false,
+              success: true,
               totalChunks,
               successCount,
               errorCount,
             };
           }
-          await advanceRagWork(currentWork, {
-            kind: "source_fetch",
-            ...retry,
-          });
-          console.warn(
-            `[RAG V2] Source fetch at file offset ${currentWork.fileOffset} will retry without advancing its cursor`,
-          );
-          return {
-            success: true,
-            totalChunks,
-            successCount,
-            errorCount,
-          };
-        }
-        if (isStaleRagChunkUpsertError(error)) throw error;
+          if (isStaleRagChunkUpsertError(error)) throw error;
 
-        errorCount++;
-        processedFileMaps++;
-        console.error(
-          `[RAG V2] Error processing file at offset ${currentWork.fileOffset}`,
-        );
-        nextWork = nextPositionAfterFile();
+          errorCount++;
+          processedFileMaps++;
+          parsedFile = undefined;
+          console.error(
+            `[RAG V2] Error processing file at offset ${position.fileOffset}`,
+          );
+          nextWork = nextPositionAfterFile(position);
+        }
+
+        const leavesPage =
+          nextWork.phase !== "files" || nextWork.cursor !== currentWork.cursor;
+        if (
+          leavesPage ||
+          unit + 1 >= RAG_MAX_WORK_UNITS_PER_RUN ||
+          Date.now() - runStartedAt >= RAG_RUN_TIME_BUDGET_MS
+        ) {
+          break;
+        }
+        position = nextWork;
       }
 
       if (nextWork.phase === "cleanup" && errorCount > 0) {

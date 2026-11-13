@@ -8,6 +8,7 @@ import {
   hasUsageTotals,
   USAGE_TOTALS_HOUR_MS,
 } from "./totals";
+import { readCompletePeriodTotals } from "./periodTotals";
 
 type QuotaReaderContext = Pick<MutationCtx | QueryCtx, "db">;
 type QuotaPeriodArgs = {
@@ -15,6 +16,8 @@ type QuotaPeriodArgs = {
   periodStart: number;
   periodEndExclusive?: number;
 };
+// "auto" reads the period aggregate when one is complete, then hourly
+// totals, then rows.
 export type QuotaUsageSource = "auto" | "rows" | "totals";
 type UnverifiedUsage = {
   verified: false;
@@ -133,6 +136,33 @@ async function readPeriodUsage(
   args: QuotaPeriodArgs,
   source: QuotaUsageSource,
 ): Promise<PeriodUsage | null> {
+  if (source === "auto" && args.periodEndExclusive !== undefined) {
+    const period = await readCompletePeriodTotals(
+      ctx,
+      args.userId,
+      args.periodStart,
+      args.periodEndExclusive,
+    );
+    if (period) {
+      const tokens = addUsageTokens(
+        { totalTokens: 0, purchasedTokensDebited: 0 },
+        period.gitdog,
+      );
+      if (!tokens) return null;
+      const costs = addUsageCosts(
+        { totalCostCents: 0, serviceFeeCents: 0 },
+        period.gitdog,
+      );
+      return {
+        tokensUsed: tokens.totalTokens,
+        purchasedTokensDebited: tokens.purchasedTokensDebited,
+        costs: costs && {
+          totalCostCents: costs.totalCostCents,
+          totalServiceFeeCents: costs.serviceFeeCents,
+        },
+      };
+    }
+  }
   const useTotals =
     source !== "rows" &&
     Number.isFinite(args.periodStart) &&
