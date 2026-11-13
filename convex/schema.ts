@@ -803,7 +803,9 @@ const applicationTables = {
       "disconnectCleanupPending",
       "updatedAt",
     ])
-    .index("by_index_status", ["indexStatus"]),
+    .index("by_index_status", ["indexStatus"])
+    .index("by_active_and_index_status", ["isActive", "indexStatus"])
+    .index("by_active_and_rag_status", ["isActive", "ragStatus"]),
 
   // ============================================
   // TICKETS (one per issue or discussion lifecycle)

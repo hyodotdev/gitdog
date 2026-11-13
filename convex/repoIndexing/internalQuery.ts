@@ -3,7 +3,10 @@ import type { Doc } from "../_generated/dataModel";
 import { v } from "convex/values";
 import { paginatedCollect } from "../_utils/pagination";
 import { readRepositoryAiAccessSnapshot } from "../repositories/aiReadiness";
-import { getIncrementalIndexEligibility } from "./readiness";
+import {
+  getIncrementalIndexEligibility,
+  hasIncrementalIndexWorkInProgress,
+} from "./readiness";
 
 interface RepositoryFilePageItem {
   path: string;
@@ -54,6 +57,42 @@ export const getActiveRepositoryRecoveryPage = internalQuery({
   },
   handler: async (ctx, args): Promise<ActiveRepositoryRecoveryPage> => {
     const limit = Math.min(Math.max(Math.floor(args.limit ?? 25), 1), 50);
+    if (args.cursor === undefined) {
+      // Only repositories with index work in progress can need a watchdog,
+      // so an idle deployment reads nothing here.
+      const ranges = await Promise.all([
+        ...(["pending", "indexing"] as const).map((indexStatus) =>
+          ctx.db
+            .query("repositories")
+            .withIndex("by_active_and_index_status", (q) =>
+              q.eq("isActive", true).eq("indexStatus", indexStatus),
+            )
+            .take(limit + 1),
+        ),
+        ...(["pending", "indexing"] as const).map((ragStatus) =>
+          ctx.db
+            .query("repositories")
+            .withIndex("by_active_and_rag_status", (q) =>
+              q.eq("isActive", true).eq("ragStatus", ragStatus),
+            )
+            .take(limit + 1),
+        ),
+      ]);
+      if (ranges.every((range) => range.length <= limit)) {
+        const seen = new Set<string>();
+        const repositories = ranges
+          .flat()
+          .filter((repository) => {
+            if (seen.has(repository._id)) return false;
+            seen.add(repository._id);
+            return hasIncrementalIndexWorkInProgress(repository);
+          })
+          .map(toRecoveryRepository);
+        return { repositories, cursor: null, hasMore: false };
+      }
+      // Too many in-progress repositories for one bounded read: fall back to
+      // the paginated sweep of every active repository.
+    }
     const page = await ctx.db
       .query("repositories")
       .withIndex("by_active", (q) => q.eq("isActive", true))
@@ -63,31 +102,37 @@ export const getActiveRepositoryRecoveryPage = internalQuery({
       });
 
     return {
-      repositories: page.page.map((repository) => ({
-        _id: repository._id,
-        githubRepo: repository.githubRepo,
-        githubRepositoryId: repository.githubRepositoryId,
-        isActive: repository.isActive,
-        updatedAt: repository.updatedAt,
-        indexVersion: repository.indexVersion,
-        indexStatus: repository.indexStatus,
-        ragStatus: repository.ragStatus,
-        indexProgressAt: repository.indexProgressAt,
-        ...(repository.indexRateLimitRetryAt === undefined
-          ? {}
-          : { indexRateLimitRetryAt: repository.indexRateLimitRetryAt }),
-        ...(repository.indexWatchdogToken === undefined
-          ? {}
-          : { indexWatchdogToken: repository.indexWatchdogToken }),
-        ...(repository.indexWatchdogScheduleId === undefined
-          ? {}
-          : { indexWatchdogScheduleId: repository.indexWatchdogScheduleId }),
-      })),
+      repositories: page.page.map(toRecoveryRepository),
       cursor: page.isDone ? null : page.continueCursor,
       hasMore: !page.isDone,
     };
   },
 });
+
+function toRecoveryRepository(
+  repository: Doc<"repositories">,
+): ActiveRepositoryRecoveryPage["repositories"][number] {
+  return {
+    _id: repository._id,
+    githubRepo: repository.githubRepo,
+    githubRepositoryId: repository.githubRepositoryId,
+    isActive: repository.isActive,
+    updatedAt: repository.updatedAt,
+    indexVersion: repository.indexVersion,
+    indexStatus: repository.indexStatus,
+    ragStatus: repository.ragStatus,
+    indexProgressAt: repository.indexProgressAt,
+    ...(repository.indexRateLimitRetryAt === undefined
+      ? {}
+      : { indexRateLimitRetryAt: repository.indexRateLimitRetryAt }),
+    ...(repository.indexWatchdogToken === undefined
+      ? {}
+      : { indexWatchdogToken: repository.indexWatchdogToken }),
+    ...(repository.indexWatchdogScheduleId === undefined
+      ? {}
+      : { indexWatchdogScheduleId: repository.indexWatchdogScheduleId }),
+  };
+}
 
 /** Read one exact bounded page after validating repository generation ownership. */
 export const getIndexTreeSnapshotPage = internalQuery({
