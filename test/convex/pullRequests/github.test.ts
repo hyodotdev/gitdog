@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as helpers from "../../../convex/github/helpers";
 import {
+  changedSince,
   getPullRequest,
   isBotPullRequestAuthor,
   snapshot,
@@ -174,6 +175,78 @@ describe("authoritative PR snapshots", () => {
       await expect(
         readReviewFile(access, changed.filename, pr.head.sha, changed),
       ).rejects.toBeInstanceOf(ReviewContextLimitError);
+    });
+  });
+  describe("changes since the last review", () => {
+    const since = { headSha: "c".repeat(40), mergeBaseSha: "d".repeat(40) };
+    const mergeBase = (sha: string) => ({
+      status: "ahead",
+      merge_base_commit: { sha },
+    });
+    it("lists the paths a push changed when it extends the reviewed head", async () => {
+      const get = vi
+        .spyOn(helpers, "fetchGitHubAppJsonWithRetry")
+        .mockResolvedValueOnce({
+          status: "ahead",
+          files: [{ filename: "src/b.ts", previous_filename: "src/a.ts" }],
+        })
+        .mockResolvedValueOnce(mergeBase(since.mergeBaseSha));
+      expect(await changedSince(access, since, pr)).toEqual({
+        paths: new Set(["src/b.ts", "src/a.ts"]),
+        mergeBaseSha: since.mergeBaseSha,
+      });
+      expect(get.mock.calls[0][0]).toContain(
+        `/compare/${since.headSha}...${pr.head.sha}?per_page=1`,
+      );
+      expect(get.mock.calls[1][0]).toContain(
+        `/compare/${pr.base.sha}...${pr.head.sha}`,
+      );
+    });
+    it("adds the files a merge of the base branch brought into the diff", async () => {
+      const moved = "e".repeat(40);
+      const get = vi
+        .spyOn(helpers, "fetchGitHubAppJsonWithRetry")
+        .mockResolvedValueOnce({ status: "ahead", files: [] })
+        .mockResolvedValueOnce(mergeBase(moved))
+        .mockResolvedValueOnce({
+          status: "ahead",
+          files: [{ filename: "src/fixed-on-main.ts" }],
+        });
+      expect(await changedSince(access, since, pr)).toEqual({
+        paths: new Set(["src/fixed-on-main.ts"]),
+        mergeBaseSha: moved,
+      });
+      expect(get.mock.calls[2][0]).toContain(
+        `/compare/${since.mergeBaseSha}...${moved}`,
+      );
+    });
+    it("reviews the whole PR when the merge base was retargeted or rewound", async () => {
+      for (const status of ["diverged", "behind"]) {
+        vi.spyOn(helpers, "fetchGitHubAppJsonWithRetry")
+          .mockResolvedValueOnce({ status: "ahead", files: [] })
+          .mockResolvedValueOnce(mergeBase("e".repeat(40)))
+          .mockResolvedValueOnce({ status, files: [] });
+        expect(await changedSince(access, since, pr)).toBeNull();
+      }
+    });
+    it("reviews the whole PR after a force push or a long comparison", async () => {
+      const get = vi.spyOn(helpers, "fetchGitHubAppJsonWithRetry");
+      get.mockResolvedValueOnce({ status: "diverged", files: [] });
+      expect(await changedSince(access, since, pr)).toBeNull();
+      get.mockResolvedValueOnce({
+        status: "ahead",
+        files: Array.from({ length: 300 }, (_, i) => ({ filename: `f${i}` })),
+      });
+      expect(await changedSince(access, since, pr)).toBeNull();
+      expect(
+        await changedSince(access, { ...since, headSha: "main" }, pr),
+      ).toBeNull();
+    });
+    it("reviews the whole PR when the comparison fails", async () => {
+      vi.spyOn(helpers, "fetchGitHubAppJsonWithRetry").mockRejectedValue(
+        new Error("Read changes since the last review failed (HTTP 404)"),
+      );
+      expect(await changedSince(access, since, pr)).toBeNull();
     });
   });
   it("rejects a PR from another immutable repository", async () => {

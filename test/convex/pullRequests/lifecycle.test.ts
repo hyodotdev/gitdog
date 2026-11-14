@@ -1219,6 +1219,7 @@ describe("batched PR reviews", () => {
     purchasedTokens = 10_000_000,
     largeIndexes: number[] = [],
     fileCount = 61,
+    pageFailure: () => Error = () => new Error("Fixture model failure"),
   ) {
     const f = await fixture();
     await f.t.run(async (ctx) => {
@@ -1287,6 +1288,11 @@ describe("batched PR reviews", () => {
           const offset = (Number(searchParams.get("page") ?? 1) - 1) * size;
           return files.slice(offset, offset + size) as never;
         }
+        if (pathname.includes(`/compare/${source.headSha}...`))
+          return {
+            status: "ahead",
+            files: [{ filename: "src/file-1.ts" }, { filename: "README.md" }],
+          } as never;
         if (pathname.includes("/compare/"))
           return { merge_base_commit: { sha: source.baseSha } } as never;
         if (pathname.endsWith("/pulls/12/reviews")) return [] as never;
@@ -1304,9 +1310,12 @@ describe("batched PR reviews", () => {
     vi.spyOn(billing, "createMeteredProvider").mockImplementation(
       (_ctx, args) => {
         batches.push(args.generationKey);
-        const page = Number(args.generationKey.split("/").at(-2));
+        const batch = args.generationKey.includes("/batch/");
+        const page = batch ? Number(args.generationKey.split("/").at(-2)) : 0;
         const group = Number(args.generationKey.split("/").at(-1));
-        const path = files[(page - 1) * 16 + group - 1].filename;
+        const path = batch
+          ? files[(page - 1) * 16 + group - 1].filename
+          : "src/file-1.ts";
         const candidate = {
           ...findings[0],
           path,
@@ -1322,7 +1331,7 @@ describe("batched PR reviews", () => {
           providerId: "openai",
           modelId: "fixture",
           chat: async (_messages, options) => {
-            if (page === failedPage) throw new Error("Fixture model failure");
+            if (page === failedPage || failedPage === -1) throw pageFailure();
             return {
               content: JSON.stringify(
                 options?.billingLabel === "pr-review/critique"
@@ -1780,6 +1789,179 @@ describe("batched PR reviews", () => {
     expect(action?.reviewFailureDetails).toContain("review batch 2");
     expect(f.batches.map((key) => key.split("/batch/")[1])).toEqual(["1/1"]);
     expect(await f.publish()).toMatchObject({ success: false });
+    expect(f.fetch).not.toHaveBeenCalled();
+  });
+
+  it("reviews only the files a later push changed", async () => {
+    const f = await batchFixture(undefined, 0, 10_000_000, [], 61);
+    await f.generate();
+    await f.generate(2);
+    await f.generate(3);
+    await f.generate(4);
+    await drainScheduledFunctions(f.t);
+    expect((await f.getAction())?.executionResult).toMatchObject({
+      published: true,
+    });
+    const next = { ...source, headSha: "e".repeat(40) };
+    f.live.head = { sha: next.headSha };
+    const nextId = (await f.observe(next))!;
+    expect(await f.t.run((ctx) => ctx.db.get(nextId))).toMatchObject({
+      reviewSince: {
+        headSha: source.headSha,
+        mergeBaseSha: source.baseSha,
+        // Removed files the first review listed are carried, not lost.
+        uncoveredPaths: expect.arrayContaining(["src/file-17.ts"]),
+      },
+    });
+    f.batches.length = 0;
+    f.fetch.mockResolvedValue(
+      Response.json({
+        id: 88,
+        commit_id: next.headSha,
+        body: `<!-- gitdog-pr-review:${nextId} -->`,
+      }),
+    );
+    await f.t.action(internal.pullRequests.internalAction.generate, {
+      actionId: nextId,
+    });
+    await drainScheduledFunctions(f.t);
+    // One single review of the changed PR file, not 61 files in batches.
+    expect(f.batches).toEqual([`pr/${nextId}/${next.headSha}`]);
+    const action = await f.t.run((ctx) => ctx.db.get(nextId));
+    expect(action).toMatchObject({
+      status: "completed",
+      executionResult: { published: true, reviewId: 88 },
+      proposedChanges: {
+        changedFiles: 1,
+        reviewedSince: source.headSha,
+        findings: [expect.objectContaining({ path: "src/file-1.ts" })],
+      },
+    });
+    const request = JSON.parse(f.fetch.mock.calls.at(-1)![1]!.body as string);
+    expect(request.body).toContain(
+      `Reviewed the 1 file affected since \`${source.headSha.slice(0, 12)}\`.`,
+    );
+    expect(request.comments).toHaveLength(1);
+  });
+
+  async function followUp(changed: Set<string> | null) {
+    const f = await batchFixture(undefined, 0, 10_000_000, [], 61);
+    for (const page of [undefined, 2, 3, 4]) await f.generate(page);
+    await drainScheduledFunctions(f.t);
+    const github = await import("../../../convex/pullRequests/github");
+    vi.spyOn(github, "changedSince").mockResolvedValue(
+      changed && { paths: changed, mergeBaseSha: source.baseSha },
+    );
+    const next = { ...source, headSha: "e".repeat(40) };
+    f.live.head = { sha: next.headSha };
+    const nextId = (await f.observe(next))!;
+    f.batches.length = 0;
+    f.fetch.mockClear();
+    await f.t.action(internal.pullRequests.internalAction.generate, {
+      actionId: nextId,
+    });
+    return { ...f, nextId, next };
+  }
+  it("reviews the whole PR again after a force push", async () => {
+    const f = await followUp(null);
+    expect(f.batches).toEqual([`pr/${f.nextId}/${f.next.headSha}/batch/1/1`]);
+  });
+  it("completes without posting when a push changed nothing in the PR diff", async () => {
+    const f = await followUp(new Set(["README.md"]));
+    await drainScheduledFunctions(f.t);
+    expect(f.batches).toEqual([]);
+    expect(f.fetch).not.toHaveBeenCalled();
+    expect(await f.t.run((ctx) => ctx.db.get(f.nextId))).toMatchObject({
+      status: "completed",
+      executionResult: { published: false, reason: "no_new_changes" },
+    });
+  });
+
+  it("keeps the paid batches when the model output of one batch cannot be used", async () => {
+    const { ChatProviderRequestError } =
+      await import("../../../convex/_ai/providerErrors");
+    const f = await batchFixture(
+      3,
+      0,
+      10_000_000,
+      [],
+      61,
+      () => new ChatProviderRequestError("Unreadable output", "billed"),
+    );
+    await f.generate();
+    await f.generate(2);
+    await f.generate(3);
+    await f.generate(4);
+    await drainScheduledFunctions(f.t);
+    const action = await f.getAction();
+    expect(action).toMatchObject({
+      status: "completed",
+      executionResult: { published: true },
+      proposedChanges: { batchCount: 4 },
+    });
+    expect(action?.proposedChanges?.excludedPaths).toEqual(
+      expect.arrayContaining(["src/file-33.ts", "src/file-48.ts"]),
+    );
+    const request = JSON.parse(f.fetch.mock.calls[0][1]!.body as string);
+    expect(request.body).toContain("were not fully reviewed");
+  });
+  it("stops paying for batches once model output keeps failing", async () => {
+    const { ChatProviderRequestError } =
+      await import("../../../convex/_ai/providerErrors");
+    const f = await batchFixture(
+      -1,
+      0,
+      10_000_000,
+      [],
+      61,
+      () => new ChatProviderRequestError("Unreadable output", "billed"),
+    );
+    await f.generate();
+    await f.generate(2);
+    await f.generate(3);
+    expect((await f.getAction())?.reviewBatch?.result).toMatchObject({
+      failedGroups: 2,
+    });
+    await f.generate(4);
+    expect((await f.getAction())?.status).toBe("failed");
+    expect(f.fetch).not.toHaveBeenCalled();
+  });
+  it("does not build on a review that could not list what it missed", async () => {
+    const f = await fixture();
+    const first = (await f.observe())!;
+    await f.t.run((ctx) =>
+      ctx.db.patch(first, {
+        status: "completed",
+        executionResult: { published: true },
+        proposedChanges: {
+          source,
+          findings: [],
+          uncoveredFiles: 150,
+          coverageLimited: true,
+          excludedPaths: [],
+        },
+      }),
+    );
+    const next = (await f.observe({ ...source, headSha: "e".repeat(40) }))!;
+    expect(
+      (await f.t.run((ctx) => ctx.db.get(next)))?.reviewSince,
+    ).toBeUndefined();
+  });
+  it("still stops the whole review on an ambiguous provider outcome", async () => {
+    const { ChatProviderRequestError } =
+      await import("../../../convex/_ai/providerErrors");
+    const f = await batchFixture(
+      3,
+      0,
+      10_000_000,
+      [],
+      61,
+      () => new ChatProviderRequestError("Lost response", "ambiguous"),
+    );
+    await f.generate();
+    await f.generate(2);
+    await f.generate(3);
+    expect((await f.getAction())?.status).toBe("failed");
     expect(f.fetch).not.toHaveBeenCalled();
   });
 

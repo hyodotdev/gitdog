@@ -84,7 +84,7 @@ export async function getPullRequest(
 const MAX_REVIEW_FILES = 300;
 export const BATCH_REVIEW_THRESHOLD = 60;
 const REVIEW_BATCH_FILES = 16;
-const REVIEW_DIFF_BUDGET = 100_000;
+export const REVIEW_DIFF_BUDGET = 100_000;
 // A batch's diff shares the review conversation with the source the reviewer
 // reads, so several diffs are grouped only up to this size.
 const REVIEW_GROUP_DIFF_BUDGET = 40_000;
@@ -198,6 +198,62 @@ export async function snapshot(
     headSha: pr.head.sha,
     baseSha: comparison.merge_base_commit.sha,
   };
+}
+
+/**
+ * Paths whose PR diff may differ from an earlier review: files changed on the
+ * head since then, plus files the base changed when a merge of the base branch
+ * moved the merge base forward. Returns null when the whole PR must be
+ * reviewed again: after a force push, a retargeted or rewound base, a
+ * truncated comparison, or any failure to compare.
+ */
+export async function changedSince(
+  access: VerifiedRepositoryAccess,
+  since: { headSha: string; mergeBaseSha: string },
+  pr: PullRequest,
+): Promise<{ paths: Set<string>; mergeBaseSha: string } | null> {
+  if (!sha(since.headSha) || !sha(since.mergeBaseSha)) return null;
+  const compare = (from: string, to: string) =>
+    readReviewJson<{
+      status: string;
+      merge_base_commit?: { sha: string };
+      files?: Array<{ filename: string; previous_filename?: string }>;
+    }>(
+      access,
+      `/compare/${from}...${to}?per_page=1`,
+      "Read changes since the last review",
+    );
+  const changedFiles = (comparison: Awaited<ReturnType<typeof compare>>) => {
+    if (
+      (comparison.status !== "ahead" && comparison.status !== "identical") ||
+      !Array.isArray(comparison.files) ||
+      comparison.files.length >= MAX_REVIEW_FILES
+    )
+      return null;
+    const paths: string[] = [];
+    for (const file of comparison.files) {
+      if (typeof file?.filename !== "string") return null;
+      paths.push(file.filename);
+      if (typeof file.previous_filename === "string")
+        paths.push(file.previous_filename);
+    }
+    return paths;
+  };
+  try {
+    const head = changedFiles(await compare(since.headSha, pr.head.sha));
+    if (!head) return null;
+    const mergeBase = (await compare(pr.base.sha, pr.head.sha))
+      .merge_base_commit?.sha;
+    if (!sha(mergeBase)) return null;
+    if (mergeBase === since.mergeBaseSha)
+      return { paths: new Set(head), mergeBaseSha: mergeBase };
+    const base = changedFiles(await compare(since.mergeBaseSha, mergeBase));
+    return base
+      ? { paths: new Set([...head, ...base]), mergeBaseSha: mergeBase }
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 // Production reviews of up to 60 files used a median of about 90k tokens.

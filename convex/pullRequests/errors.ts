@@ -59,6 +59,49 @@ export class ReviewContextLimitError extends Error {
   }
 }
 
+// Failures of the model's own output or of a review limit inside one group.
+const REVIEW_GROUP_MODEL_FAILURES = new Set([
+  "Commit suggestions are disabled",
+  "Duplicate review finding",
+  "Finding contains unsupported evidence or mentions",
+  "Finding evidence was not present in commit-pinned reads",
+  "Finding must anchor to an added line in the reviewed diff",
+  "Finding target was not read at the head commit",
+  "Invalid or low-confidence review finding",
+  "Invalid review result",
+  "Overlapping commit suggestions",
+  "Review conversation exceeds the context budget",
+  "Review did not finish completely",
+  "Review file-read budget exhausted",
+  "Review final synthesis did not complete",
+  "Review requested an unsupported tool",
+  "Review source budget exhausted",
+  "Review verification did not finish",
+  "Suggestion original must match the reviewed commit exactly",
+  "Suggestion range must contain only added lines",
+  "Suggestions must use the validated suggestion field",
+  "Unsafe suggestion range or replacement",
+  "Verification introduced an unreviewed finding",
+]);
+
+/**
+ * Whether one batch group's failure is about the model's own output, so it can
+ * be reported as uncovered files instead of discarding every batch already
+ * paid for. Provider, billing, quota, credential and lifecycle failures, which
+ * would recur in every later batch, still stop the whole review.
+ */
+export function isReviewGroupModelFailure(error: unknown): boolean {
+  const cause = reviewFailureCause(error);
+  if (cause instanceof ChatProviderRequestError)
+    // A response that was billed but could not be processed.
+    return cause.billingOutcome === "billed" && cause.httpStatus === undefined;
+  return (
+    cause instanceof ReviewEvidenceError ||
+    cause instanceof ReviewResponseFormatError ||
+    (cause instanceof Error && REVIEW_GROUP_MODEL_FAILURES.has(cause.message))
+  );
+}
+
 export class ReviewEvidenceError extends Error {
   constructor(
     message: string,

@@ -81,6 +81,46 @@ function isBatchCursor(
   return batch?.page === args.page && (batch?.group ?? 0) === (args.group ?? 0);
 }
 
+/**
+ * The newest automatic review that finished with a complete record of what it
+ * left unreviewed, which a later push can build on instead of reviewing the
+ * whole PR again.
+ */
+function lastReviewed(actions: Doc<"ticketActions">[], headSha: string) {
+  let latest: Doc<"ticketActions"> | undefined;
+  for (const action of actions) {
+    if (
+      action.actionType !== "review" ||
+      action.reviewVerificationOnly === true ||
+      action.status !== "completed" ||
+      (action.executionResult?.published !== true &&
+        action.executionResult?.reason !== "no_new_changes")
+    )
+      continue;
+    if (!latest || action.createdAt > latest.createdAt) latest = action;
+  }
+  const proposal = latest?.proposedChanges;
+  const source = proposal?.source;
+  // Older reviews and reviews whose uncovered list was cut short cannot say
+  // what they missed, so the next push reviews the whole PR.
+  if (
+    typeof source?.headSha !== "string" ||
+    typeof proposal.mergeBaseSha !== "string" ||
+    source.headSha === headSha ||
+    typeof proposal.uncoveredFiles !== "number" ||
+    proposal.coverageLimited === true ||
+    !Array.isArray(proposal.excludedPaths)
+  )
+    return undefined;
+  return {
+    headSha: source.headSha as string,
+    mergeBaseSha: proposal.mergeBaseSha as string,
+    uncoveredPaths: (proposal.excludedPaths as unknown[]).filter(
+      (path): path is string => typeof path === "string",
+    ),
+  };
+}
+
 function hasAttemptedReview(action: Doc<"ticketActions">) {
   if (action.reviewGenerationToken !== undefined) return true;
   // Keep the slot available when a queued review was superseded before its worker started.
@@ -362,6 +402,7 @@ export const observe = internalMutation({
       !hasCurrentLegalAttestation(profiles[0])
     )
       return null;
+    const since = lastReviewed(actions, source.headSha);
     const actionId = await ctx.db.insert("ticketActions", {
       ticketId: ticket._id,
       actionType: "review",
@@ -370,6 +411,7 @@ export const observe = internalMutation({
       status: "pending",
       chatHistory: [],
       createdAt: now,
+      ...(since ? { reviewSince: since } : {}),
     });
     await ctx.scheduler.runAfter(
       0,
@@ -606,8 +648,16 @@ export const propose = internalMutation({
     next: v.optional(v.object({ page: v.number(), group: v.number() })),
     batchProgress: v.optional(reviewBatchProgressValidator),
     // Coverage of a single (non-batched) review; batches carry their own.
+    // The merge base the review compared against, so a later push can tell
+    // whether a merge of the base branch brought new changes into the diff.
+    mergeBaseSha: v.optional(v.string()),
     coverage: v.optional(
-      v.object({ changedFiles: v.number(), uncoveredFiles: v.number() }),
+      v.object({
+        changedFiles: v.number(),
+        uncoveredFiles: v.number(),
+        // Set when only the files changed since this reviewed head were covered.
+        since: v.optional(v.string()),
+      }),
     ),
   },
   handler: async (ctx, args) => {
@@ -686,7 +736,10 @@ export const propose = internalMutation({
       return true;
     }
     const noFindings = args.findings.length === 0;
+    // A push that changed nothing in the PR diff completes without a post.
+    const nothingNew = noFindings && args.coverage?.changedFiles === 0;
     const verificationOnly = action.reviewVerificationOnly === true;
+    const unpublished = verificationOnly || nothingNew;
     const approval = repo.settings.requireApprovalForPullRequests !== false;
     const suggestions = repo.settings.pullRequestSuggestionsEnabled !== false;
     const coverage = batch ?? args.coverage;
@@ -706,11 +759,15 @@ export const propose = internalMutation({
             ? {
                 changedFiles: args.coverage.changedFiles,
                 uncoveredFiles: args.coverage.uncoveredFiles,
+                ...(args.coverage.since
+                  ? { reviewedSince: args.coverage.since }
+                  : {}),
               }
             : {}),
         findings: args.findings,
         excludedPaths: args.excludedPaths,
         filesRead: args.filesRead,
+        ...(args.mergeBaseSha ? { mergeBaseSha: args.mergeBaseSha } : {}),
         // Approvers preview the posted summary and every finding, which a
         // batched review posts inline like a single one.
         suggestedResponse: [
@@ -730,17 +787,20 @@ export const propose = internalMutation({
         ].join("\n\n"),
       },
       // The no-findings summary is fixed text, so it needs no approval.
-      status: verificationOnly
+      status: unpublished
         ? "completed"
         : approval && !noFindings
           ? "pending_approval"
           : "approved",
-      completedAt: verificationOnly ? Date.now() : undefined,
-      executionResult: verificationOnly
-        ? { published: false, reason: "verification_only" }
+      completedAt: unpublished ? Date.now() : undefined,
+      executionResult: unpublished
+        ? {
+            published: false,
+            reason: verificationOnly ? "verification_only" : "no_new_changes",
+          }
         : undefined,
     });
-    if (!verificationOnly && (!approval || noFindings))
+    if (!unpublished && (!approval || noFindings))
       await ctx.scheduler.runAfter(
         0,
         internal.pullRequests.internalAction.publish,
