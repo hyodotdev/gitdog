@@ -299,6 +299,7 @@ export function splitReviewDiff(files: ChangedFile[]): ChangedFile[][] {
 // A changed file over the 40 KB limit is fetched up to this size, then shown
 // to the reviewer only around its diff.
 const LARGE_CHANGED_FILE_BYTES = 400_000;
+const WINDOWED_CHANGED_FILE_BYTES = 24_000;
 
 export async function readFile(
   access: VerifiedRepositoryAccess,
@@ -354,14 +355,24 @@ export async function readReviewFile(
   path: string,
   ref: string,
   changed?: ChangedFile,
+  onWindowed?: () => void,
+  // Evidence saved before 24 KB windowing keeps the earlier 40 KB rule.
+  windowFrom = WINDOWED_CHANGED_FILE_BYTES,
 ): Promise<string> {
   if (!changed?.patch || !hasReviewablePatch(changed))
     return await readFile(access, path, ref);
   const content = await readFile(access, path, ref, LARGE_CHANGED_FILE_BYTES);
-  if (new TextEncoder().encode(content).length <= 40_000) return content;
+  const bytes = new TextEncoder().encode(content).length;
+  // Medium files are also shown around their diff, so one review can afford
+  // the source of every changed file instead of a few whole ones.
+  if (bytes <= windowFrom) return content;
   const windowed = windowChangedSource(content, changed.patch);
-  if (windowed === null) throw new ReviewContextLimitError();
-  return windowed;
+  if (windowed !== null) {
+    onWindowed?.();
+    return windowed;
+  }
+  if (bytes <= 40_000) return content;
+  throw new ReviewContextLimitError();
 }
 
 export async function treePaths(

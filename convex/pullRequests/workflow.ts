@@ -1,3 +1,4 @@
+import { ChatBillingError } from "../_ai/chatBilling";
 import { chatRequestBytes } from "../_ai/requestSize";
 import { reviewContextMessage } from "./context";
 import type {
@@ -170,7 +171,7 @@ function relativeSourcePaths(path: string, source: string, known: Set<string>) {
 }
 
 // Up to 8 guides plus 8 preloaded files leave 8 of the 24 file reads for tools.
-const BATCH_GROUP_PRELOAD_READS = 8;
+const PRELOAD_READS = 8;
 
 export async function reviewWithContext(args: {
   provider: AiProvider;
@@ -230,11 +231,9 @@ export async function reviewWithContext(args: {
     );
   };
   let readBudget = 0;
-  // A batched group's own files are bounded by the group size, so they do not
-  // use up the reads that guides and tools share.
-  const groupSources = new Set(
-    args.batchGroup ? args.files.map((f) => `head:${f.filename}`) : [],
-  );
+  // A review's own changed files are bounded by its file count and the source
+  // budget, so they do not use up the reads that guides and tools share.
+  const groupSources = new Set(args.files.map((f) => `head:${f.filename}`));
   const groupPaths = args.batchGroup
     ? new Set(args.files.map((f) => f.filename))
     : undefined;
@@ -425,13 +424,13 @@ export async function reviewWithContext(args: {
     preparedReads.push(evidence);
     return true;
   };
-  if (compactChange || args.batchGroup) {
-    let preloadReads = 0;
-    for (const file of args.files) {
-      if (excludedPaths.includes(file.filename)) continue;
-      if (!compactChange && preloadReads >= BATCH_GROUP_PRELOAD_READS) break;
-      if (await preloadHead(file.filename)) preloadReads++;
-    }
+  // Every review starts from the changed source, not only the diff, so a
+  // reviewer that answers early has still seen each changed file it could.
+  let preloadReads = 0;
+  for (const file of args.files) {
+    if (excludedPaths.includes(file.filename)) continue;
+    if (!compactChange && preloadReads >= PRELOAD_READS) break;
+    if (await preloadHead(file.filename)) preloadReads++;
   }
   if (compactChange) {
     if (!smallChange) {
@@ -769,7 +768,14 @@ export async function reviewWithContext(args: {
   // group, and a bounded number when a single review read none. Candidates
   // from the first answer are carried over because each turn is rebuilt from
   // state.
-  const needsSource = () => args.batchGroup || !inspectedChange();
+  // Any reviewable changed file left unread is shown before the answer.
+  const needsSource = () =>
+    args.files.some(
+      (f) =>
+        !excludedPaths.includes(f.filename) &&
+        !unavailablePaths.has(f.filename) &&
+        !reads.some((r) => r.ref === "head" && r.path === f.filename),
+    );
   const showUninspected = async (candidates?: unknown) => {
     const previousFeedback = validationFeedback;
     if (candidates !== undefined)
@@ -782,7 +788,8 @@ export async function reviewWithContext(args: {
     let shown = 0;
     for (const file of args.files) {
       const { filename } = file;
-      if (!args.batchGroup && shown >= BATCH_GROUP_PRELOAD_READS) break;
+      // Stop fetching once the source budget cannot take another file.
+      if (readBudget >= 96_000) break;
       if (
         excludedPaths.includes(filename) ||
         unavailablePaths.has(filename) ||
@@ -813,16 +820,35 @@ export async function reviewWithContext(args: {
     }
     return true;
   };
+  // The answer given before the one-time source pass, kept in case the
+  // account cannot afford the larger request that pass makes.
+  let beforeSourcePass: { readCount: number; findings: Finding[] } | undefined;
   for (let turn = 0; turn < 8; turn++) {
     await args.guard();
     if (JSON.stringify(messages).length > 180_000)
       throw new Error("Review conversation exceeds the context budget");
-    const response = await chat(messages, {
-      maxTokens: REVIEW_OUTPUT_TOKENS,
-      tools: reviewTools,
-      billingLabel: `pr-review/${turn}`,
-      responseFormat: REVIEW_RESPONSE_FORMAT,
-    });
+    let response: Awaited<ReturnType<typeof chat>>;
+    try {
+      response = await chat(messages, {
+        maxTokens: REVIEW_OUTPUT_TOKENS,
+        tools: reviewTools,
+        billingLabel: `pr-review/${turn}`,
+        responseFormat: REVIEW_RESPONSE_FORMAT,
+      });
+    } catch (error) {
+      const cause = reviewFailureCause(error);
+      if (
+        !beforeSourcePass ||
+        !(cause instanceof ChatBillingError) ||
+        cause.reason !== "limit_reached"
+      )
+        throw error;
+      // Finish on the earlier answer; the files the pass would have shown
+      // are reported as not reviewed.
+      reads.splice(beforeSourcePass.readCount);
+      return await finalize(beforeSourcePass.findings);
+    }
+    beforeSourcePass = undefined;
     if (response.finishReason === "tool_use" && response.toolUse?.length) {
       // Calls past the budget are refused, not fatal: the review answers
       // from the source it already has.
@@ -1011,33 +1037,56 @@ export async function reviewWithContext(args: {
         findings.length === 0 || JSON.stringify(value).length > 32_000
           ? undefined
           : value;
+      const readCount = reads.length;
       if (
         (findings.length === 0 || carried !== undefined) &&
         (await showUninspected(carried))
-      )
+      ) {
+        beforeSourcePass = { readCount, findings };
         continue;
+      }
     }
     return await finalize(findings);
   }
   await args.guard();
-  if (needsSource() && !sourceRetried) await showUninspected();
+  const readsBeforePass = reads.length;
+  const passShown =
+    needsSource() && !sourceRetried ? await showUninspected() : false;
   rebuildMessages();
-  const final = await chat(
-    [
+  const synthesize = () =>
+    chat(
+      [
+        {
+          role: "system",
+          content:
+            findingsPrompt +
+            "\nExploration is complete. Tools are unavailable. Return JSON using only the inspected source blocks below. Omit findings that still need context. Do not claim full coverage.",
+        },
+        messages[1],
+      ],
       {
-        role: "system",
-        content:
-          findingsPrompt +
-          "\nExploration is complete. Tools are unavailable. Return JSON using only the inspected source blocks below. Omit findings that still need context. Do not claim full coverage.",
+        maxTokens: REVIEW_OUTPUT_TOKENS,
+        billingLabel: "pr-review/final",
+        responseFormat: REVIEW_RESPONSE_FORMAT,
       },
-      messages[1],
-    ],
-    {
-      maxTokens: REVIEW_OUTPUT_TOKENS,
-      billingLabel: "pr-review/final",
-      responseFormat: REVIEW_RESPONSE_FORMAT,
-    },
-  );
+    );
+  let final: Awaited<ReturnType<typeof chat>>;
+  try {
+    final = await synthesize();
+  } catch (error) {
+    const cause = reviewFailureCause(error);
+    if (
+      !passShown ||
+      !(cause instanceof ChatBillingError) ||
+      cause.reason !== "limit_reached"
+    )
+      throw error;
+    // Synthesize from the source read before the pass; the files it added
+    // are reported as not reviewed.
+    reads.splice(readsBeforePass);
+    rebuildMessages();
+    final = await synthesize();
+  }
   if (final.finishReason !== "stop")
     throw new Error("Review final synthesis did not complete");
   return await finalize(

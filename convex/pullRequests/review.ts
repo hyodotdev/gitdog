@@ -84,6 +84,9 @@ export const findingValidator = v.object({
       path: v.string(),
       ref: v.union(v.literal("head"), v.literal("base")),
       quote: v.string(),
+      // Set by Gitdog, not the model: whether the review saw this head file
+      // around its diff, so publication re-reads it the same way.
+      windowed: v.optional(v.boolean()),
     }),
   ),
 });
@@ -121,7 +124,12 @@ export type Finding = {
   body: string;
   confidence: number;
   suggestion?: { startLine: number; original: string; replacement: string };
-  evidence: Array<{ path: string; ref: "head" | "base"; quote: string }>;
+  evidence: Array<{
+    path: string;
+    ref: "head" | "base";
+    quote: string;
+    windowed?: boolean;
+  }>;
 };
 export type ChangedFile = {
   filename: string;

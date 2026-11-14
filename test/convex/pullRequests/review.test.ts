@@ -500,7 +500,10 @@ describe("bounded review workflow", () => {
     "allows more guide context for substantive changes: %j",
     async (change) => {
       const files = "files" in change ? change.files : [{ ...file, ...change }];
-      const { envelope } = await withGuides([use, stop([])], { files });
+      // A file that did not fit the preload is shown before the answer.
+      const { envelope } = await withGuides([use, stop([]), stop([])], {
+        files,
+      });
       const size = JSON.stringify(envelope.baseRepositoryContext).length;
       expect(size).toBeGreaterThan(4000);
       expect(size).toBeLessThanOrEqual(12_000);
@@ -525,19 +528,23 @@ describe("bounded review workflow", () => {
       read.mock.calls.filter(([path]) => path === file.filename),
     ).toHaveLength(1);
   });
-  it("bounds aggregate preloaded head source and reports an unseen second file", async () => {
-    const { result, envelope } = await withGuides([stop([])], {
-      files: [file, { ...file, filename: "src/large.ts" }],
-      read: async (path) => (path === file.filename ? source : largeSource),
-    });
+  it("bounds preloaded head source and shows a file that did not fit before answering", async () => {
+    const { result, envelope, requests } = await withGuides(
+      [stop([]), stop([])],
+      {
+        files: [file, { ...file, filename: "src/large.ts" }],
+        read: async (path) => (path === file.filename ? source : largeSource),
+      },
+    );
     expect(
       JSON.stringify(envelope.headImplementationContext).length,
     ).toBeLessThanOrEqual(12_000);
     expect(envelope.headImplementationContext.map((r) => r.path)).toEqual([
       file.filename,
     ]);
-    expect(result.reads.some((r) => r.path === "src/large.ts")).toBe(false);
-    expect(result.excludedPaths).toContain("src/large.ts");
+    expect(requests).toHaveLength(2);
+    expect(result.reads.some((r) => r.path === "src/large.ts")).toBe(true);
+    expect(result.excludedPaths).not.toContain("src/large.ts");
   });
   it("does not eagerly fetch excluded binary paths alongside reviewable code", async () => {
     const { result, read } = await withGuides([stop([])], {
@@ -1016,7 +1023,7 @@ describe("bounded review workflow", () => {
       { path: file.filename, ref: "head", content: largeSource },
     ]);
   });
-  it("shows a bounded number of changed files to a single review that read none", async () => {
+  it("shows every unread changed file before a single review answers", async () => {
     const files = Array.from({ length: 12 }, (_, index) => ({
       ...file,
       filename: `src/file-${index + 1}.ts`,
@@ -1028,8 +1035,79 @@ describe("bounded review workflow", () => {
       paths: files.map((f) => f.filename),
     });
     expect(p.chat).toHaveBeenCalledTimes(2);
-    expect(read).toHaveBeenCalledTimes(8);
-    expect(result.excludedPaths).toEqual(files.slice(8).map((f) => f.filename));
+    // Eight are preloaded; the other four are shown before the answer.
+    expect(read).toHaveBeenCalledTimes(12);
+    expect(result.excludedPaths).toEqual([]);
+  });
+  it("keeps the earlier answer when the account cannot afford the source pass", async () => {
+    const { ChatBillingError } =
+      await import("../../../convex/_ai/chatBilling");
+    const files = [
+      file,
+      ...Array.from({ length: 8 }, (_, i) => ({
+        ...file,
+        filename: `src/more-${i}.ts`,
+      })),
+    ];
+    const answers = [stop([finding]), undefined, verified()];
+    const p: AiProvider = {
+      ...provider([]),
+      chat: vi.fn(async () => {
+        const next = answers.shift();
+        if (next === undefined)
+          throw new ChatBillingError("Token limit reached", "limit_reached");
+        return next as Awaited<ReturnType<AiProvider["chat"]>>;
+      }),
+    };
+    const result = await run(
+      p,
+      vi.fn(async () => source),
+      {
+        files,
+        paths: files.map((f) => f.filename),
+      },
+    );
+    expect(p.chat).toHaveBeenCalledTimes(3);
+    expect(result.findings).toEqual([finding]);
+    // The file the refused pass would have shown is reported, not counted.
+    expect(result.reads.some((r) => r.path === "src/more-7.ts")).toBe(false);
+    expect(result.excludedPaths).toContain("src/more-7.ts");
+  });
+  it("synthesizes from earlier source when the final pass is refused", async () => {
+    const { ChatBillingError } =
+      await import("../../../convex/_ai/chatBilling");
+    const files = [
+      file,
+      ...Array.from({ length: 8 }, (_, i) => ({
+        ...file,
+        filename: `src/more-${i}.ts`,
+      })),
+    ];
+    const answers: unknown[] = [
+      ...Array.from({ length: 8 }, () => use),
+      "refuse",
+      stop([]),
+    ];
+    const p: AiProvider = {
+      ...provider([]),
+      chat: vi.fn(async () => {
+        const next = answers.shift();
+        if (next === "refuse")
+          throw new ChatBillingError("Token limit reached", "limit_reached");
+        return next as Awaited<ReturnType<AiProvider["chat"]>>;
+      }),
+    };
+    const result = await run(
+      p,
+      vi.fn(async () => source),
+      {
+        files,
+        paths: files.map((f) => f.filename),
+      },
+    );
+    expect(p.chat).toHaveBeenCalledTimes(10);
+    expect(result.reads.some((r) => r.path === "src/more-7.ts")).toBe(false);
+    expect(result.excludedPaths).toContain("src/more-7.ts");
   });
   it("requires source inspection even when the model returns no findings", async () => {
     await expect(
@@ -1082,7 +1160,10 @@ describe("bounded review workflow", () => {
       paths: [],
       basePaths: [],
       guard: async () => {},
-      read: async (path) => (path === file.filename ? source : largeSource),
+      read: async (path) => {
+        if (path === file.filename) return source;
+        throw new ReviewContextLimitError();
+      },
     });
     expect(result.excludedPaths).toEqual(["src/unread.ts"]);
   });

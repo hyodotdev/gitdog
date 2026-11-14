@@ -734,7 +734,7 @@ describe("review recovery without weakening source evidence", () => {
         filename,
       })),
     ];
-    const { promise, requests } = fixture([stop()], {
+    const { promise, requests } = fixture([stop(), stop()], {
       files,
       read: async (path) =>
         path === file.filename ? source : "// context\n".repeat(2800),
@@ -744,14 +744,12 @@ describe("review recovery without weakening source evidence", () => {
     expect(JSON.stringify(shown).length).toBeLessThanOrEqual(60_000);
     expect(shown.length).toBeGreaterThan(1);
     expect(shown.length).toBeLessThan(4);
-    for (const changed of files) {
-      if (!shown.some((r: { path: string }) => r.path === changed.filename)) {
+    // Files left out of the preload are shown before the answer while the
+    // source budget allows; any still unread are reported as excluded.
+    expect(requests).toHaveLength(2);
+    for (const changed of files)
+      if (!result.reads.some((r) => r.path === changed.filename))
         expect(result.excludedPaths).toContain(changed.filename);
-        expect(result.reads.some((r) => r.path === changed.filename)).toBe(
-          false,
-        );
-      }
-    }
   });
 
   it("does not authorize evidence from an oversized dependency fetched but omitted from preload", async () => {
@@ -834,7 +832,7 @@ describe("review recovery without weakening source evidence", () => {
       })),
     ];
     const content = `/*${"한글😀\\\t".repeat(2000)}*/`;
-    const { promise, requests, requestOptions } = fixture([stop()], {
+    const { promise, requests, requestOptions } = fixture([stop(), stop()], {
       files,
       read: async () => content,
     });
@@ -847,12 +845,9 @@ describe("review recovery without weakening source evidence", () => {
     expect(shown.length).toBeGreaterThan(0);
     expect(shown.length).toBeLessThan(4);
     for (const changed of files) {
-      const inspected = shown.some(
-        (r: { path: string }) => r.path === changed.filename,
-      );
-      expect(result.reads.some((r) => r.path === changed.filename)).toBe(
-        inspected,
-      );
+      const inspected = result.reads.some((r) => r.path === changed.filename);
+      if (shown.some((r: { path: string }) => r.path === changed.filename))
+        expect(inspected).toBe(true);
       if (!inspected) expect(result.excludedPaths).toContain(changed.filename);
     }
   });

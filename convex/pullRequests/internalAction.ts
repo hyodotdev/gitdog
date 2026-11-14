@@ -59,10 +59,12 @@ function readReviewSource(
   path: string,
   commit: string,
   changed?: ChangedFile,
+  onWindowed?: () => void,
+  windowFrom?: number,
 ) {
   return runReviewRequest(
     { operation: "Read GitHub source file", file: { path, commit } },
-    () => readReviewFile(access, path, commit, changed),
+    () => readReviewFile(access, path, commit, changed, onWindowed, windowFrom),
   );
 }
 
@@ -323,6 +325,8 @@ export const generate = internalAction({
       let uncoveredFiles = previous?.uncoveredFiles ?? 0;
       let failedGroups = previous?.failedGroups ?? 0;
       const filesRead = new Set(previous?.filesRead);
+      // Head files this group saw around their diff.
+      const windowedPaths = new Set<string>();
       const excludedPaths = new Set(previous?.excludedPaths);
       const groups = batched ? splitReviewDiff(data.files) : [data.files];
       // Later groups of a page must see the same ordered split as the first.
@@ -431,6 +435,7 @@ export const generate = internalAction({
                     path,
                     data.headSha,
                     data.files.find((file) => file.filename === path),
+                    () => windowedPaths.add(path),
                   )
                 : readReviewSource(access, path, data.baseSha),
           });
@@ -453,7 +458,18 @@ export const generate = internalAction({
             excludedPaths: selected.map((file) => file.filename),
           };
         }
-        findings.push(...result.findings);
+        // Each review group decides windowing for its own reads, so the way
+        // each quoted file was seen travels with the evidence itself.
+        findings.push(
+          ...result.findings.map((finding) => ({
+            ...finding,
+            evidence: finding.evidence.map((e) =>
+              e.ref === "head"
+                ? { ...e, windowed: windowedPaths.has(e.path) }
+                : e,
+            ),
+          })),
+        );
         findingCount += result.findings.length;
         const inspected = new Set(
           result.reads.filter((r) => r.ref === "head").map((r) => r.path),
@@ -678,29 +694,70 @@ export const publish = internalAction({
               })
             : await snapshot(access, live);
       if (data) {
-        const evidence = [];
-        const references = new Set<string>();
-        for (const finding of findings) {
-          for (const e of finding.evidence) {
-            const key = `${e.ref}:${e.path}`;
-            if (references.has(key)) continue;
-            references.add(key);
-            evidence.push({
-              path: e.path,
-              ref: e.ref,
-              content:
-                e.ref === "head"
-                  ? await readReviewSource(
+        // Re-read each quoted file the way the review group that quoted it
+        // saw it. Two groups can have seen one file differently, so reads are
+        // keyed by that view, and findings are checked one by one when views
+        // differ.
+        const view = (e: Finding["evidence"][number]) =>
+          e.ref === "base"
+            ? "base"
+            : e.windowed === true
+              ? "window"
+              : e.windowed === false
+                ? "whole"
+                : "legacy";
+        const cache = new Map<string, Promise<string>>();
+        const readEvidence = (e: Finding["evidence"][number]) => {
+          const key = `${view(e)}:${e.path}`;
+          let content = cache.get(key);
+          if (!content) {
+            const changed = data.files.find((f) => f.filename === e.path);
+            content =
+              e.ref === "base"
+                ? readReviewSource(access, e.path, data.baseSha)
+                : e.windowed === false
+                  ? readReviewSource(access, e.path, data.headSha)
+                  : readReviewSource(
                       access,
                       e.path,
                       data.headSha,
-                      data.files.find((file) => file.filename === e.path),
-                    )
-                  : await readReviewSource(access, e.path, data.baseSha),
-            });
+                      changed,
+                      undefined,
+                      e.windowed === true ? undefined : 40_000,
+                    );
+            cache.set(key, content);
           }
+          return content;
+        };
+        const evidenceOf = async (finding: Finding) =>
+          await Promise.all(
+            finding.evidence.map(async (e) => ({
+              path: e.path,
+              ref: e.ref,
+              content: await readEvidence(e),
+            })),
+          );
+        const views = new Map<string, string>();
+        let mixed = false;
+        for (const finding of findings)
+          for (const e of finding.evidence) {
+            const seen = views.get(`${e.ref}:${e.path}`);
+            if (seen !== undefined && seen !== view(e)) mixed = true;
+            views.set(`${e.ref}:${e.path}`, view(e));
+          }
+        if (mixed)
+          for (const finding of findings)
+            validateFindings(
+              { findings: [finding] },
+              data.files,
+              await evidenceOf(finding),
+            );
+        else {
+          const evidence = [];
+          for (const finding of findings)
+            evidence.push(...(await evidenceOf(finding)));
+          validateFindings({ findings }, data.files, evidence);
         }
-        validateFindings({ findings }, data.files, evidence);
       }
       const marker = `<!-- gitdog-pr-review:${args.actionId} -->`;
       const prior = await existingReview(
