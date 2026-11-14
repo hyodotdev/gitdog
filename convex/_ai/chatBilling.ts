@@ -2927,3 +2927,34 @@ export async function hasOpenUsageReservation(
   ]);
   return Boolean(chatPending || chatAmbiguous || stagedEmbedding.some(Boolean));
 }
+
+/**
+ * Daily report of Gitdog-key AI attempts whose outcome is still unknown after
+ * the blocking window. They no longer stop new requests, but they keep their
+ * reserved tokens held and defer Pro renewal and refunds until an admin
+ * reconciles them, so they must not go unnoticed.
+ */
+export const reportUnresolvedChatUsage = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now();
+    const rows = await ctx.db
+      .query("chatUsageReservations")
+      .withIndex("by_status_and_expiration", (q) => q.eq("status", "ambiguous"))
+      .take(CHAT_RESERVATION_CLEANUP_LIMIT + 1);
+    const stale = rows.filter(
+      (row) =>
+        row.keySource === undefined &&
+        blocksActiveProvider(row) &&
+        !blocksAsUnresolved(row, now),
+    );
+    if (stale.length === 0) return { unresolved: 0 };
+    console.error(
+      `${stale.length}${rows.length > CHAT_RESERVATION_CLEANUP_LIMIT ? "+" : ""} AI usage attempts need admin reconciliation: ${stale
+        .slice(0, 20)
+        .map((row) => row.reservationKey)
+        .join(", ")}`,
+    );
+    return { unresolved: stale.length };
+  },
+});

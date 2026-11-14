@@ -947,9 +947,14 @@ describe("AI chat usage reservations", () => {
         providerStartedAt: Date.now() - 31 * 60_000,
       });
     });
+    const next = reservationArgs(args, "after-the-window");
+    await expect(reserve(t, next)).resolves.toMatchObject({ allowed: true });
+    // Provider-start admission no longer refuses either.
+    await expect(markStarted(t, next)).resolves.toBe(true);
+    // It is reported for reconciliation instead.
     await expect(
-      reserve(t, reservationArgs(args, "after-the-window")),
-    ).resolves.toMatchObject({ allowed: true });
+      t.mutation(internal._ai.chatBilling.reportUnresolvedChatUsage, {}),
+    ).resolves.toEqual({ unresolved: 1 });
     // The attempt is kept for admin reconciliation.
     expect(
       await t.run((ctx) =>
