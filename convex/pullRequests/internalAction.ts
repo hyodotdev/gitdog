@@ -230,22 +230,27 @@ export const generate = internalAction({
       // long as they fit one review; otherwise the whole PR is reviewed.
       const since = initial.action.reviewSince;
       let scoped: Awaited<ReturnType<typeof snapshot>> | undefined;
+      let changed: Set<string> | undefined;
       if (since && !batched && !verificationOnly) {
-        const changed = await changedSince(access, since, pr);
+        const scope = await changedSince(access, since, pr);
         // Files the earlier review could not cover get another chance.
-        if (changed) {
+        if (scope) {
           const candidate = await snapshot(access, pr, verificationOnly, {
-            findingPaths: new Set([...changed, ...since.uncoveredPaths]),
+            findingPaths: new Set([...scope.paths, ...since.uncoveredPaths]),
           });
           // A removed file the earlier review listed has nothing to review.
           const files = candidate.files.filter(
-            (f) => f.status !== "removed" || changed.has(f.filename),
+            (f) => f.status !== "removed" || scope.paths.has(f.filename),
           );
           if (
+            // The scope is only valid against the merge base it was built on.
+            candidate.baseSha === scope.mergeBaseSha &&
             files.length <= BATCH_REVIEW_THRESHOLD &&
             JSON.stringify(files).length <= REVIEW_DIFF_BUDGET
-          )
+          ) {
             scoped = { ...candidate, files };
+            changed = scope.paths;
+          }
         }
       }
       batched ||= !scoped && pr.changed_files > BATCH_REVIEW_THRESHOLD;
@@ -279,19 +284,21 @@ export const generate = internalAction({
         throw new Error("Pull request changed while reading its diff");
       if (scoped && !data.files.some(hasReviewablePatch)) {
         // Nothing reviewable changed in this PR's diff, such as a merge of the
-        // base branch or a deletion, so no model call is made. Binary or
-        // oversized changes are reported as not reviewed; otherwise nothing
-        // is posted.
+        // base branch or a deletion, so no model call is made. A binary or
+        // oversized file this push changed is reported as not reviewed; one
+        // carried from an earlier review is carried again without a post.
         const unreviewable = data.files.filter((f) => f.status !== "removed");
+        const reported = unreviewable.filter((f) => changed?.has(f.filename));
         await ctx.runMutation(internal.pullRequests.internalMutation.propose, {
           actionId: args.actionId,
           source,
           findings: [],
           excludedPaths: unreviewable.map((f) => f.filename),
           filesRead: [],
+          mergeBaseSha: data.baseSha,
           coverage: {
-            changedFiles: unreviewable.length,
-            uncoveredFiles: unreviewable.length,
+            changedFiles: reported.length,
+            uncoveredFiles: reported.length,
             since: since?.headSha,
           },
         });
@@ -491,6 +498,7 @@ export const generate = internalAction({
         actionId: args.actionId,
         source,
         page: args.page,
+        mergeBaseSha: data.baseSha,
         group: args.group,
         next,
         findings: findings.slice(0, MAX_REVIEW_FINDINGS),

@@ -956,7 +956,7 @@ const applicationTables = {
     reviewSince: v.optional(
       v.object({
         headSha: v.string(),
-        baseSha: v.string(),
+        mergeBaseSha: v.string(),
         uncoveredPaths: v.array(v.string()),
       }),
     ),

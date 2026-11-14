@@ -1808,7 +1808,7 @@ describe("batched PR reviews", () => {
     expect(await f.t.run((ctx) => ctx.db.get(nextId))).toMatchObject({
       reviewSince: {
         headSha: source.headSha,
-        baseSha: source.baseSha,
+        mergeBaseSha: source.baseSha,
         // Removed files the first review listed are carried, not lost.
         uncoveredPaths: expect.arrayContaining(["src/file-17.ts"]),
       },
@@ -1849,7 +1849,9 @@ describe("batched PR reviews", () => {
     for (const page of [undefined, 2, 3, 4]) await f.generate(page);
     await drainScheduledFunctions(f.t);
     const github = await import("../../../convex/pullRequests/github");
-    vi.spyOn(github, "changedSince").mockResolvedValue(changed);
+    vi.spyOn(github, "changedSince").mockResolvedValue(
+      changed && { paths: changed, mergeBaseSha: source.baseSha },
+    );
     const next = { ...source, headSha: "e".repeat(40) };
     f.live.head = { sha: next.headSha };
     const nextId = (await f.observe(next))!;

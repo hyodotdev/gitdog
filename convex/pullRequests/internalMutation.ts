@@ -105,7 +105,7 @@ function lastReviewed(actions: Doc<"ticketActions">[], headSha: string) {
   // what they missed, so the next push reviews the whole PR.
   if (
     typeof source?.headSha !== "string" ||
-    typeof source.baseSha !== "string" ||
+    typeof proposal.mergeBaseSha !== "string" ||
     source.headSha === headSha ||
     typeof proposal.uncoveredFiles !== "number" ||
     proposal.coverageLimited === true ||
@@ -114,7 +114,7 @@ function lastReviewed(actions: Doc<"ticketActions">[], headSha: string) {
     return undefined;
   return {
     headSha: source.headSha as string,
-    baseSha: source.baseSha as string,
+    mergeBaseSha: proposal.mergeBaseSha as string,
     uncoveredPaths: (proposal.excludedPaths as unknown[]).filter(
       (path): path is string => typeof path === "string",
     ),
@@ -648,6 +648,9 @@ export const propose = internalMutation({
     next: v.optional(v.object({ page: v.number(), group: v.number() })),
     batchProgress: v.optional(reviewBatchProgressValidator),
     // Coverage of a single (non-batched) review; batches carry their own.
+    // The merge base the review compared against, so a later push can tell
+    // whether a merge of the base branch brought new changes into the diff.
+    mergeBaseSha: v.optional(v.string()),
     coverage: v.optional(
       v.object({
         changedFiles: v.number(),
@@ -764,6 +767,7 @@ export const propose = internalMutation({
         findings: args.findings,
         excludedPaths: args.excludedPaths,
         filesRead: args.filesRead,
+        ...(args.mergeBaseSha ? { mergeBaseSha: args.mergeBaseSha } : {}),
         // Approvers preview the posted summary and every finding, which a
         // batched review posts inline like a single one.
         suggestedResponse: [
