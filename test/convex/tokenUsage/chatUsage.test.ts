@@ -920,6 +920,49 @@ describe("AI chat usage reservations", () => {
     });
   });
 
+  it("stops blocking once an unresolved attempt is 30 minutes old", async () => {
+    const t = convexTest(schema, modules);
+    const args = reservationArgs(await insertFixture(t), "abandoned", 1);
+    await reserve(t, args);
+    await markStarted(t, args);
+    await t.mutation(internal._ai.chatBilling.markChatUsageAmbiguous, {
+      reservationKey: args.reservationKey,
+      attemptToken: args.attemptToken,
+      userId: args.userId,
+      repositoryId: args.repositoryId,
+      ticketActionId: args.ticketActionId,
+    });
+    await expect(
+      reserve(t, reservationArgs(args, "still-blocked")),
+    ).resolves.toMatchObject({ reason: "unresolved_provider_usage" });
+    // By then the attempt cannot still be running.
+    await t.run(async (ctx) => {
+      const reservation = await ctx.db
+        .query("chatUsageReservations")
+        .withIndex("by_reservation_key", (q) =>
+          q.eq("reservationKey", args.reservationKey),
+        )
+        .unique();
+      await ctx.db.patch(reservation!._id, {
+        providerStartedAt: Date.now() - 31 * 60_000,
+      });
+    });
+    await expect(
+      reserve(t, reservationArgs(args, "after-the-window")),
+    ).resolves.toMatchObject({ allowed: true });
+    // The attempt is kept for admin reconciliation.
+    expect(
+      await t.run((ctx) =>
+        ctx.db
+          .query("chatUsageReservations")
+          .withIndex("by_reservation_key", (q) =>
+            q.eq("reservationKey", args.reservationKey),
+          )
+          .unique(),
+      ),
+    ).toMatchObject({ status: "ambiguous" });
+  });
+
   it("fails closed when a corrupt reservation total is below actual usage", async () => {
     const t = convexTest(schema, modules);
     const args = reservationArgs(

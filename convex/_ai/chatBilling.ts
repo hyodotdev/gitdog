@@ -381,6 +381,26 @@ function blocksActiveProvider(reservation: { provider?: string }): boolean {
   return (reservation.provider ?? "google") !== "google";
 }
 
+// A provider request cannot still be running 30 minutes after it started
+// (actions stop after 10), so an attempt whose outcome is still unknown by then
+// only awaits admin reconciliation and no longer blocks the account.
+export const AMBIGUOUS_USAGE_BLOCK_MS = 30 * 60_000;
+
+function blocksAsUnresolved(
+  reservation: {
+    provider?: string;
+    providerStartedAt?: number;
+    createdAt: number;
+  },
+  now: number,
+): boolean {
+  return (
+    blocksActiveProvider(reservation) &&
+    now - (reservation.providerStartedAt ?? reservation.createdAt) <
+      AMBIGUOUS_USAGE_BLOCK_MS
+  );
+}
+
 async function expireChatReservations(
   ctx: MutationCtx,
   userId: Id<"users">,
@@ -398,7 +418,7 @@ async function expireChatReservations(
   if (ambiguous.length > CHAT_RESERVATION_CLEANUP_LIMIT) {
     return { allowed: false, reason: "reservation_history_too_large" };
   }
-  if (ambiguous.some(blocksActiveProvider)) {
+  if (ambiguous.some((reservation) => blocksAsUnresolved(reservation, now))) {
     return { allowed: false, reason: "unresolved_provider_usage" };
   }
 
@@ -423,7 +443,7 @@ async function expireChatReservations(
       releaseReason: providerStarted ? "ambiguous_provider_attempt" : "expired",
       updatedAt: now,
     });
-    if (providerStarted && blocksActiveProvider(reservation)) {
+    if (providerStarted && blocksAsUnresolved(reservation, now)) {
       return { allowed: false, reason: "unresolved_provider_usage" };
     }
   }
@@ -1044,7 +1064,9 @@ export const markChatProviderStarted = internalMutation({
         reason: "reservation_history_too_large" as const,
       };
     }
-    if (ambiguousChat.some(blocksActiveProvider)) {
+    if (
+      ambiguousChat.some((reservation) => blocksAsUnresolved(reservation, now))
+    ) {
       return {
         started: false as const,
         reason: "unresolved_provider_usage" as const,
