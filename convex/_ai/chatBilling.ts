@@ -381,6 +381,26 @@ function blocksActiveProvider(reservation: { provider?: string }): boolean {
   return (reservation.provider ?? "google") !== "google";
 }
 
+// A provider request cannot still be running 30 minutes after it started
+// (actions stop after 10), so an attempt whose outcome is still unknown by then
+// only awaits admin reconciliation and no longer blocks the account.
+export const AMBIGUOUS_USAGE_BLOCK_MS = 30 * 60_000;
+
+function blocksAsUnresolved(
+  reservation: {
+    provider?: string;
+    providerStartedAt?: number;
+    createdAt: number;
+  },
+  now: number,
+): boolean {
+  return (
+    blocksActiveProvider(reservation) &&
+    now - (reservation.providerStartedAt ?? reservation.createdAt) <
+      AMBIGUOUS_USAGE_BLOCK_MS
+  );
+}
+
 async function expireChatReservations(
   ctx: MutationCtx,
   userId: Id<"users">,
@@ -398,7 +418,7 @@ async function expireChatReservations(
   if (ambiguous.length > CHAT_RESERVATION_CLEANUP_LIMIT) {
     return { allowed: false, reason: "reservation_history_too_large" };
   }
-  if (ambiguous.some(blocksActiveProvider)) {
+  if (ambiguous.some((reservation) => blocksAsUnresolved(reservation, now))) {
     return { allowed: false, reason: "unresolved_provider_usage" };
   }
 
@@ -423,7 +443,7 @@ async function expireChatReservations(
       releaseReason: providerStarted ? "ambiguous_provider_attempt" : "expired",
       updatedAt: now,
     });
-    if (providerStarted && blocksActiveProvider(reservation)) {
+    if (providerStarted && blocksAsUnresolved(reservation, now)) {
       return { allowed: false, reason: "unresolved_provider_usage" };
     }
   }
@@ -1044,7 +1064,9 @@ export const markChatProviderStarted = internalMutation({
         reason: "reservation_history_too_large" as const,
       };
     }
-    if (ambiguousChat.some(blocksActiveProvider)) {
+    if (
+      ambiguousChat.some((reservation) => blocksAsUnresolved(reservation, now))
+    ) {
       return {
         started: false as const,
         reason: "unresolved_provider_usage" as const,
@@ -2905,3 +2927,34 @@ export async function hasOpenUsageReservation(
   ]);
   return Boolean(chatPending || chatAmbiguous || stagedEmbedding.some(Boolean));
 }
+
+/**
+ * Daily report of Gitdog-key AI attempts whose outcome is still unknown after
+ * the blocking window. They no longer stop new requests, but they keep their
+ * reserved tokens held and defer Pro renewal and refunds until an admin
+ * reconciles them, so they must not go unnoticed.
+ */
+export const reportUnresolvedChatUsage = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now();
+    const rows = await ctx.db
+      .query("chatUsageReservations")
+      .withIndex("by_key_source_status_and_expiration", (q) =>
+        q.eq("keySource", undefined).eq("status", "ambiguous"),
+      )
+      .take(CHAT_RESERVATION_CLEANUP_LIMIT + 1);
+    const truncated = rows.length > CHAT_RESERVATION_CLEANUP_LIMIT;
+    const stale = rows.filter(
+      (row) => blocksActiveProvider(row) && !blocksAsUnresolved(row, now),
+    );
+    if (stale.length === 0 && !truncated) return { unresolved: 0 };
+    console.error(
+      `${stale.length}${truncated ? "+" : ""} AI usage attempts need admin reconciliation: ${stale
+        .slice(0, 20)
+        .map((row) => row.reservationKey)
+        .join(", ")}`,
+    );
+    return { unresolved: stale.length };
+  },
+});
