@@ -200,3 +200,32 @@ describe("safe PR generation diagnostics", () => {
     ).not.toContain("private source");
   });
 });
+
+describe("batch group failure isolation", () => {
+  it("isolates only failures of the model's own output", async () => {
+    const { isReviewGroupModelFailure, ReviewResponseFormatError } =
+      await import("../../../convex/pullRequests/errors");
+    const { ChatProviderRequestError } =
+      await import("../../../convex/_ai/providerErrors");
+    expect(
+      isReviewGroupModelFailure(
+        new ChatProviderRequestError("Unreadable", "billed"),
+      ),
+    ).toBe(true);
+    expect(isReviewGroupModelFailure(new ReviewResponseFormatError())).toBe(
+      true,
+    );
+    expect(isReviewGroupModelFailure(new Error("Invalid review result"))).toBe(
+      true,
+    );
+    for (const error of [
+      new ChatProviderRequestError("Rate limited", "not_billed", {
+        httpStatus: 429,
+      }),
+      new ChatProviderRequestError("Federation failed", "not_billed"),
+      new ChatProviderRequestError("Lost", "ambiguous"),
+      new Error("Review source, settings or lifecycle changed"),
+    ])
+      expect(isReviewGroupModelFailure(error)).toBe(false);
+  });
+});

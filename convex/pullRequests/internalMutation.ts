@@ -81,28 +81,44 @@ function isBatchCursor(
   return batch?.page === args.page && (batch?.group ?? 0) === (args.group ?? 0);
 }
 
-/** Head of the newest automatic review that finished with a result. */
-function lastReviewedHead(
-  actions: Doc<"ticketActions">[],
-  headSha: string,
-): string | undefined {
+/**
+ * The newest automatic review that finished with a complete record of what it
+ * left unreviewed, which a later push can build on instead of reviewing the
+ * whole PR again.
+ */
+function lastReviewed(actions: Doc<"ticketActions">[], headSha: string) {
   let latest: Doc<"ticketActions"> | undefined;
   for (const action of actions) {
-    const reviewed = action.proposedChanges?.source?.headSha;
     if (
       action.actionType !== "review" ||
       action.reviewVerificationOnly === true ||
       action.status !== "completed" ||
-      typeof reviewed !== "string" ||
-      reviewed === headSha ||
       (action.executionResult?.published !== true &&
-        action.executionResult?.reason !== "no_supported_findings" &&
         action.executionResult?.reason !== "no_new_changes")
     )
       continue;
     if (!latest || action.createdAt > latest.createdAt) latest = action;
   }
-  return latest?.proposedChanges.source.headSha;
+  const proposal = latest?.proposedChanges;
+  const source = proposal?.source;
+  // Older reviews and reviews whose uncovered list was cut short cannot say
+  // what they missed, so the next push reviews the whole PR.
+  if (
+    typeof source?.headSha !== "string" ||
+    typeof source.baseSha !== "string" ||
+    source.headSha === headSha ||
+    typeof proposal.uncoveredFiles !== "number" ||
+    proposal.coverageLimited === true ||
+    !Array.isArray(proposal.excludedPaths)
+  )
+    return undefined;
+  return {
+    headSha: source.headSha as string,
+    baseSha: source.baseSha as string,
+    uncoveredPaths: (proposal.excludedPaths as unknown[]).filter(
+      (path): path is string => typeof path === "string",
+    ),
+  };
 }
 
 function hasAttemptedReview(action: Doc<"ticketActions">) {
@@ -386,7 +402,7 @@ export const observe = internalMutation({
       !hasCurrentLegalAttestation(profiles[0])
     )
       return null;
-    const since = lastReviewedHead(actions, source.headSha);
+    const since = lastReviewed(actions, source.headSha);
     const actionId = await ctx.db.insert("ticketActions", {
       ticketId: ticket._id,
       actionType: "review",
@@ -395,7 +411,7 @@ export const observe = internalMutation({
       status: "pending",
       chatHistory: [],
       createdAt: now,
-      ...(since ? { reviewSinceSha: since } : {}),
+      ...(since ? { reviewSince: since } : {}),
     });
     await ctx.scheduler.runAfter(
       0,

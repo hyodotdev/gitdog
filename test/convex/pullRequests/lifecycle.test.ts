@@ -1331,7 +1331,7 @@ describe("batched PR reviews", () => {
           providerId: "openai",
           modelId: "fixture",
           chat: async (_messages, options) => {
-            if (page === failedPage) throw pageFailure();
+            if (page === failedPage || failedPage === -1) throw pageFailure();
             return {
               content: JSON.stringify(
                 options?.billingLabel === "pr-review/critique"
@@ -1806,7 +1806,12 @@ describe("batched PR reviews", () => {
     f.live.head = { sha: next.headSha };
     const nextId = (await f.observe(next))!;
     expect(await f.t.run((ctx) => ctx.db.get(nextId))).toMatchObject({
-      reviewSinceSha: source.headSha,
+      reviewSince: {
+        headSha: source.headSha,
+        baseSha: source.baseSha,
+        // Removed files the first review listed are carried, not lost.
+        uncoveredPaths: expect.arrayContaining(["src/file-17.ts"]),
+      },
     });
     f.batches.length = 0;
     f.fetch.mockResolvedValue(
@@ -1897,6 +1902,48 @@ describe("batched PR reviews", () => {
     );
     const request = JSON.parse(f.fetch.mock.calls[0][1]!.body as string);
     expect(request.body).toContain("were not fully reviewed");
+  });
+  it("stops paying for batches once model output keeps failing", async () => {
+    const { ChatProviderRequestError } =
+      await import("../../../convex/_ai/providerErrors");
+    const f = await batchFixture(
+      -1,
+      0,
+      10_000_000,
+      [],
+      61,
+      () => new ChatProviderRequestError("Unreadable output", "billed"),
+    );
+    await f.generate();
+    await f.generate(2);
+    await f.generate(3);
+    expect((await f.getAction())?.reviewBatch?.result).toMatchObject({
+      failedGroups: 2,
+    });
+    await f.generate(4);
+    expect((await f.getAction())?.status).toBe("failed");
+    expect(f.fetch).not.toHaveBeenCalled();
+  });
+  it("does not build on a review that could not list what it missed", async () => {
+    const f = await fixture();
+    const first = (await f.observe())!;
+    await f.t.run((ctx) =>
+      ctx.db.patch(first, {
+        status: "completed",
+        executionResult: { published: true },
+        proposedChanges: {
+          source,
+          findings: [],
+          uncoveredFiles: 150,
+          coverageLimited: true,
+          excludedPaths: [],
+        },
+      }),
+    );
+    const next = (await f.observe({ ...source, headSha: "e".repeat(40) }))!;
+    expect(
+      (await f.t.run((ctx) => ctx.db.get(next)))?.reviewSince,
+    ).toBeUndefined();
   });
   it("still stops the whole review on an ambiguous provider outcome", async () => {
     const { ChatProviderRequestError } =

@@ -99,6 +99,8 @@ export const reviewBatchProgressValidator = v.object({
   // Groups left on this page plus at least one per page not yet read.
   remainingBatches: v.number(),
   coverageLimited: v.boolean(),
+  // Groups whose model output could not be used and were left uncovered.
+  failedGroups: v.optional(v.number()),
   // Digest of the current page's ordered group split, to detect a page that
   // splits differently between the workers that review its groups.
   pageLayout: v.optional(v.string()),

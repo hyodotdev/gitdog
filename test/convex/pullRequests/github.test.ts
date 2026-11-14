@@ -177,27 +177,60 @@ describe("authoritative PR snapshots", () => {
       ).rejects.toBeInstanceOf(ReviewContextLimitError);
     });
   });
-  it("lists the paths a push changed only when it extends the reviewed head", async () => {
-    const since = "c".repeat(40);
-    const get = vi.spyOn(helpers, "fetchGitHubAppJsonWithRetry");
-    get.mockResolvedValueOnce({
-      status: "ahead",
-      files: [{ filename: "src/b.ts", previous_filename: "src/a.ts" }],
+  describe("changes since the last review", () => {
+    const since = { headSha: "c".repeat(40), baseSha: pr.base.sha };
+    it("lists the paths a push changed when it extends the reviewed head", async () => {
+      const get = vi
+        .spyOn(helpers, "fetchGitHubAppJsonWithRetry")
+        .mockResolvedValueOnce({
+          status: "ahead",
+          files: [{ filename: "src/b.ts", previous_filename: "src/a.ts" }],
+        });
+      expect(await changedSince(access, since, pr)).toEqual(
+        new Set(["src/b.ts", "src/a.ts"]),
+      );
+      expect(get.mock.calls[0][0]).toContain(
+        `/compare/${since.headSha}...${pr.head.sha}?per_page=1`,
+      );
     });
-    expect(await changedSince(access, since, pr.head.sha)).toEqual(
-      new Set(["src/b.ts", "src/a.ts"]),
-    );
-    expect(get.mock.calls[0][0]).toContain(
-      `/compare/${since}...${pr.head.sha}?per_page=1`,
-    );
-    get.mockResolvedValueOnce({ status: "diverged", files: [] });
-    expect(await changedSince(access, since, pr.head.sha)).toBeNull();
-    get.mockResolvedValueOnce({
-      status: "ahead",
-      files: Array.from({ length: 300 }, (_, i) => ({ filename: `f${i}` })),
+    it("reviews the whole PR after a force push or a long comparison", async () => {
+      const get = vi.spyOn(helpers, "fetchGitHubAppJsonWithRetry");
+      get.mockResolvedValueOnce({ status: "diverged", files: [] });
+      expect(await changedSince(access, since, pr)).toBeNull();
+      get.mockResolvedValueOnce({
+        status: "ahead",
+        files: Array.from({ length: 300 }, (_, i) => ({ filename: `f${i}` })),
+      });
+      expect(await changedSince(access, since, pr)).toBeNull();
+      expect(
+        await changedSince(access, { ...since, headSha: "main" }, pr),
+      ).toBeNull();
     });
-    expect(await changedSince(access, since, pr.head.sha)).toBeNull();
-    expect(await changedSince(access, "main", pr.head.sha)).toBeNull();
+    it("reviews the whole PR when the comparison fails", async () => {
+      vi.spyOn(helpers, "fetchGitHubAppJsonWithRetry").mockRejectedValue(
+        new Error("Read changes since the last review failed (HTTP 404)"),
+      );
+      expect(await changedSince(access, since, pr)).toBeNull();
+    });
+    it("reviews the whole PR when the base was retargeted or rewound", async () => {
+      const moved = { ...since, baseSha: "d".repeat(40) };
+      const get = vi.spyOn(helpers, "fetchGitHubAppJsonWithRetry");
+      get.mockResolvedValueOnce({ status: "diverged" });
+      expect(await changedSince(access, moved, pr)).toBeNull();
+      get.mockResolvedValueOnce({ status: "behind" });
+      expect(await changedSince(access, moved, pr)).toBeNull();
+      // A base that only moved forward keeps the follow-up review small.
+      get.mockResolvedValueOnce({ status: "ahead" }).mockResolvedValueOnce({
+        status: "ahead",
+        files: [{ filename: "src/b.ts" }],
+      });
+      expect(await changedSince(access, moved, pr)).toEqual(
+        new Set(["src/b.ts"]),
+      );
+      expect(get.mock.calls.at(-2)![0]).toContain(
+        `/compare/${moved.baseSha}...${pr.base.sha}`,
+      );
+    });
   });
   it("rejects a PR from another immutable repository", async () => {
     vi.spyOn(helpers, "fetchGitHubAppJsonWithRetry").mockResolvedValue({

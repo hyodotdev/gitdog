@@ -183,6 +183,7 @@ export const observe = internalAction({
 });
 
 const REVIEW_COVERAGE_PREVIEW = 100;
+const MAX_FAILED_REVIEW_GROUPS = 2;
 // Reviews of one account share a single provider slot. Wait this long per
 // action for other work to release it before failing the review.
 const REVIEW_ACTIVE_PROVIDER_WAIT_MS = 90_000;
@@ -227,16 +228,24 @@ export const generate = internalAction({
       const previous = initial.action.reviewBatch?.result;
       // A push after a finished review covers only the files it changed, as
       // long as they fit one review; otherwise the whole PR is reviewed.
-      const since = initial.action.reviewSinceSha;
+      const since = initial.action.reviewSince;
       let scoped: Awaited<ReturnType<typeof snapshot>> | undefined;
       if (since && !batched && !verificationOnly) {
-        const paths = await changedSince(access, since, pr.head.sha);
-        if (paths && paths.size <= BATCH_REVIEW_THRESHOLD) {
+        const changed = await changedSince(access, since, pr);
+        // Files the earlier review could not cover get another chance.
+        if (changed) {
           const candidate = await snapshot(access, pr, verificationOnly, {
-            findingPaths: paths,
+            findingPaths: new Set([...changed, ...since.uncoveredPaths]),
           });
-          if (JSON.stringify(candidate.files).length <= REVIEW_DIFF_BUDGET)
-            scoped = candidate;
+          // A removed file the earlier review listed has nothing to review.
+          const files = candidate.files.filter(
+            (f) => f.status !== "removed" || changed.has(f.filename),
+          );
+          if (
+            files.length <= BATCH_REVIEW_THRESHOLD &&
+            JSON.stringify(files).length <= REVIEW_DIFF_BUDGET
+          )
+            scoped = { ...candidate, files };
         }
       }
       batched ||= !scoped && pr.changed_files > BATCH_REVIEW_THRESHOLD;
@@ -268,16 +277,23 @@ export const generate = internalAction({
           previous.mergeBaseSha !== data.baseSha)
       )
         throw new Error("Pull request changed while reading its diff");
-      if (scoped && data.files.length === 0) {
-        // The push changed nothing in this PR's diff, such as a merge of the
-        // base branch, so there is nothing new to review or post.
+      if (scoped && !data.files.some(hasReviewablePatch)) {
+        // Nothing reviewable changed in this PR's diff, such as a merge of the
+        // base branch or a deletion, so no model call is made. Binary or
+        // oversized changes are reported as not reviewed; otherwise nothing
+        // is posted.
+        const unreviewable = data.files.filter((f) => f.status !== "removed");
         await ctx.runMutation(internal.pullRequests.internalMutation.propose, {
           actionId: args.actionId,
           source,
           findings: [],
-          excludedPaths: [],
+          excludedPaths: unreviewable.map((f) => f.filename),
           filesRead: [],
-          coverage: { changedFiles: 0, uncoveredFiles: 0, since },
+          coverage: {
+            changedFiles: unreviewable.length,
+            uncoveredFiles: unreviewable.length,
+            since: since?.headSha,
+          },
         });
         return;
       }
@@ -298,6 +314,7 @@ export const generate = internalAction({
       let findingCount = previous?.findingCount ?? 0;
       let inspectedFiles = previous?.inspectedFiles ?? 0;
       let uncoveredFiles = previous?.uncoveredFiles ?? 0;
+      let failedGroups = previous?.failedGroups ?? 0;
       const filesRead = new Set(previous?.filesRead);
       const excludedPaths = new Set(previous?.excludedPaths);
       const groups = batched ? splitReviewDiff(data.files) : [data.files];
@@ -411,7 +428,15 @@ export const generate = internalAction({
                 : readReviewSource(access, path, data.baseSha),
           });
         } catch (error) {
-          if (!batched || !isReviewGroupModelFailure(error)) throw error;
+          // A failure that keeps recurring is not one bad response; stop
+          // instead of paying for every remaining batch.
+          if (
+            !batched ||
+            failedGroups >= MAX_FAILED_REVIEW_GROUPS ||
+            !isReviewGroupModelFailure(error)
+          )
+            throw error;
+          failedGroups++;
           // Keep the batches already paid for and report this group as not
           // reviewed, as when its files cannot be read.
           await ensureCurrent();
@@ -486,6 +511,7 @@ export const generate = internalAction({
               findingCount,
               inspectedFiles,
               uncoveredFiles,
+              failedGroups,
               remainingBatches: next
                 ? groups.length -
                   group -
@@ -503,9 +529,11 @@ export const generate = internalAction({
           ? undefined
           : scoped
             ? {
-                changedFiles: data.files.length,
+                // Removed files have nothing to review, as in uncoveredFiles.
+                changedFiles: data.files.filter((f) => f.status !== "removed")
+                  .length,
                 uncoveredFiles,
-                since: initial.action.reviewSinceSha,
+                since: since?.headSha,
               }
             : { changedFiles: pr.changed_files, uncoveredFiles },
       });

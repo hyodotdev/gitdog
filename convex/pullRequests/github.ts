@@ -201,38 +201,49 @@ export async function snapshot(
 }
 
 /**
- * Paths changed from an earlier reviewed head to the current head, or null
- * when that head is not an ancestor (a force push) or the comparison is
- * truncated, in which case the whole PR is reviewed again.
+ * Paths changed since an earlier review, or null when the whole PR must be
+ * reviewed again: after a force push, a base branch that was retargeted or
+ * rewound (which can bring unreviewed commits into the diff), a truncated
+ * comparison, or any failure to compare.
  */
 export async function changedSince(
   access: VerifiedRepositoryAccess,
-  since: string,
-  head: string,
+  since: { headSha: string; baseSha: string },
+  pr: PullRequest,
 ): Promise<Set<string> | null> {
-  if (!sha(since) || !sha(head)) return null;
-  const comparison = await readReviewJson<{
-    status: string;
-    files?: Array<{ filename: string; previous_filename?: string }>;
-  }>(
-    access,
-    `/compare/${since}...${head}?per_page=1`,
-    "Read changes since the last review",
-  );
-  if (
-    (comparison.status !== "ahead" && comparison.status !== "identical") ||
-    !Array.isArray(comparison.files) ||
-    comparison.files.length >= MAX_REVIEW_FILES
-  )
+  if (!sha(since.headSha) || !sha(since.baseSha)) return null;
+  const compare = (from: string, to: string) =>
+    readReviewJson<{
+      status: string;
+      files?: Array<{ filename: string; previous_filename?: string }>;
+    }>(
+      access,
+      `/compare/${from}...${to}?per_page=1`,
+      "Read changes since the last review",
+    );
+  try {
+    if (since.baseSha !== pr.base.sha) {
+      const base = await compare(since.baseSha, pr.base.sha);
+      if (base.status !== "ahead") return null;
+    }
+    const comparison = await compare(since.headSha, pr.head.sha);
+    if (
+      (comparison.status !== "ahead" && comparison.status !== "identical") ||
+      !Array.isArray(comparison.files) ||
+      comparison.files.length >= MAX_REVIEW_FILES
+    )
+      return null;
+    const paths = new Set<string>();
+    for (const file of comparison.files) {
+      if (typeof file?.filename !== "string") return null;
+      paths.add(file.filename);
+      if (typeof file.previous_filename === "string")
+        paths.add(file.previous_filename);
+    }
+    return paths;
+  } catch {
     return null;
-  const paths = new Set<string>();
-  for (const file of comparison.files) {
-    if (typeof file?.filename !== "string") return null;
-    paths.add(file.filename);
-    if (typeof file.previous_filename === "string")
-      paths.add(file.previous_filename);
   }
-  return paths;
 }
 
 // Production reviews of up to 60 files used a median of about 90k tokens.
