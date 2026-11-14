@@ -1408,7 +1408,7 @@ describe("batched PR reviews", () => {
     };
     vi.spyOn(helpers, "fetchGitHubAppJsonWithRetry").mockImplementation(
       async (url) => {
-        const { pathname, searchParams } = new URL(url);
+        const { pathname } = new URL(url);
         if (pathname.includes(`/compare/${source.baseSha}...`))
           return {
             merge_base_commit: { sha: source.baseSha },
