@@ -16,11 +16,13 @@ import {
 } from "../_ai/providerResolution";
 import {
   BATCH_REVIEW_THRESHOLD,
+  changedSince,
   getPullRequest,
   isBotPullRequestAuthor,
   minimumReviewBatches,
   PullRequestDiffBudgetError,
   PullRequestSizeLimitError,
+  REVIEW_DIFF_BUDGET,
   root,
   readReviewJson,
   snapshot,
@@ -32,6 +34,7 @@ import {
 import { reviewWithContext } from "./workflow";
 import { REVIEW_QUOTA_FAILURES } from "./internalMutation";
 import {
+  isReviewGroupModelFailure,
   ReviewQuotaError,
   reviewGenerationError,
   reviewFailureCause,
@@ -221,32 +224,63 @@ export const generate = internalAction({
         throw new Error("Bot-authored pull requests are not reviewed");
       if (!sameSource(pr, source, verificationOnly))
         throw new Error("Pull request changed before review");
-      batched ||= pr.changed_files > BATCH_REVIEW_THRESHOLD;
       const previous = initial.action.reviewBatch?.result;
-      const data = batched
-        ? await snapshot(access, pr, verificationOnly, { page })
-        : await snapshot(access, pr, verificationOnly).catch(async (error) => {
-            if (!(error instanceof PullRequestDiffBudgetError)) throw error;
-            // A diff over the single-review budget is reviewed in batches.
-            const paged = await snapshot(access, pr, verificationOnly, {
-              page,
-            });
-            // Batches cannot help when no diff is left after the oversized
-            // ones are dropped.
-            if (
-              paged.files.length === pr.changed_files &&
-              !splitReviewDiff(paged.files).flat().some(hasReviewablePatch)
-            )
-              throw error;
-            batched = true;
-            return paged;
+      // A push after a finished review covers only the files it changed, as
+      // long as they fit one review; otherwise the whole PR is reviewed.
+      const since = initial.action.reviewSinceSha;
+      let scoped: Awaited<ReturnType<typeof snapshot>> | undefined;
+      if (since && !batched && !verificationOnly) {
+        const paths = await changedSince(access, since, pr.head.sha);
+        if (paths && paths.size <= BATCH_REVIEW_THRESHOLD) {
+          const candidate = await snapshot(access, pr, verificationOnly, {
+            findingPaths: paths,
           });
+          if (JSON.stringify(candidate.files).length <= REVIEW_DIFF_BUDGET)
+            scoped = candidate;
+        }
+      }
+      batched ||= !scoped && pr.changed_files > BATCH_REVIEW_THRESHOLD;
+      const data = scoped
+        ? scoped
+        : batched
+          ? await snapshot(access, pr, verificationOnly, { page })
+          : await snapshot(access, pr, verificationOnly).catch(
+              async (error) => {
+                if (!(error instanceof PullRequestDiffBudgetError)) throw error;
+                // A diff over the single-review budget is reviewed in batches.
+                const paged = await snapshot(access, pr, verificationOnly, {
+                  page,
+                });
+                // Batches cannot help when no diff is left after the oversized
+                // ones are dropped.
+                if (
+                  paged.files.length === pr.changed_files &&
+                  !splitReviewDiff(paged.files).flat().some(hasReviewablePatch)
+                )
+                  throw error;
+                batched = true;
+                return paged;
+              },
+            );
       if (
         previous &&
         (previous.changedFiles !== pr.changed_files ||
           previous.mergeBaseSha !== data.baseSha)
       )
         throw new Error("Pull request changed while reading its diff");
+      if (scoped && data.files.length === 0) {
+        // The push changed nothing in this PR's diff, such as a merge of the
+        // base branch, so there is nothing new to review or post.
+        await ctx.runMutation(internal.pullRequests.internalMutation.propose, {
+          actionId: args.actionId,
+          source,
+          findings: [],
+          excludedPaths: [],
+          filesRead: [],
+          coverage: { changedFiles: 0, uncoveredFiles: 0, since },
+        });
+        return;
+      }
       const fileKeys = new Set(previous?.fileKeys);
       if (batched) {
         // Keep the complete file inventory bounded even when paths are long.
@@ -351,28 +385,42 @@ export const generate = internalAction({
           beforeProviderStart: ensureCurrent,
           activeProviderWaitMs: REVIEW_ACTIVE_PROVIDER_WAIT_MS,
         });
-        const result = await reviewWithContext({
-          provider,
-          batchGroup: batched,
-          allowSuggestions:
-            initial.repository.settings.pullRequestSuggestionsEnabled !== false,
-          repository: access.githubRepo,
-          title: source.title,
-          body: source.body,
-          files: selected,
-          paths,
-          basePaths,
-          guard: ensureCurrent,
-          read: (path, ref) =>
-            ref === "head"
-              ? readReviewSource(
-                  access,
-                  path,
-                  data.headSha,
-                  data.files.find((file) => file.filename === path),
-                )
-              : readReviewSource(access, path, data.baseSha),
-        });
+        let result: Awaited<ReturnType<typeof reviewWithContext>>;
+        try {
+          result = await reviewWithContext({
+            provider,
+            batchGroup: batched,
+            allowSuggestions:
+              initial.repository.settings.pullRequestSuggestionsEnabled !==
+              false,
+            repository: access.githubRepo,
+            title: source.title,
+            body: source.body,
+            files: selected,
+            paths,
+            basePaths,
+            guard: ensureCurrent,
+            read: (path, ref) =>
+              ref === "head"
+                ? readReviewSource(
+                    access,
+                    path,
+                    data.headSha,
+                    data.files.find((file) => file.filename === path),
+                  )
+                : readReviewSource(access, path, data.baseSha),
+          });
+        } catch (error) {
+          if (!batched || !isReviewGroupModelFailure(error)) throw error;
+          // Keep the batches already paid for and report this group as not
+          // reviewed, as when its files cannot be read.
+          await ensureCurrent();
+          result = {
+            findings: [],
+            reads: [],
+            excludedPaths: selected.map((file) => file.filename),
+          };
+        }
         findings.push(...result.findings);
         findingCount += result.findings.length;
         const inspected = new Set(
@@ -453,7 +501,13 @@ export const generate = internalAction({
           : undefined,
         coverage: batched
           ? undefined
-          : { changedFiles: pr.changed_files, uncoveredFiles },
+          : scoped
+            ? {
+                changedFiles: data.files.length,
+                uncoveredFiles,
+                since: initial.action.reviewSinceSha,
+              }
+            : { changedFiles: pr.changed_files, uncoveredFiles },
       });
     } catch (error) {
       // Do not persist provider bodies, source snippets or credentials in errors.
@@ -571,7 +625,9 @@ export const publish = internalAction({
       const data =
         findings.length === 0
           ? undefined
-          : batched
+          : // A follow-up review of a large PR may exceed the single diff
+            // budget, so it re-reads only the files its findings need.
+            batched || typeof proposal.reviewedSince === "string"
             ? await snapshot(access, live, false, {
                 // Evidence in a large changed file is re-read around its diff,
                 // as it was during review, so its diff is needed too.
@@ -664,6 +720,10 @@ export const publish = internalAction({
               ? {
                   changedFiles: proposal.changedFiles,
                   uncoveredFiles: proposal.uncoveredFiles,
+                  since:
+                    typeof proposal.reviewedSince === "string"
+                      ? proposal.reviewedSince
+                      : undefined,
                 }
               : undefined;
           const body = [

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as helpers from "../../../convex/github/helpers";
 import {
+  changedSince,
   getPullRequest,
   isBotPullRequestAuthor,
   snapshot,
@@ -175,6 +176,28 @@ describe("authoritative PR snapshots", () => {
         readReviewFile(access, changed.filename, pr.head.sha, changed),
       ).rejects.toBeInstanceOf(ReviewContextLimitError);
     });
+  });
+  it("lists the paths a push changed only when it extends the reviewed head", async () => {
+    const since = "c".repeat(40);
+    const get = vi.spyOn(helpers, "fetchGitHubAppJsonWithRetry");
+    get.mockResolvedValueOnce({
+      status: "ahead",
+      files: [{ filename: "src/b.ts", previous_filename: "src/a.ts" }],
+    });
+    expect(await changedSince(access, since, pr.head.sha)).toEqual(
+      new Set(["src/b.ts", "src/a.ts"]),
+    );
+    expect(get.mock.calls[0][0]).toContain(
+      `/compare/${since}...${pr.head.sha}?per_page=1`,
+    );
+    get.mockResolvedValueOnce({ status: "diverged", files: [] });
+    expect(await changedSince(access, since, pr.head.sha)).toBeNull();
+    get.mockResolvedValueOnce({
+      status: "ahead",
+      files: Array.from({ length: 300 }, (_, i) => ({ filename: `f${i}` })),
+    });
+    expect(await changedSince(access, since, pr.head.sha)).toBeNull();
+    expect(await changedSince(access, "main", pr.head.sha)).toBeNull();
   });
   it("rejects a PR from another immutable repository", async () => {
     vi.spyOn(helpers, "fetchGitHubAppJsonWithRetry").mockResolvedValue({

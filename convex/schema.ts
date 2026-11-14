@@ -951,6 +951,9 @@ const applicationTables = {
     ),
     reviewVerificationOnly: v.optional(v.boolean()),
     reviewRecheckOfActionId: v.optional(v.id("ticketActions")),
+    // Head of the last finished review of this PR; a later push reviews only
+    // the files changed since then.
+    reviewSinceSha: v.optional(v.string()),
     sourceCommentId: v.optional(v.number()), // GitHub comment delivery id for follow-up idempotency
     requestedByUserId: v.optional(v.id("users")), // Direct GitHub requester when the action was user-initiated
 

@@ -84,7 +84,7 @@ export async function getPullRequest(
 const MAX_REVIEW_FILES = 300;
 export const BATCH_REVIEW_THRESHOLD = 60;
 const REVIEW_BATCH_FILES = 16;
-const REVIEW_DIFF_BUDGET = 100_000;
+export const REVIEW_DIFF_BUDGET = 100_000;
 // A batch's diff shares the review conversation with the source the reviewer
 // reads, so several diffs are grouped only up to this size.
 const REVIEW_GROUP_DIFF_BUDGET = 40_000;
@@ -198,6 +198,41 @@ export async function snapshot(
     headSha: pr.head.sha,
     baseSha: comparison.merge_base_commit.sha,
   };
+}
+
+/**
+ * Paths changed from an earlier reviewed head to the current head, or null
+ * when that head is not an ancestor (a force push) or the comparison is
+ * truncated, in which case the whole PR is reviewed again.
+ */
+export async function changedSince(
+  access: VerifiedRepositoryAccess,
+  since: string,
+  head: string,
+): Promise<Set<string> | null> {
+  if (!sha(since) || !sha(head)) return null;
+  const comparison = await readReviewJson<{
+    status: string;
+    files?: Array<{ filename: string; previous_filename?: string }>;
+  }>(
+    access,
+    `/compare/${since}...${head}?per_page=1`,
+    "Read changes since the last review",
+  );
+  if (
+    (comparison.status !== "ahead" && comparison.status !== "identical") ||
+    !Array.isArray(comparison.files) ||
+    comparison.files.length >= MAX_REVIEW_FILES
+  )
+    return null;
+  const paths = new Set<string>();
+  for (const file of comparison.files) {
+    if (typeof file?.filename !== "string") return null;
+    paths.add(file.filename);
+    if (typeof file.previous_filename === "string")
+      paths.add(file.previous_filename);
+  }
+  return paths;
 }
 
 // Production reviews of up to 60 files used a median of about 90k tokens.

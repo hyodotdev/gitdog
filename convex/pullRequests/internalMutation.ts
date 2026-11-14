@@ -81,6 +81,30 @@ function isBatchCursor(
   return batch?.page === args.page && (batch?.group ?? 0) === (args.group ?? 0);
 }
 
+/** Head of the newest automatic review that finished with a result. */
+function lastReviewedHead(
+  actions: Doc<"ticketActions">[],
+  headSha: string,
+): string | undefined {
+  let latest: Doc<"ticketActions"> | undefined;
+  for (const action of actions) {
+    const reviewed = action.proposedChanges?.source?.headSha;
+    if (
+      action.actionType !== "review" ||
+      action.reviewVerificationOnly === true ||
+      action.status !== "completed" ||
+      typeof reviewed !== "string" ||
+      reviewed === headSha ||
+      (action.executionResult?.published !== true &&
+        action.executionResult?.reason !== "no_supported_findings" &&
+        action.executionResult?.reason !== "no_new_changes")
+    )
+      continue;
+    if (!latest || action.createdAt > latest.createdAt) latest = action;
+  }
+  return latest?.proposedChanges.source.headSha;
+}
+
 function hasAttemptedReview(action: Doc<"ticketActions">) {
   if (action.reviewGenerationToken !== undefined) return true;
   // Keep the slot available when a queued review was superseded before its worker started.
@@ -362,6 +386,7 @@ export const observe = internalMutation({
       !hasCurrentLegalAttestation(profiles[0])
     )
       return null;
+    const since = lastReviewedHead(actions, source.headSha);
     const actionId = await ctx.db.insert("ticketActions", {
       ticketId: ticket._id,
       actionType: "review",
@@ -370,6 +395,7 @@ export const observe = internalMutation({
       status: "pending",
       chatHistory: [],
       createdAt: now,
+      ...(since ? { reviewSinceSha: since } : {}),
     });
     await ctx.scheduler.runAfter(
       0,
@@ -607,7 +633,12 @@ export const propose = internalMutation({
     batchProgress: v.optional(reviewBatchProgressValidator),
     // Coverage of a single (non-batched) review; batches carry their own.
     coverage: v.optional(
-      v.object({ changedFiles: v.number(), uncoveredFiles: v.number() }),
+      v.object({
+        changedFiles: v.number(),
+        uncoveredFiles: v.number(),
+        // Set when only the files changed since this reviewed head were covered.
+        since: v.optional(v.string()),
+      }),
     ),
   },
   handler: async (ctx, args) => {
@@ -686,7 +717,10 @@ export const propose = internalMutation({
       return true;
     }
     const noFindings = args.findings.length === 0;
+    // A push that changed nothing in the PR diff completes without a post.
+    const nothingNew = noFindings && args.coverage?.changedFiles === 0;
     const verificationOnly = action.reviewVerificationOnly === true;
+    const unpublished = verificationOnly || nothingNew;
     const approval = repo.settings.requireApprovalForPullRequests !== false;
     const suggestions = repo.settings.pullRequestSuggestionsEnabled !== false;
     const coverage = batch ?? args.coverage;
@@ -706,6 +740,9 @@ export const propose = internalMutation({
             ? {
                 changedFiles: args.coverage.changedFiles,
                 uncoveredFiles: args.coverage.uncoveredFiles,
+                ...(args.coverage.since
+                  ? { reviewedSince: args.coverage.since }
+                  : {}),
               }
             : {}),
         findings: args.findings,
@@ -730,17 +767,20 @@ export const propose = internalMutation({
         ].join("\n\n"),
       },
       // The no-findings summary is fixed text, so it needs no approval.
-      status: verificationOnly
+      status: unpublished
         ? "completed"
         : approval && !noFindings
           ? "pending_approval"
           : "approved",
-      completedAt: verificationOnly ? Date.now() : undefined,
-      executionResult: verificationOnly
-        ? { published: false, reason: "verification_only" }
+      completedAt: unpublished ? Date.now() : undefined,
+      executionResult: unpublished
+        ? {
+            published: false,
+            reason: verificationOnly ? "verification_only" : "no_new_changes",
+          }
         : undefined,
     });
-    if (!verificationOnly && (!approval || noFindings))
+    if (!unpublished && (!approval || noFindings))
       await ctx.scheduler.runAfter(
         0,
         internal.pullRequests.internalAction.publish,
