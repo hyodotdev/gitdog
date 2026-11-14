@@ -448,6 +448,31 @@ describe("PR review durable lifecycle", () => {
     expect(await f.observe(next)).toBeTruthy();
     expect((await ticket())?.pullRequestHeadSha).toBe(next.headSha);
   });
+  it("does not let an unclaimed approved review hold back later pushes", async () => {
+    const f = await fixture();
+    const actionId = (await f.observe())!;
+    await f.t.mutation(internal.pullRequests.internalMutation.claimGeneration, {
+      actionId,
+    });
+    await f.t.mutation(internal.pullRequests.internalMutation.propose, {
+      actionId,
+      source,
+      findings: [],
+      excludedPaths: [],
+      filesRead: [],
+    });
+    expect((await f.t.run((ctx) => ctx.db.get(actionId)))?.status).toBe(
+      "approved",
+    );
+    // Nothing is in flight until publication claims it, so a push still
+    // supersedes it and starts a review.
+    expect(
+      await f.observe({ ...source, headSha: "c".repeat(40) }),
+    ).toBeTruthy();
+    expect((await f.t.run((ctx) => ctx.db.get(actionId)))?.status).toBe(
+      "failed",
+    );
+  });
   it("closing or converting to draft prevents approval", async () => {
     const f = await fixture();
     const actionId = (await f.observe())!;
@@ -964,6 +989,11 @@ describe("batched publication", () => {
 });
 it("still posts on the reviewed commit after a newer push", async () => {
   const f = await publicationFixture();
+  const helpers = await import("../../../convex/github/helpers");
+  vi.mocked(helpers.fetchGitHubAppJsonWithRetry).mockImplementation(
+    async (url) =>
+      (url.includes("/compare/") ? { status: "ahead" } : []) as never,
+  );
   f.live.mockResolvedValue({
     id: 1,
     number: 12,
@@ -1921,12 +1951,16 @@ describe("batched PR reviews", () => {
     });
     const request = JSON.parse(f.fetch.mock.calls[0][1]!.body as string);
     expect(request.commit_id).toBe(source.headSha);
-    // The ticket kept the reviewed commit, so the next push is reviewed
-    // from there.
-    const ticket = await f.t.run(async (ctx) =>
-      ctx.db.get((await ctx.db.get(f.actionId))!.ticketId),
+    // Once it ended, the PR was observed again and the dropped head is
+    // reviewed from the commit just reviewed.
+    const actions = await f.t.run((ctx) =>
+      ctx.db.query("ticketActions").collect(),
     );
-    expect(ticket?.pullRequestHeadSha).toBe(source.headSha);
+    expect(actions).toHaveLength(2);
+    expect(actions[1]).toMatchObject({
+      proposedChanges: { source: { headSha: next.headSha } },
+      reviewSince: { headSha: source.headSha },
+    });
   });
 
   it("reviews only the files a later push changed", async () => {

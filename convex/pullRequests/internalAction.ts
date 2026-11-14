@@ -671,6 +671,19 @@ export const publish = internalAction({
       const live = await getPullRequest(access, initial.ticket.githubNumber);
       if (!sameSource(live))
         throw new Error("Pull request changed after the review was generated");
+      // A dropped push is fine, but a force push that removed the reviewed
+      // commit would make GitHub refuse the review after it is claimed.
+      if (live.head.sha !== source.headSha) {
+        const { status } = await readReviewJson<{ status: string }>(
+          access,
+          `/compare/${source.headSha}...${live.head.sha}?per_page=1`,
+          "Read pull request history",
+        );
+        if (status !== "ahead" && status !== "identical")
+          throw new Error(
+            "Pull request changed after the review was generated",
+          );
+      }
       const proposal = initial.action.proposedChanges;
       const findings = proposal?.findings as Finding[];
       if (!Array.isArray(findings) || findings.length > MAX_REVIEW_FINDINGS)
