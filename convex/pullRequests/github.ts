@@ -91,112 +91,107 @@ const REVIEW_GROUP_DIFF_BUDGET = 40_000;
 const DIFF_LIMIT_MESSAGE =
   "Pull request diff exceeds the review budget; split this PR";
 
+/**
+ * The diff of one pinned commit pair, read from the compare API so a review
+ * keeps reviewing the commit it started on even after newer pushes.
+ * `pr.head.sha` and `pr.base.sha` are that pair, not the live PR.
+ */
 export async function snapshot(
   access: VerifiedRepositoryAccess,
-  pr: PullRequest,
-  verificationOnly = false,
+  pr: Pick<PullRequest, "head" | "base">,
+  _verificationOnly = false,
   options?: { page: number } | { findingPaths: ReadonlySet<string> },
-): Promise<{ files: ChangedFile[]; baseSha: string; headSha: string }> {
-  if (!Number.isSafeInteger(pr.changed_files) || pr.changed_files < 1)
-    throw new PullRequestSizeLimitError(
-      "Review requires at least one changed file",
-    );
-  if (pr.changed_files > MAX_REVIEW_FILES)
-    throw new PullRequestSizeLimitError(
-      "Review covers at most 300 changed files; split this PR for complete coverage",
-    );
-  const batchPage = options && "page" in options ? options.page : undefined;
-  const batched =
-    batchPage !== undefined || pr.changed_files > BATCH_REVIEW_THRESHOLD;
-  const findingPaths =
-    options && "findingPaths" in options ? options.findingPaths : undefined;
-  const pageSize = batchPage === undefined ? 100 : REVIEW_BATCH_FILES;
-  if (
-    batchPage !== undefined &&
-    (!Number.isSafeInteger(batchPage) ||
-      batchPage < 1 ||
-      batchPage > Math.ceil(pr.changed_files / pageSize))
-  )
+): Promise<{
+  files: ChangedFile[];
+  baseSha: string;
+  headSha: string;
+  changedFiles: number;
+}> {
+  if (!sha(pr.head.sha) || !sha(pr.base.sha))
     throw new Error("Pull request diff is incomplete");
-  const first = batchPage ?? 1;
-  const last = batchPage ?? Math.ceil(pr.changed_files / pageSize);
-  const files: ChangedFile[] = [];
-  const seen = new Set<string>();
-  for (let page = first; page <= last; page++) {
-    const rows = await readReviewJson<ChangedFile[]>(
-      access,
-      `/pulls/${pr.number}/files?per_page=${pageSize}${batched ? `&page=${page}` : ""}`,
-      batched
-        ? `Read pull request diff (page ${page})`
-        : "Read pull request diff",
-    );
-    if (
-      !Array.isArray(rows) ||
-      rows.length !==
-        Math.min(pageSize, pr.changed_files - (page - 1) * pageSize)
-    )
-      throw new Error("Pull request diff is incomplete");
-    if (
-      !batched &&
-      !findingPaths &&
-      JSON.stringify(rows).length > REVIEW_DIFF_BUDGET
-    )
-      throw new PullRequestDiffBudgetError(DIFF_LIMIT_MESSAGE);
-    for (const file of rows) {
-      if (
-        !file ||
-        typeof file.filename !== "string" ||
-        !safePath(file.filename) ||
-        seen.has(file.filename) ||
-        (file.previous_filename !== undefined &&
-          (typeof file.previous_filename !== "string" ||
-            !safePath(file.previous_filename))) ||
-        typeof file.status !== "string" ||
-        !Number.isSafeInteger(file.additions) ||
-        file.additions < 0 ||
-        !Number.isSafeInteger(file.deletions) ||
-        file.deletions < 0 ||
-        (file.patch !== undefined &&
-          (typeof file.patch !== "string" ||
-            addedLines(file.patch).size !== file.additions))
-      )
-        throw new Error("Pull request diff is incomplete");
-      seen.add(file.filename);
-      if (findingPaths && !findingPaths.has(file.filename)) continue;
-      files.push({
-        filename: file.filename,
-        status: file.status,
-        additions: file.additions,
-        deletions: file.deletions,
-        ...(file.previous_filename !== undefined
-          ? { previous_filename: file.previous_filename }
-          : {}),
-        ...(file.patch !== undefined ? { patch: file.patch } : {}),
-      });
-    }
-  }
   const comparison = await readReviewJson<{
-    merge_base_commit: { sha: string };
+    merge_base_commit?: { sha: string };
+    files?: ChangedFile[];
   }>(
     access,
     `/compare/${pr.base.sha}...${pr.head.sha}?per_page=1`,
-    "Read merge base",
+    "Read pull request diff",
   );
-  if (!sha(comparison.merge_base_commit?.sha))
+  const rows = comparison.files;
+  const mergeBase = comparison.merge_base_commit?.sha;
+  if (!sha(mergeBase))
     throw new Error("Pull request merge base is unavailable");
-  const after = await getPullRequest(access, pr.number);
-  if (
-    after.state !== (verificationOnly ? pr.state : "open") ||
-    after.draft ||
-    after.head.sha !== pr.head.sha ||
-    after.base.sha !== pr.base.sha ||
-    after.changed_files !== pr.changed_files
+  if (!Array.isArray(rows)) throw new Error("Pull request diff is incomplete");
+  if (rows.length < 1)
+    throw new PullRequestSizeLimitError(
+      "Review requires at least one changed file",
+    );
+  // The compare API lists at most 300 files.
+  if (rows.length >= MAX_REVIEW_FILES)
+    throw new PullRequestSizeLimitError(
+      "Review covers at most 300 changed files; split this PR for complete coverage",
+    );
+  const all: ChangedFile[] = [];
+  const seen = new Set<string>();
+  for (const file of rows) {
+    if (
+      !file ||
+      typeof file.filename !== "string" ||
+      !safePath(file.filename) ||
+      seen.has(file.filename) ||
+      (file.previous_filename !== undefined &&
+        (typeof file.previous_filename !== "string" ||
+          !safePath(file.previous_filename))) ||
+      typeof file.status !== "string" ||
+      !Number.isSafeInteger(file.additions) ||
+      file.additions < 0 ||
+      !Number.isSafeInteger(file.deletions) ||
+      file.deletions < 0 ||
+      (file.patch !== undefined &&
+        (typeof file.patch !== "string" ||
+          addedLines(file.patch).size !== file.additions))
+    )
+      throw new Error("Pull request diff is incomplete");
+    seen.add(file.filename);
+    all.push({
+      filename: file.filename,
+      status: file.status,
+      additions: file.additions,
+      deletions: file.deletions,
+      ...(file.previous_filename !== undefined
+        ? { previous_filename: file.previous_filename }
+        : {}),
+      ...(file.patch !== undefined ? { patch: file.patch } : {}),
+    });
+  }
+  const batchPage = options && "page" in options ? options.page : undefined;
+  const findingPaths =
+    options && "findingPaths" in options ? options.findingPaths : undefined;
+  let files = all;
+  if (batchPage !== undefined) {
+    if (
+      !Number.isSafeInteger(batchPage) ||
+      batchPage < 1 ||
+      batchPage > Math.ceil(all.length / REVIEW_BATCH_FILES)
+    )
+      throw new Error("Pull request diff is incomplete");
+    files = all.slice(
+      (batchPage - 1) * REVIEW_BATCH_FILES,
+      batchPage * REVIEW_BATCH_FILES,
+    );
+  } else if (findingPaths)
+    files = all.filter((file) => findingPaths.has(file.filename));
+  else if (
+    all.length > BATCH_REVIEW_THRESHOLD ||
+    // Measured as GitHub returned it, before transport metadata is dropped.
+    JSON.stringify(rows).length > REVIEW_DIFF_BUDGET
   )
-    throw new Error("Pull request changed while reading its diff");
+    throw new PullRequestDiffBudgetError(DIFF_LIMIT_MESSAGE);
   return {
     files,
     headSha: pr.head.sha,
-    baseSha: comparison.merge_base_commit.sha,
+    baseSha: mergeBase,
+    changedFiles: all.length,
   };
 }
 

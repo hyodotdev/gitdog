@@ -121,6 +121,34 @@ function lastReviewed(actions: Doc<"ticketActions">[], headSha: string) {
   };
 }
 
+/** A review whose model request or GitHub post may be in flight. */
+function isRunningReview(action: Doc<"ticketActions">) {
+  return (
+    action.actionType === "review" &&
+    ((action.status === "pending" &&
+      action.reviewGenerationToken !== undefined) ||
+      (action.status === "approved" && action.executionClaimedAt !== undefined))
+  );
+}
+
+/**
+ * Once a review stops running, observe the PR again if a push was dropped
+ * meanwhile, so the newest head is reviewed from the commit just reviewed.
+ */
+async function observeDroppedPush(ctx: MutationCtx, ticketId: Id<"tickets">) {
+  const ticket = await ctx.db.get(ticketId);
+  if (ticket?.pullRequestDroppedAt === undefined || !ticket.repositoryId)
+    return;
+  const actions = await listTicketActions(ctx, ticket._id);
+  if (actions.some(isRunningReview)) return;
+  await ctx.db.patch(ticket._id, { pullRequestDroppedAt: undefined });
+  await ctx.scheduler.runAfter(
+    0,
+    internal.pullRequests.internalAction.observe,
+    { repositoryId: ticket.repositoryId, number: ticket.githubNumber },
+  );
+}
+
 function hasAttemptedReview(action: Doc<"ticketActions">) {
   if (action.reviewGenerationToken !== undefined) return true;
   // Keep the slot available when a queued review was superseded before its worker started.
@@ -206,6 +234,9 @@ export const queueVerification = internalMutation({
         "A newer pull request update arrived; request a fresh recheck",
       );
     }
+    // A recheck never cancels a review mid-request.
+    if (actions.some(isRunningReview))
+      throw new Error("A review is already running; recheck after it finishes");
     for (const action of actions) {
       if (
         ["pending", "pending_approval", "approved"].includes(action.status) &&
@@ -341,6 +372,24 @@ export const observe = internalMutation({
       },
       source,
     );
+    // A push while a review is running is dropped: the review finishes on
+    // the commit it started on, and the ticket keeps that commit so a later
+    // push is reviewed from there.
+    if (args.open && commitChanged && actions.some(isRunningReview)) {
+      const edited =
+        ticket.githubTitle !== source.title ||
+        ticket.githubBody !== source.body;
+      await ctx.db.patch(ticket._id, {
+        pullRequestObservedAt: observedAt,
+        pullRequestDroppedAt: now,
+        githubTitle: source.title,
+        githubBody: source.body,
+        aiInputVersion: edited
+          ? ticket.aiInputVersion + 1
+          : ticket.aiInputVersion,
+      });
+      return null;
+    }
     const changed =
       commitChanged ||
       ticket.githubTitle !== source.title ||
@@ -384,6 +433,8 @@ export const observe = internalMutation({
       closedAt: args.open ? undefined : now,
       pullRequestHeadSha: source.headSha,
       pullRequestBaseSha: source.baseSha,
+      // The newest head is now observed, so nothing is waiting to be.
+      pullRequestDroppedAt: undefined,
       githubTitle: source.title,
       githubBody: source.body,
       aiInputVersion: changed
@@ -806,7 +857,26 @@ export const propose = internalMutation({
         internal.pullRequests.internalAction.publish,
         { actionId: action._id, manual: false },
       );
+    // A review that ended unpublished is done, so a dropped push can be
+    // reviewed now. One waiting for approval keeps it: reviewing the newer
+    // head would supersede the review before the owner sees it.
+    else if (unpublished) await observeDroppedPush(ctx, action.ticketId);
     return true;
+  },
+});
+
+/** Observe a dropped push again when publication stopped before claiming. */
+export const observeAfterUnclaimedPublication = internalMutation({
+  args: { actionId: v.id("ticketActions") },
+  handler: async (ctx, args) => {
+    const action = await ctx.db.get(args.actionId);
+    // A review waiting for approval keeps a dropped push until it is acted on.
+    if (
+      action &&
+      !isRunningReview(action) &&
+      action.status !== "pending_approval"
+    )
+      await observeDroppedPush(ctx, action.ticketId);
   },
 });
 
@@ -929,6 +999,7 @@ export const finish = internalMutation({
           }
         : undefined,
     });
+    await observeDroppedPush(ctx, action.ticketId);
   },
 });
 export const expire = internalMutation({
@@ -961,5 +1032,6 @@ export const expire = internalMutation({
             ? "Review exceeded its processing deadline"
             : "GitHub publication outcome requires inspection; automatic retries are disabled",
       });
+    if (action) await observeDroppedPush(ctx, action.ticketId);
   },
 });

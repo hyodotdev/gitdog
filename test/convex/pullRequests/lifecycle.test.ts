@@ -323,9 +323,10 @@ describe("PR review durable lifecycle", () => {
       const action = await generate(
         [
           pullRequest,
-          [{ ...changedFile, filename }],
-          { merge_base_commit: { sha: source.baseSha } },
-          pullRequest,
+          {
+            merge_base_commit: { sha: source.baseSha },
+            files: [{ ...changedFile, filename }],
+          },
           tree,
           tree,
         ],
@@ -343,7 +344,16 @@ describe("PR review durable lifecycle", () => {
     });
     it("explains that a PR has too many changed files", async () => {
       expect(
-        await generate([{ ...pullRequest, changed_files: 301 }]),
+        await generate([
+          pullRequest,
+          {
+            merge_base_commit: { sha: source.baseSha },
+            files: Array.from({ length: 300 }, (_, i) => ({
+              ...changedFile,
+              filename: `src/file-${i}.ts`,
+            })),
+          },
+        ]),
       ).toMatchObject({
         status: "failed",
         errorMessage:
@@ -359,11 +369,9 @@ describe("PR review durable lifecycle", () => {
       expect(
         await generate([
           pullRequest,
-          [oversized],
+          { merge_base_commit: { sha: source.baseSha }, files: [oversized] },
           // Batches drop the oversized diff, which leaves nothing to review.
-          [oversized],
-          { merge_base_commit: { sha: source.baseSha } },
-          pullRequest,
+          { merge_base_commit: { sha: source.baseSha }, files: [oversized] },
         ]),
       ).toMatchObject({
         status: "failed",
@@ -374,7 +382,13 @@ describe("PR review durable lifecycle", () => {
       });
     });
     it("describes a mismatched diff without storing its payload", async () => {
-      const action = await generate([pullRequest, []]);
+      const action = await generate([
+        pullRequest,
+        {
+          merge_base_commit: { sha: source.baseSha },
+          files: [{ ...changedFile, additions: 5 }],
+        },
+      ]);
       expect(action).toMatchObject({ status: "failed" });
       expect(action?.reviewFailureDetails).toContain(
         "GitHub's diff did not match the expected changed files and line counts.",
@@ -394,6 +408,89 @@ describe("PR review durable lifecycle", () => {
         filesRead: [],
       }),
     ).toBe(false);
+    expect((await f.t.run((ctx) => ctx.db.get(actionId)))?.status).toBe(
+      "failed",
+    );
+  });
+  it("drops a push while a review runs and reviews only when none is running", async () => {
+    const f = await fixture();
+    const actionId = (await f.observe())!;
+    await f.t.mutation(internal.pullRequests.internalMutation.claimGeneration, {
+      actionId,
+    });
+    const next = { ...source, headSha: "c".repeat(40) };
+    expect(await f.observe(next)).toBeNull();
+    expect(await f.t.run((ctx) => ctx.db.get(actionId))).toMatchObject({
+      status: "pending",
+    });
+    const ticket = async () =>
+      f.t.run(async (ctx) =>
+        ctx.db.get((await ctx.db.get(actionId))!.ticketId),
+      );
+    expect((await ticket())?.pullRequestHeadSha).toBe(source.headSha);
+    // The running review still finishes on its own commit.
+    expect(
+      await f.t.mutation(internal.pullRequests.internalMutation.propose, {
+        actionId,
+        source,
+        findings: [],
+        excludedPaths: [],
+        filesRead: [],
+      }),
+    ).toBe(true);
+    await f.t.run((ctx) =>
+      ctx.db.patch(actionId, {
+        status: "completed",
+        executionResult: { published: true },
+      }),
+    );
+    // Once it is done, the next push starts a review again.
+    expect(await f.observe(next)).toBeTruthy();
+    expect((await ticket())?.pullRequestHeadSha).toBe(next.headSha);
+  });
+  it("keeps a review waiting for approval after a dropped push", async () => {
+    const f = await fixture();
+    const actionId = (await f.observe())!;
+    await f.t.mutation(internal.pullRequests.internalMutation.claimGeneration, {
+      actionId,
+    });
+    expect(await f.observe({ ...source, headSha: "c".repeat(40) })).toBeNull();
+    await f.t.mutation(internal.pullRequests.internalMutation.propose, {
+      actionId,
+      source,
+      findings,
+      excludedPaths: [],
+      filesRead: [],
+    });
+    await f.t.finishAllScheduledFunctions(() => {});
+    expect((await f.t.run((ctx) => ctx.db.get(actionId)))?.status).toBe(
+      "pending_approval",
+    );
+    expect(
+      await f.t.run((ctx) => ctx.db.query("ticketActions").collect()),
+    ).toHaveLength(1);
+  });
+  it("does not let an unclaimed approved review hold back later pushes", async () => {
+    const f = await fixture();
+    const actionId = (await f.observe())!;
+    await f.t.mutation(internal.pullRequests.internalMutation.claimGeneration, {
+      actionId,
+    });
+    await f.t.mutation(internal.pullRequests.internalMutation.propose, {
+      actionId,
+      source,
+      findings: [],
+      excludedPaths: [],
+      filesRead: [],
+    });
+    expect((await f.t.run((ctx) => ctx.db.get(actionId)))?.status).toBe(
+      "approved",
+    );
+    // Nothing is in flight until publication claims it, so a push still
+    // supersedes it and starts a review.
+    expect(
+      await f.observe({ ...source, headSha: "c".repeat(40) }),
+    ).toBeTruthy();
     expect((await f.t.run((ctx) => ctx.db.get(actionId)))?.status).toBe(
       "failed",
     );
@@ -912,8 +1009,13 @@ describe("batched publication", () => {
     expect(retry.body).toContain(`<!-- gitdog-pr-review:${f.actionId} -->`);
   });
 });
-it("does not send a review if the live head has advanced", async () => {
+it("still posts on the reviewed commit after a newer push", async () => {
   const f = await publicationFixture();
+  const helpers = await import("../../../convex/github/helpers");
+  vi.mocked(helpers.fetchGitHubAppJsonWithRetry).mockImplementation(
+    async (url) =>
+      (url.includes("/compare/") ? { status: "ahead" } : []) as never,
+  );
   f.live.mockResolvedValue({
     id: 1,
     number: 12,
@@ -933,8 +1035,9 @@ it("does not send a review if the live head has advanced", async () => {
         manual: true,
       })
     ).success,
-  ).toBe(false);
-  expect(f.fetch).not.toHaveBeenCalled();
+  ).toBe(true);
+  const request = JSON.parse(f.fetch.mock.calls[0][1]!.body as string);
+  expect(request.commit_id).toBe(source.headSha);
 });
 it("does not retry an ambiguous GitHub POST", async () => {
   const f = await publicationFixture();
@@ -1231,6 +1334,7 @@ describe("explicit verification of failed reviews", () => {
     const snapshot = vi.spyOn(github, "snapshot").mockResolvedValue({
       headSha: source.headSha,
       baseSha: source.baseSha,
+      changedFiles: 1,
       files: [
         {
           filename: "src/main.ts",
@@ -1356,12 +1460,12 @@ describe("batched PR reviews", () => {
     };
     vi.spyOn(helpers, "fetchGitHubAppJsonWithRetry").mockImplementation(
       async (url) => {
-        const { pathname, searchParams } = new URL(url);
-        if (pathname.endsWith("/pulls/12/files")) {
-          const size = Number(searchParams.get("per_page"));
-          const offset = (Number(searchParams.get("page") ?? 1) - 1) * size;
-          return files.slice(offset, offset + size) as never;
-        }
+        const { pathname } = new URL(url);
+        if (pathname.includes(`/compare/${source.baseSha}...`))
+          return {
+            merge_base_commit: { sha: source.baseSha },
+            files,
+          } as never;
         if (pathname.includes(`/compare/${source.headSha}...`))
           return {
             status: "ahead",
@@ -1850,20 +1954,35 @@ describe("batched PR reviews", () => {
     expect(f.fetch).not.toHaveBeenCalled();
   });
 
-  it("discards earlier batches without posting when a new commit lands between batches", async () => {
+  it("drops a push that lands while a review runs and finishes on its commit", async () => {
     const f = await batchFixture();
     await f.generate();
     expect(await f.getAction()).toMatchObject({ reviewBatch: { page: 2 } });
-    f.live.head = { sha: "c".repeat(40) };
-    await f.generate(2);
-    const action = await f.getAction();
-    expect(action?.status).toBe("failed");
-    expect(action?.reviewBatch).toBeUndefined();
-    expect(action?.proposedChanges?.findings).toBeUndefined();
-    expect(action?.reviewFailureDetails).toContain("review batch 2");
-    expect(f.batches.map((key) => key.split("/batch/")[1])).toEqual(["1/1"]);
-    expect(await f.publish()).toMatchObject({ success: false });
-    expect(f.fetch).not.toHaveBeenCalled();
+    const next = { ...source, headSha: "c".repeat(40) };
+    f.live.head = { sha: next.headSha };
+    // The push is dropped: no new review, and the running one is kept.
+    expect(await f.observe(next)).toBeNull();
+    expect(
+      await f.t.run((ctx) => ctx.db.query("ticketActions").collect()),
+    ).toHaveLength(1);
+    for (const page of [2, 3, 4]) await f.generate(page);
+    await drainScheduledFunctions(f.t);
+    expect(await f.getAction()).toMatchObject({
+      status: "completed",
+      executionResult: { published: true },
+    });
+    const request = JSON.parse(f.fetch.mock.calls[0][1]!.body as string);
+    expect(request.commit_id).toBe(source.headSha);
+    // Once it ended, the PR was observed again and the dropped head is
+    // reviewed from the commit just reviewed.
+    const actions = await f.t.run((ctx) =>
+      ctx.db.query("ticketActions").collect(),
+    );
+    expect(actions).toHaveLength(2);
+    expect(actions[1]).toMatchObject({
+      proposedChanges: { source: { headSha: next.headSha } },
+      reviewSince: { headSha: source.headSha },
+    });
   });
 
   it("reviews only the files a later push changed", async () => {

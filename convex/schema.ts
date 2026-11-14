@@ -843,6 +843,9 @@ const applicationTables = {
     pullRequestHeadSha: v.optional(v.string()),
     pullRequestBaseSha: v.optional(v.string()),
     pullRequestObservedAt: v.optional(v.number()),
+    // Set when a push was dropped because a review was running; the PR is
+    // observed again once that review ends, so the newest head is reviewed.
+    pullRequestDroppedAt: v.optional(v.number()),
 
     // GitHub reference
     githubNumber: v.number(), // Issue or discussion number
