@@ -154,6 +154,39 @@ describe("authoritative PR snapshots", () => {
       // A changed file is fetched once at the larger limit.
       expect(get).toHaveBeenCalledTimes(1);
     });
+    it("shows a medium changed file around its diff too", async () => {
+      // About 30 KB: under the old limit, over the windowing threshold.
+      const medium = lines.slice(0, 1600).join("\n");
+      vi.spyOn(helpers, "fetchGitHubAppJsonWithRetry").mockResolvedValue(
+        file(medium),
+      );
+      const shown = await readReviewFile(
+        access,
+        changed.filename,
+        pr.head.sha,
+        changed,
+      );
+      expect(shown).toContain(OMITTED_SOURCE_MARKER);
+      expect(shown.split("\n")).toHaveLength(1600);
+      expect(shown.split("\n")[1499]).toBe("const value1500 = 1500;");
+    });
+    it("shows a medium file whole when its diff cannot be windowed", async () => {
+      const medium = lines.slice(0, 1600).join("\n");
+      vi.spyOn(helpers, "fetchGitHubAppJsonWithRetry").mockResolvedValue(
+        file(medium),
+      );
+      const all = `@@ -1,1600 +1,1600 @@\n${lines
+        .slice(0, 1600)
+        .map((l) => `+${l}`)
+        .join("\n")}`;
+      expect(
+        await readReviewFile(access, changed.filename, pr.head.sha, {
+          ...changed,
+          additions: 1600,
+          patch: all,
+        }),
+      ).toBe(medium);
+    });
     it("keeps the 40 KB limit for unchanged files and base reads", async () => {
       vi.spyOn(helpers, "fetchGitHubAppJsonWithRetry").mockResolvedValue(
         file(source),

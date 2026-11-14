@@ -170,7 +170,7 @@ function relativeSourcePaths(path: string, source: string, known: Set<string>) {
 }
 
 // Up to 8 guides plus 8 preloaded files leave 8 of the 24 file reads for tools.
-const BATCH_GROUP_PRELOAD_READS = 8;
+const PRELOAD_READS = 8;
 
 export async function reviewWithContext(args: {
   provider: AiProvider;
@@ -425,13 +425,13 @@ export async function reviewWithContext(args: {
     preparedReads.push(evidence);
     return true;
   };
-  if (compactChange || args.batchGroup) {
-    let preloadReads = 0;
-    for (const file of args.files) {
-      if (excludedPaths.includes(file.filename)) continue;
-      if (!compactChange && preloadReads >= BATCH_GROUP_PRELOAD_READS) break;
-      if (await preloadHead(file.filename)) preloadReads++;
-    }
+  // Every review starts from the changed source, not only the diff, so a
+  // reviewer that answers early has still seen each changed file it could.
+  let preloadReads = 0;
+  for (const file of args.files) {
+    if (excludedPaths.includes(file.filename)) continue;
+    if (!compactChange && preloadReads >= PRELOAD_READS) break;
+    if (await preloadHead(file.filename)) preloadReads++;
   }
   if (compactChange) {
     if (!smallChange) {
@@ -769,7 +769,14 @@ export async function reviewWithContext(args: {
   // group, and a bounded number when a single review read none. Candidates
   // from the first answer are carried over because each turn is rebuilt from
   // state.
-  const needsSource = () => args.batchGroup || !inspectedChange();
+  // Any reviewable changed file left unread is shown before the answer.
+  const needsSource = () =>
+    args.files.some(
+      (f) =>
+        !excludedPaths.includes(f.filename) &&
+        !unavailablePaths.has(f.filename) &&
+        !reads.some((r) => r.ref === "head" && r.path === f.filename),
+    );
   const showUninspected = async (candidates?: unknown) => {
     const previousFeedback = validationFeedback;
     if (candidates !== undefined)
@@ -782,7 +789,7 @@ export async function reviewWithContext(args: {
     let shown = 0;
     for (const file of args.files) {
       const { filename } = file;
-      if (!args.batchGroup && shown >= BATCH_GROUP_PRELOAD_READS) break;
+
       if (
         excludedPaths.includes(filename) ||
         unavailablePaths.has(filename) ||
