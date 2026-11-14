@@ -448,6 +448,28 @@ describe("PR review durable lifecycle", () => {
     expect(await f.observe(next)).toBeTruthy();
     expect((await ticket())?.pullRequestHeadSha).toBe(next.headSha);
   });
+  it("keeps a review waiting for approval after a dropped push", async () => {
+    const f = await fixture();
+    const actionId = (await f.observe())!;
+    await f.t.mutation(internal.pullRequests.internalMutation.claimGeneration, {
+      actionId,
+    });
+    expect(await f.observe({ ...source, headSha: "c".repeat(40) })).toBeNull();
+    await f.t.mutation(internal.pullRequests.internalMutation.propose, {
+      actionId,
+      source,
+      findings,
+      excludedPaths: [],
+      filesRead: [],
+    });
+    await f.t.finishAllScheduledFunctions(() => {});
+    expect((await f.t.run((ctx) => ctx.db.get(actionId)))?.status).toBe(
+      "pending_approval",
+    );
+    expect(
+      await f.t.run((ctx) => ctx.db.query("ticketActions").collect()),
+    ).toHaveLength(1);
+  });
   it("does not let an unclaimed approved review hold back later pushes", async () => {
     const f = await fixture();
     const actionId = (await f.observe())!;

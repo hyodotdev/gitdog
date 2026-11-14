@@ -658,11 +658,17 @@ export const publish = internalAction({
         initial.action.reviewVerificationOnly === true ||
         initial.action.status !==
           (args.manual ? "pending_approval" : "approved")
-      )
+      ) {
+        await ctx.runMutation(
+          internal.pullRequests.internalMutation
+            .observeAfterUnclaimedPublication,
+          { actionId: args.actionId },
+        );
         return {
           success: false,
           reason: "Review is not ready for publication",
         };
+      }
       const source = sourceOf(initial.action.proposedChanges?.source);
       const access = await runReviewRequest(
         { operation: "Verify GitHub App repository access" },
@@ -783,11 +789,17 @@ export const publish = internalAction({
         internal.pullRequests.internalMutation.claim,
         args,
       );
-      if (!claimed)
+      if (!claimed) {
+        await ctx.runMutation(
+          internal.pullRequests.internalMutation
+            .observeAfterUnclaimedPublication,
+          { actionId: args.actionId },
+        );
         return {
           success: false,
           reason: "Review approval or repository settings changed",
         };
+      }
       if (prior) {
         await ctx.runMutation(internal.pullRequests.internalMutation.finish, {
           actionId: args.actionId,

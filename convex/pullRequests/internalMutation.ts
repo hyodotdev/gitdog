@@ -214,9 +214,6 @@ export const queueVerification = internalMutation({
       ticket.githubTitle !== args.source.title ||
       ticket.githubBody !== args.source.body;
     const actions = await listTicketActions(ctx, ticket._id);
-    // A recheck never cancels a review mid-request.
-    if (actions.some(isRunningReview))
-      throw new Error("A review is already running; recheck after it finishes");
     const matches = (a: (typeof actions)[number]) =>
       sameCommit(a.proposedChanges?.source, args.source);
     const pending = actions.find(
@@ -237,6 +234,9 @@ export const queueVerification = internalMutation({
         "A newer pull request update arrived; request a fresh recheck",
       );
     }
+    // A recheck never cancels a review mid-request.
+    if (actions.some(isRunningReview))
+      throw new Error("A review is already running; recheck after it finishes");
     for (const action of actions) {
       if (
         ["pending", "pending_approval", "approved"].includes(action.status) &&
@@ -855,10 +855,21 @@ export const propose = internalMutation({
         internal.pullRequests.internalAction.publish,
         { actionId: action._id, manual: false },
       );
-    // A review that waits for approval or ended unpublished is no longer
-    // running, so a dropped push can be reviewed now.
-    else await observeDroppedPush(ctx, action.ticketId);
+    // A review that ended unpublished is done, so a dropped push can be
+    // reviewed now. One waiting for approval keeps it: reviewing the newer
+    // head would supersede the review before the owner sees it.
+    else if (unpublished) await observeDroppedPush(ctx, action.ticketId);
     return true;
+  },
+});
+
+/** Observe a dropped push again when publication stopped before claiming. */
+export const observeAfterUnclaimedPublication = internalMutation({
+  args: { actionId: v.id("ticketActions") },
+  handler: async (ctx, args) => {
+    const action = await ctx.db.get(args.actionId);
+    if (action && !isRunningReview(action))
+      await observeDroppedPush(ctx, action.ticketId);
   },
 });
 
@@ -893,7 +904,6 @@ export const claim = internalMutation({
       action.proposedChanges?.findings?.length !== 0
     ) {
       await ctx.db.patch(action._id, { status: "pending_approval" });
-      await observeDroppedPush(ctx, action.ticketId);
       return false;
     }
     const user = await ctx.db.get(repo.userId);
