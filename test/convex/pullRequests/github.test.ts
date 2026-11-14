@@ -37,6 +37,10 @@ const pr: PullRequest = {
   base: { sha: "a".repeat(40), repo: { id: 123 } },
   changed_files: 1,
 };
+const diff = (files: unknown[], mergeBase = pr.base.sha) => ({
+  merge_base_commit: { sha: mergeBase },
+  files,
+});
 afterEach(() => vi.restoreAllMocks());
 describe("authoritative PR snapshots", () => {
   it.each([
@@ -66,12 +70,11 @@ describe("authoritative PR snapshots", () => {
       { maxAttempts: 4 },
     ]);
   });
-  it("allows a closed immutable snapshot only for verification", async () => {
-    const closed = { ...pr, state: "closed" };
-    const mock = vi.spyOn(helpers, "fetchGitHubAppJsonWithRetry");
-    const responses = () =>
-      mock
-        .mockResolvedValueOnce([
+  it("reads the diff of the pinned commits, not the live PR", async () => {
+    const get = vi
+      .spyOn(helpers, "fetchGitHubAppJsonWithRetry")
+      .mockResolvedValueOnce(
+        diff([
           {
             filename: "a.ts",
             status: "modified",
@@ -79,15 +82,18 @@ describe("authoritative PR snapshots", () => {
             deletions: 0,
             patch: "@@ -0,0 +1 @@\n+x",
           },
-        ])
-        .mockResolvedValueOnce({ merge_base_commit: { sha: pr.base.sha } })
-        .mockResolvedValueOnce(closed);
-    responses();
-    await expect(snapshot(access, closed)).rejects.toThrow("changed");
-    responses();
-    await expect(snapshot(access, closed, true)).resolves.toMatchObject({
-      headSha: pr.head.sha,
+        ]),
+      );
+    const pinned = { head: { sha: "e".repeat(40) }, base: pr.base };
+    await expect(snapshot(access, pinned)).resolves.toMatchObject({
+      headSha: "e".repeat(40),
+      changedFiles: 1,
     });
+    // One pinned comparison; the live PR is not re-read.
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(get.mock.calls[0][0]).toContain(
+      `/compare/${pr.base.sha}...${"e".repeat(40)}`,
+    );
   });
   it("identifies the file limit separately from access and binary failures", async () => {
     vi.spyOn(helpers, "fetchGitHubAppJsonWithRetry").mockResolvedValue({
@@ -308,20 +314,23 @@ describe("authoritative PR snapshots", () => {
   it("pins source to the merge base and head, not a mutable branch name", async () => {
     const get = vi
       .spyOn(helpers, "fetchGitHubAppJsonWithRetry")
-      .mockResolvedValueOnce([
-        {
-          filename: "src/a.ts",
-          status: "modified",
-          additions: 1,
-          deletions: 1,
-          patch: "@@ -1 +1 @@\n-a\n+b",
-        },
-      ])
-      .mockResolvedValueOnce({ merge_base_commit: { sha: "c".repeat(40) } })
-      .mockResolvedValueOnce(pr);
+      .mockResolvedValueOnce(
+        diff(
+          [
+            {
+              filename: "src/a.ts",
+              status: "modified",
+              additions: 1,
+              deletions: 1,
+              patch: "@@ -1 +1 @@\n-a\n+b",
+            },
+          ],
+          "c".repeat(40),
+        ),
+      );
     const result = await snapshot(access, pr);
     expect(result.baseSha).toBe("c".repeat(40));
-    expect(get.mock.calls[1][0]).toContain(`${pr.base.sha}...${pr.head.sha}`);
+    expect(get.mock.calls[0][0]).toContain(`${pr.base.sha}...${pr.head.sha}`);
   });
   it("keeps review evidence and rename identity without replaying GitHub transport metadata", async () => {
     const file = {
@@ -332,8 +341,8 @@ describe("authoritative PR snapshots", () => {
       deletions: 1,
       patch: "@@ -1 +1 @@\n-a\n+b",
     };
-    vi.spyOn(helpers, "fetchGitHubAppJsonWithRetry")
-      .mockResolvedValueOnce([
+    vi.spyOn(helpers, "fetchGitHubAppJsonWithRetry").mockResolvedValueOnce(
+      diff([
         {
           ...file,
           sha: "d".repeat(40),
@@ -343,22 +352,23 @@ describe("authoritative PR snapshots", () => {
             "https://api.github.com/repos/owner/repo/contents/src/a.ts",
           changes: 2,
         },
-      ])
-      .mockResolvedValueOnce({ merge_base_commit: { sha: pr.base.sha } })
-      .mockResolvedValueOnce(pr);
+      ]),
+    );
     expect((await snapshot(access, pr)).files).toEqual([file]);
   });
   it("preserves the size-limit diagnostic before discarding transport metadata", async () => {
-    vi.spyOn(helpers, "fetchGitHubAppJsonWithRetry").mockResolvedValueOnce([
-      {
-        filename: "a.ts",
-        status: "modified",
-        additions: 1,
-        deletions: 0,
-        patch: "@@ -0,0 +1 @@\n+x",
-        blob_url: "x".repeat(100_001),
-      },
-    ]);
+    vi.spyOn(helpers, "fetchGitHubAppJsonWithRetry").mockResolvedValueOnce(
+      diff([
+        {
+          filename: "a.ts",
+          status: "modified",
+          additions: 1,
+          deletions: 0,
+          patch: "@@ -0,0 +1 @@\n+x",
+          blob_url: "x".repeat(100_001),
+        },
+      ]),
+    );
     await expect(snapshot(access, pr)).rejects.toThrow(
       "Pull request diff exceeds the review budget; split this PR",
     );
@@ -371,47 +381,42 @@ describe("authoritative PR snapshots", () => {
       deletions: 0,
       patch: `@@ -0,0 +1 @@\n+${"x".repeat(100_001)}`,
     };
-    vi.spyOn(helpers, "fetchGitHubAppJsonWithRetry")
-      .mockResolvedValueOnce([file])
-      .mockResolvedValueOnce({ merge_base_commit: { sha: pr.base.sha } })
-      .mockResolvedValueOnce(pr);
+    vi.spyOn(helpers, "fetchGitHubAppJsonWithRetry").mockResolvedValueOnce(
+      diff([file]),
+    );
     expect(
       (await snapshot(access, pr, false, { findingPaths: new Set(["a.ts"]) }))
         .files,
     ).toEqual([file]);
   });
-  it("rejects truncated files and a head change while reading", async () => {
+  it("rejects an empty or missing diff", async () => {
     const get = vi
       .spyOn(helpers, "fetchGitHubAppJsonWithRetry")
-      .mockResolvedValueOnce([]);
+      .mockResolvedValueOnce(diff([]));
+    await expect(snapshot(access, pr)).rejects.toThrow("at least one");
+    get.mockResolvedValueOnce({ merge_base_commit: { sha: pr.base.sha } });
     await expect(snapshot(access, pr)).rejects.toThrow("incomplete");
-    get
-      .mockReset()
-      .mockResolvedValueOnce([
-        {
-          filename: "a.ts",
-          status: "modified",
+    get.mockResolvedValueOnce({ files: [] });
+    await expect(snapshot(access, pr)).rejects.toThrow("merge base");
+  });
+  it("refuses PRs beyond the review file limit and truncated repository trees", async () => {
+    const get = vi.spyOn(helpers, "fetchGitHubAppJsonWithRetry");
+    get.mockResolvedValueOnce(
+      diff(
+        Array.from({ length: 300 }, (_, index) => ({
+          filename: `src/${index}.ts`,
+          status: "added",
           additions: 1,
           deletions: 0,
           patch: "@@ -0,0 +1 @@\n+x",
-        },
-      ])
-      .mockResolvedValueOnce({ merge_base_commit: { sha: pr.base.sha } })
-      .mockResolvedValueOnce({ ...pr, head: { sha: "d".repeat(40) } });
-    await expect(snapshot(access, pr)).rejects.toThrow("changed");
-  });
-  it("refuses PRs beyond the review file limit and truncated repository trees", async () => {
-    await expect(
-      snapshot(access, { ...pr, changed_files: 301 }),
-    ).rejects.toThrow("300 changed files");
-    vi.spyOn(helpers, "fetchGitHubAppJsonWithRetry").mockResolvedValue({
-      truncated: true,
-      tree: [],
-    });
+        })),
+      ),
+    );
+    await expect(snapshot(access, pr)).rejects.toThrow("300 changed files");
+    get.mockResolvedValue({ truncated: true, tree: [] });
     await expect(treePaths(access, pr.head.sha)).rejects.toThrow("tree");
   });
-  it("reads and checks every diff page before returning publication anchors", async () => {
-    const large = { ...pr, changed_files: 101 };
+  it("slices batch pages and finding paths from one pinned diff", async () => {
     const files = Array.from({ length: 101 }, (_, index) => ({
       filename: `src/${index}.ts`,
       status: "added",
@@ -419,26 +424,23 @@ describe("authoritative PR snapshots", () => {
       deletions: 0,
       patch: "@@ -0,0 +1 @@\n+x",
     }));
-    const get = vi.spyOn(helpers, "fetchGitHubAppJsonWithRetry");
-    get
-      .mockResolvedValueOnce(files.slice(0, 100))
-      .mockResolvedValueOnce(files.slice(100))
-      .mockResolvedValueOnce({ merge_base_commit: { sha: pr.base.sha } })
-      .mockResolvedValueOnce(large);
-    const options = { findingPaths: new Set([files[100].filename]) };
+    const get = vi
+      .spyOn(helpers, "fetchGitHubAppJsonWithRetry")
+      .mockResolvedValue(diff(files));
     await expect(
-      snapshot(access, large, false, options),
-    ).resolves.toMatchObject({
-      files: [files[100]],
-    });
-    expect(get.mock.calls[0][0]).toContain("per_page=100&page=1");
-    expect(get.mock.calls[1][0]).toContain("per_page=100&page=2");
-    get
-      .mockResolvedValueOnce(files.slice(0, 100))
-      .mockResolvedValueOnce([files[0]]);
-    await expect(snapshot(access, large, false, options)).rejects.toThrow(
+      snapshot(access, pr, false, {
+        findingPaths: new Set([files[100].filename]),
+      }),
+    ).resolves.toMatchObject({ files: [files[100]], changedFiles: 101 });
+    await expect(
+      snapshot(access, pr, false, { page: 7 }),
+    ).resolves.toMatchObject({ files: files.slice(96, 101) });
+    await expect(snapshot(access, pr, false, { page: 8 })).rejects.toThrow(
       "incomplete",
     );
+    // A diff over 60 files is reviewed in batches.
+    await expect(snapshot(access, pr)).rejects.toThrow("review budget");
+    expect(get).toHaveBeenCalledTimes(4);
   });
   it("splits the page before any model request when the combined diff is too large", () => {
     const file = {
@@ -544,14 +546,16 @@ describe("PR webhook routing", () => {
 });
 
 it("rejects a present but truncated patch", async () => {
-  vi.spyOn(helpers, "fetchGitHubAppJsonWithRetry").mockResolvedValue([
-    {
-      filename: "a.ts",
-      status: "modified",
-      additions: 3,
-      deletions: 0,
-      patch: "@@ -0,0 +1 @@\n+only one",
-    },
-  ]);
+  vi.spyOn(helpers, "fetchGitHubAppJsonWithRetry").mockResolvedValue(
+    diff([
+      {
+        filename: "a.ts",
+        status: "modified",
+        additions: 3,
+        deletions: 0,
+        patch: "@@ -0,0 +1 @@\n+only one",
+      },
+    ]),
+  );
   await expect(snapshot(access, pr)).rejects.toThrow("incomplete");
 });

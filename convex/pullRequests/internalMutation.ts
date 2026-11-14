@@ -341,6 +341,21 @@ export const observe = internalMutation({
       },
       source,
     );
+    // A push while a review is running is dropped: the review finishes on
+    // the commit it started on, and the ticket keeps that commit so a later
+    // push is reviewed from there.
+    if (
+      args.open &&
+      commitChanged &&
+      actions.some(
+        (action) =>
+          action.actionType === "review" &&
+          ((action.status === "pending" &&
+            action.reviewGenerationToken !== undefined) ||
+            action.status === "approved"),
+      )
+    )
+      return null;
     const changed =
       commitChanged ||
       ticket.githubTitle !== source.title ||

@@ -68,19 +68,26 @@ function readReviewSource(
   );
 }
 
-function sameSource(
-  pr: PullRequest,
-  source: Source,
-  verificationOnly = false,
-): boolean {
+/**
+ * Whether a review may still run or be posted on its pinned commit. A newer
+ * push does not stop it: pushes during a review are dropped, and the review
+ * finishes on the commit it started on.
+ */
+function sameSource(pr: PullRequest, verificationOnly = false): boolean {
   return (
     (verificationOnly || pr.state === "open") &&
     !isBotPullRequestAuthor(pr.user) &&
-    !pr.draft &&
-    // Title and description edits do not change the reviewed commit.
-    pr.head.sha === source.headSha &&
-    pr.base.sha === source.baseSha
+    !pr.draft
   );
+}
+
+/** The reviewed commit pair, independent of the live PR head. */
+function pinned(pr: PullRequest, source: Source): PullRequest {
+  return {
+    ...pr,
+    head: { sha: source.headSha },
+    base: { ...pr.base, sha: source.baseSha },
+  };
 }
 function sourceOf(value: unknown): Source {
   const s = value as Source | undefined;
@@ -222,11 +229,12 @@ export const generate = internalAction({
       const source = sourceOf(initial.action.proposedChanges?.source);
       const verificationOnly = initial.action.reviewVerificationOnly === true;
       const { access } = await guard(ctx, args.actionId, source, "generation");
-      const pr = await getPullRequest(access, initial.ticket.githubNumber);
-      if (isBotPullRequestAuthor(pr.user))
+      const live = await getPullRequest(access, initial.ticket.githubNumber);
+      if (isBotPullRequestAuthor(live.user))
         throw new Error("Bot-authored pull requests are not reviewed");
-      if (!sameSource(pr, source, verificationOnly))
+      if (!sameSource(live, verificationOnly))
         throw new Error("Pull request changed before review");
+      const pr = pinned(live, source);
       const previous = initial.action.reviewBatch?.result;
       // A push after a finished review covers only the files it changed, as
       // long as they fit one review; otherwise the whole PR is reviewed.
@@ -255,7 +263,6 @@ export const generate = internalAction({
           }
         }
       }
-      batched ||= !scoped && pr.changed_files > BATCH_REVIEW_THRESHOLD;
       const data = scoped
         ? scoped
         : batched
@@ -270,7 +277,7 @@ export const generate = internalAction({
                 // Batches cannot help when no diff is left after the oversized
                 // ones are dropped.
                 if (
-                  paged.files.length === pr.changed_files &&
+                  paged.files.length === paged.changedFiles &&
                   !splitReviewDiff(paged.files).flat().some(hasReviewablePatch)
                 )
                   throw error;
@@ -280,7 +287,7 @@ export const generate = internalAction({
             );
       if (
         previous &&
-        (previous.changedFiles !== pr.changed_files ||
+        (previous.changedFiles !== data.changedFiles ||
           previous.mergeBaseSha !== data.baseSha)
       )
         throw new Error("Pull request changed while reading its diff");
@@ -363,7 +370,7 @@ export const generate = internalAction({
               // The first page is already split; later pages count one each.
               batches:
                 groups.length +
-                minimumReviewBatches(pr.changed_files - data.files.length),
+                minimumReviewBatches(data.changedFiles - data.files.length),
             },
           )
           .catch(() => {
@@ -489,7 +496,7 @@ export const generate = internalAction({
         ? undefined
         : group + 1 < groups.length
           ? { page, group: group + 1 }
-          : fileKeys.size < pr.changed_files
+          : fileKeys.size < data.changedFiles
             ? { page: page + 1, group: 0 }
             : undefined;
       // Base guide reads do not count: some changed file must be inspected.
@@ -503,11 +510,7 @@ export const generate = internalAction({
       stage = "Final source validation";
       await ensureCurrent();
       if (
-        !sameSource(
-          await getPullRequest(access, pr.number),
-          source,
-          verificationOnly,
-        )
+        !sameSource(await getPullRequest(access, pr.number), verificationOnly)
       )
         throw new Error("Pull request changed during review");
       await ctx.runMutation(internal.pullRequests.internalMutation.propose, {
@@ -528,7 +531,7 @@ export const generate = internalAction({
         ),
         batchProgress: batched
           ? {
-              changedFiles: pr.changed_files,
+              changedFiles: data.changedFiles,
               batchCount: (previous?.batchCount ?? 0) + 1,
               mergeBaseSha: data.baseSha,
               fileKeys: [...fileKeys],
@@ -540,7 +543,7 @@ export const generate = internalAction({
                 ? groups.length -
                   group -
                   1 +
-                  minimumReviewBatches(pr.changed_files - fileKeys.size)
+                  minimumReviewBatches(data.changedFiles - fileKeys.size)
                 : 0,
               pageLayout,
               coverageLimited:
@@ -559,7 +562,7 @@ export const generate = internalAction({
                 uncoveredFiles,
                 since: since?.headSha,
               }
-            : { changedFiles: pr.changed_files, uncoveredFiles },
+            : { changedFiles: data.changedFiles, uncoveredFiles },
       });
     } catch (error) {
       // Do not persist provider bodies, source snippets or credentials in errors.
@@ -666,7 +669,7 @@ export const publish = internalAction({
         () => resolveVerifiedRepositoryAccess(ctx, initial.repository._id),
       );
       const live = await getPullRequest(access, initial.ticket.githubNumber);
-      if (!sameSource(live, source))
+      if (!sameSource(live))
         throw new Error("Pull request changed after the review was generated");
       const proposal = initial.action.proposedChanges;
       const findings = proposal?.findings as Finding[];
@@ -677,22 +680,19 @@ export const publish = internalAction({
       const data =
         findings.length === 0
           ? undefined
-          : // A follow-up review of a large PR may exceed the single diff
-            // budget, so it re-reads only the files its findings need.
-            batched || typeof proposal.reviewedSince === "string"
-            ? await snapshot(access, live, false, {
-                // Evidence in a large changed file is re-read around its diff,
-                // as it was during review, so its diff is needed too.
-                findingPaths: new Set(
-                  findings.flatMap((finding) => [
-                    finding.path,
-                    ...finding.evidence
-                      .filter((e) => e.ref === "head")
-                      .map((e) => e.path),
-                  ]),
-                ),
-              })
-            : await snapshot(access, live);
+          : // Re-read only the files the findings need, on the reviewed
+            // commit. Evidence in a changed file is re-read around its diff
+            // when the review saw it that way, so its diff is needed too.
+            await snapshot(access, pinned(live, source), false, {
+              findingPaths: new Set(
+                findings.flatMap((finding) => [
+                  finding.path,
+                  ...finding.evidence
+                    .filter((e) => e.ref === "head")
+                    .map((e) => e.path),
+                ]),
+              ),
+            });
       if (data) {
         // Re-read each quoted file the way the review group that quoted it
         // saw it. Two groups can have seen one file differently, so reads are
@@ -792,9 +792,7 @@ export const publish = internalAction({
         "publication",
         args.manual,
       );
-      if (
-        !sameSource(await getPullRequest(current.access, live.number), source)
-      )
+      if (!sameSource(await getPullRequest(current.access, live.number)))
         throw new Error("Pull request changed before publication");
       // POST has no automatic retries: an ambiguous external write must never be
       // repeated and spam the PR. Commit ID binds even a last-millisecond push.
