@@ -433,6 +433,8 @@ export const observe = internalMutation({
       closedAt: args.open ? undefined : now,
       pullRequestHeadSha: source.headSha,
       pullRequestBaseSha: source.baseSha,
+      // The newest head is now observed, so nothing is waiting to be.
+      pullRequestDroppedAt: undefined,
       githubTitle: source.title,
       githubBody: source.body,
       aiInputVersion: changed
@@ -868,7 +870,12 @@ export const observeAfterUnclaimedPublication = internalMutation({
   args: { actionId: v.id("ticketActions") },
   handler: async (ctx, args) => {
     const action = await ctx.db.get(args.actionId);
-    if (action && !isRunningReview(action))
+    // A review waiting for approval keeps a dropped push until it is acted on.
+    if (
+      action &&
+      !isRunningReview(action) &&
+      action.status !== "pending_approval"
+    )
       await observeDroppedPush(ctx, action.ticketId);
   },
 });
