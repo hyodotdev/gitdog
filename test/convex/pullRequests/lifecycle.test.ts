@@ -1839,7 +1839,7 @@ describe("batched PR reviews", () => {
     });
     const request = JSON.parse(f.fetch.mock.calls.at(-1)![1]!.body as string);
     expect(request.body).toContain(
-      `Reviewed the 1 changed file since \`${source.headSha.slice(0, 12)}\`.`,
+      `Reviewed the 1 file affected since \`${source.headSha.slice(0, 12)}\`.`,
     );
     expect(request.comments).toHaveLength(1);
   });

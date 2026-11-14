@@ -404,7 +404,7 @@ export type ReviewCoverage = {
 function coverageNote(coverage?: ReviewCoverage): string {
   if (!coverage) return "";
   const scope = coverage.since
-    ? ` Reviewed the ${coverage.changedFiles} changed ${coverage.changedFiles === 1 ? "file" : "files"} since \`${coverage.since.slice(0, 12)}\`.`
+    ? ` Reviewed the ${coverage.changedFiles} ${coverage.changedFiles === 1 ? "file" : "files"} affected since \`${coverage.since.slice(0, 12)}\`.`
     : "";
   return coverage.uncoveredFiles > 0
     ? `${scope} ${coverage.uncoveredFiles} of ${coverage.changedFiles} changed files were not fully reviewed.`
