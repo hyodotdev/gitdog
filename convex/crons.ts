@@ -162,7 +162,7 @@ crons.daily(
 // Report AI attempts whose outcome is unknown so an admin reconciles them.
 crons.interval(
   "report-unresolved-chat-usage",
-  { hours: 24 },
+  { hours: 6 },
   internal._ai.chatBilling.reportUnresolvedChatUsage,
   {},
 );

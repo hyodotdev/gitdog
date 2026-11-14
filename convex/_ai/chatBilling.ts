@@ -2940,17 +2940,17 @@ export const reportUnresolvedChatUsage = internalMutation({
     const now = Date.now();
     const rows = await ctx.db
       .query("chatUsageReservations")
-      .withIndex("by_status_and_expiration", (q) => q.eq("status", "ambiguous"))
+      .withIndex("by_key_source_status_and_expiration", (q) =>
+        q.eq("keySource", undefined).eq("status", "ambiguous"),
+      )
       .take(CHAT_RESERVATION_CLEANUP_LIMIT + 1);
+    const truncated = rows.length > CHAT_RESERVATION_CLEANUP_LIMIT;
     const stale = rows.filter(
-      (row) =>
-        row.keySource === undefined &&
-        blocksActiveProvider(row) &&
-        !blocksAsUnresolved(row, now),
+      (row) => blocksActiveProvider(row) && !blocksAsUnresolved(row, now),
     );
-    if (stale.length === 0) return { unresolved: 0 };
+    if (stale.length === 0 && !truncated) return { unresolved: 0 };
     console.error(
-      `${stale.length}${rows.length > CHAT_RESERVATION_CLEANUP_LIMIT ? "+" : ""} AI usage attempts need admin reconciliation: ${stale
+      `${stale.length}${truncated ? "+" : ""} AI usage attempts need admin reconciliation: ${stale
         .slice(0, 20)
         .map((row) => row.reservationKey)
         .join(", ")}`,
