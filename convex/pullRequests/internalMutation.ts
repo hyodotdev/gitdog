@@ -648,6 +648,7 @@ export const propose = internalMutation({
     next: v.optional(v.object({ page: v.number(), group: v.number() })),
     batchProgress: v.optional(reviewBatchProgressValidator),
     // Coverage of a single (non-batched) review; batches carry their own.
+    windowedPaths: v.optional(v.array(v.string())),
     // The merge base the review compared against, so a later push can tell
     // whether a merge of the base branch brought new changes into the diff.
     mergeBaseSha: v.optional(v.string()),
@@ -720,6 +721,7 @@ export const propose = internalMutation({
             findings: args.findings,
             filesRead: args.filesRead,
             excludedPaths: args.excludedPaths,
+            windowedPaths: args.windowedPaths,
           },
         },
       });
@@ -768,6 +770,7 @@ export const propose = internalMutation({
         excludedPaths: args.excludedPaths,
         filesRead: args.filesRead,
         ...(args.mergeBaseSha ? { mergeBaseSha: args.mergeBaseSha } : {}),
+        windowedPaths: args.windowedPaths ?? [],
         // Approvers preview the posted summary and every finding, which a
         // batched review posts inline like a single one.
         suggestedResponse: [

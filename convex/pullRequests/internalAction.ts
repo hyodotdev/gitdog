@@ -59,10 +59,11 @@ function readReviewSource(
   path: string,
   commit: string,
   changed?: ChangedFile,
+  onWindowed?: () => void,
 ) {
   return runReviewRequest(
     { operation: "Read GitHub source file", file: { path, commit } },
-    () => readReviewFile(access, path, commit, changed),
+    () => readReviewFile(access, path, commit, changed, onWindowed),
   );
 }
 
@@ -323,6 +324,7 @@ export const generate = internalAction({
       let uncoveredFiles = previous?.uncoveredFiles ?? 0;
       let failedGroups = previous?.failedGroups ?? 0;
       const filesRead = new Set(previous?.filesRead);
+      const windowedPaths = new Set(previous?.windowedPaths);
       const excludedPaths = new Set(previous?.excludedPaths);
       const groups = batched ? splitReviewDiff(data.files) : [data.files];
       // Later groups of a page must see the same ordered split as the first.
@@ -431,6 +433,7 @@ export const generate = internalAction({
                     path,
                     data.headSha,
                     data.files.find((file) => file.filename === path),
+                    () => windowedPaths.add(path),
                   )
                 : readReviewSource(access, path, data.baseSha),
           });
@@ -499,6 +502,7 @@ export const generate = internalAction({
         source,
         page: args.page,
         mergeBaseSha: data.baseSha,
+        windowedPaths: [...windowedPaths],
         group: args.group,
         next,
         findings: findings.slice(0, MAX_REVIEW_FINDINGS),
@@ -694,7 +698,13 @@ export const publish = internalAction({
                       access,
                       e.path,
                       data.headSha,
-                      data.files.find((file) => file.filename === e.path),
+                      // Re-read around the diff exactly the files the review
+                      // saw that way; reviews saved before this was recorded
+                      // keep the earlier rule.
+                      !Array.isArray(proposal.windowedPaths) ||
+                        proposal.windowedPaths.includes(e.path)
+                        ? data.files.find((file) => file.filename === e.path)
+                        : undefined,
                     )
                   : await readReviewSource(access, e.path, data.baseSha),
             });

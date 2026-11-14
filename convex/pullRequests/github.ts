@@ -355,6 +355,7 @@ export async function readReviewFile(
   path: string,
   ref: string,
   changed?: ChangedFile,
+  onWindowed?: () => void,
 ): Promise<string> {
   if (!changed?.patch || !hasReviewablePatch(changed))
     return await readFile(access, path, ref);
@@ -364,7 +365,10 @@ export async function readReviewFile(
   // the source of every changed file instead of a few whole ones.
   if (bytes <= WINDOWED_CHANGED_FILE_BYTES) return content;
   const windowed = windowChangedSource(content, changed.patch);
-  if (windowed !== null) return windowed;
+  if (windowed !== null) {
+    onWindowed?.();
+    return windowed;
+  }
   if (bytes <= 40_000) return content;
   throw new ReviewContextLimitError();
 }

@@ -1039,6 +1039,40 @@ describe("bounded review workflow", () => {
     expect(read).toHaveBeenCalledTimes(12);
     expect(result.excludedPaths).toEqual([]);
   });
+  it("keeps the earlier answer when the account cannot afford the source pass", async () => {
+    const { ChatBillingError } =
+      await import("../../../convex/_ai/chatBilling");
+    const files = [
+      file,
+      ...Array.from({ length: 8 }, (_, i) => ({
+        ...file,
+        filename: `src/more-${i}.ts`,
+      })),
+    ];
+    const answers = [stop([finding]), undefined, verified()];
+    const p: AiProvider = {
+      ...provider([]),
+      chat: vi.fn(async () => {
+        const next = answers.shift();
+        if (next === undefined)
+          throw new ChatBillingError("Token limit reached", "limit_reached");
+        return next as Awaited<ReturnType<AiProvider["chat"]>>;
+      }),
+    };
+    const result = await run(
+      p,
+      vi.fn(async () => source),
+      {
+        files,
+        paths: files.map((f) => f.filename),
+      },
+    );
+    expect(p.chat).toHaveBeenCalledTimes(3);
+    expect(result.findings).toEqual([finding]);
+    // The file the refused pass would have shown is reported, not counted.
+    expect(result.reads.some((r) => r.path === "src/more-7.ts")).toBe(false);
+    expect(result.excludedPaths).toContain("src/more-7.ts");
+  });
   it("requires source inspection even when the model returns no findings", async () => {
     await expect(
       run(

@@ -822,6 +822,39 @@ describe("batched publication", () => {
     const request = JSON.parse(f.fetch.mock.calls[0][1]!.body as string);
     expect(request.comments).toHaveLength(1);
   });
+  it("re-reads around the diff only the files the review saw that way", async () => {
+    const f = await batchedPublication();
+    const github = await import("../../../convex/pullRequests/github");
+    const read = vi.mocked(github.readReviewFile);
+    await f.t.action(internal.pullRequests.internalAction.publish, {
+      actionId: f.actionId,
+      manual: true,
+    });
+    // Nothing was windowed during review, so nothing is windowed now.
+    expect(
+      read.mock.calls.filter(([, path]) => path === "src/main.ts")[0][3],
+    ).toBeUndefined();
+    await f.t.run(async (ctx) => {
+      const action = (await ctx.db.get(f.actionId))!;
+      await ctx.db.patch(f.actionId, {
+        status: "pending_approval",
+        executionClaimedAt: undefined,
+        executionResult: undefined,
+        proposedChanges: {
+          ...action.proposedChanges,
+          windowedPaths: ["src/main.ts"],
+        },
+      });
+    });
+    read.mockClear();
+    await f.t.action(internal.pullRequests.internalAction.publish, {
+      actionId: f.actionId,
+      manual: true,
+    });
+    expect(
+      read.mock.calls.filter(([, path]) => path === "src/main.ts")[0][3],
+    ).toMatchObject({ filename: "src/main.ts" });
+  });
   it("falls back to one body when GitHub rejects an inline comment", async () => {
     const f = await batchedPublication();
     f.fetch.mockResolvedValueOnce(new Response("{}", { status: 422 }));

@@ -1,3 +1,4 @@
+import { ChatBillingError } from "../_ai/chatBilling";
 import { chatRequestBytes } from "../_ai/requestSize";
 import { reviewContextMessage } from "./context";
 import type {
@@ -230,11 +231,9 @@ export async function reviewWithContext(args: {
     );
   };
   let readBudget = 0;
-  // A batched group's own files are bounded by the group size, so they do not
-  // use up the reads that guides and tools share.
-  const groupSources = new Set(
-    args.batchGroup ? args.files.map((f) => `head:${f.filename}`) : [],
-  );
+  // A review's own changed files are bounded by its file count and the source
+  // budget, so they do not use up the reads that guides and tools share.
+  const groupSources = new Set(args.files.map((f) => `head:${f.filename}`));
   const groupPaths = args.batchGroup
     ? new Set(args.files.map((f) => f.filename))
     : undefined;
@@ -820,16 +819,35 @@ export async function reviewWithContext(args: {
     }
     return true;
   };
+  // The answer given before the one-time source pass, kept in case the
+  // account cannot afford the larger request that pass makes.
+  let beforeSourcePass: { readCount: number; findings: Finding[] } | undefined;
   for (let turn = 0; turn < 8; turn++) {
     await args.guard();
     if (JSON.stringify(messages).length > 180_000)
       throw new Error("Review conversation exceeds the context budget");
-    const response = await chat(messages, {
-      maxTokens: REVIEW_OUTPUT_TOKENS,
-      tools: reviewTools,
-      billingLabel: `pr-review/${turn}`,
-      responseFormat: REVIEW_RESPONSE_FORMAT,
-    });
+    let response: Awaited<ReturnType<typeof chat>>;
+    try {
+      response = await chat(messages, {
+        maxTokens: REVIEW_OUTPUT_TOKENS,
+        tools: reviewTools,
+        billingLabel: `pr-review/${turn}`,
+        responseFormat: REVIEW_RESPONSE_FORMAT,
+      });
+    } catch (error) {
+      const cause = reviewFailureCause(error);
+      if (
+        !beforeSourcePass ||
+        !(cause instanceof ChatBillingError) ||
+        cause.reason !== "limit_reached"
+      )
+        throw error;
+      // Finish on the earlier answer; the files the pass would have shown
+      // are reported as not reviewed.
+      reads.splice(beforeSourcePass.readCount);
+      return await finalize(beforeSourcePass.findings);
+    }
+    beforeSourcePass = undefined;
     if (response.finishReason === "tool_use" && response.toolUse?.length) {
       // Calls past the budget are refused, not fatal: the review answers
       // from the source it already has.
@@ -1018,11 +1036,14 @@ export async function reviewWithContext(args: {
         findings.length === 0 || JSON.stringify(value).length > 32_000
           ? undefined
           : value;
+      const readCount = reads.length;
       if (
         (findings.length === 0 || carried !== undefined) &&
         (await showUninspected(carried))
-      )
+      ) {
+        beforeSourcePass = { readCount, findings };
         continue;
+      }
     }
     return await finalize(findings);
   }

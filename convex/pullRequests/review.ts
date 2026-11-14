@@ -110,6 +110,9 @@ export const reviewBatchResultValidator = v.object({
   findings: v.array(findingValidator),
   filesRead: v.array(v.string()),
   excludedPaths: v.array(v.string()),
+  // Head files shown around their diff, which publication re-reads the same
+  // way so evidence matches.
+  windowedPaths: v.optional(v.array(v.string())),
 });
 export const MAX_REVIEW_FINDINGS = 8;
 
