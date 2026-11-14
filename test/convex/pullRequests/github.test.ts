@@ -170,6 +170,22 @@ describe("authoritative PR snapshots", () => {
       expect(shown.split("\n")).toHaveLength(1600);
       expect(shown.split("\n")[1499]).toBe("const value1500 = 1500;");
     });
+    it("keeps the 40 KB rule for evidence saved before medium windowing", async () => {
+      const medium = lines.slice(0, 1600).join("\n");
+      vi.spyOn(helpers, "fetchGitHubAppJsonWithRetry").mockResolvedValue(
+        file(medium),
+      );
+      expect(
+        await readReviewFile(
+          access,
+          changed.filename,
+          pr.head.sha,
+          changed,
+          undefined,
+          40_000,
+        ),
+      ).toBe(medium);
+    });
     it("shows a medium file whole when its diff cannot be windowed", async () => {
       const medium = lines.slice(0, 1600).join("\n");
       vi.spyOn(helpers, "fetchGitHubAppJsonWithRetry").mockResolvedValue(

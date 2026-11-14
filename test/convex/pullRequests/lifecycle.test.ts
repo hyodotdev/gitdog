@@ -857,6 +857,45 @@ describe("batched publication", () => {
       vi.restoreAllMocks();
     }
   });
+  it("checks findings that saw one file differently against their own reads", async () => {
+    const f = await batchedPublication();
+    const github = await import("../../../convex/pullRequests/github");
+    await f.t.run(async (ctx) => {
+      const action = (await ctx.db.get(f.actionId))!;
+      const [first] = action.proposedChanges.findings;
+      const tag = (windowed: boolean) =>
+        first.evidence
+          .filter((e: { path: string }) => e.path === "src/main.ts")
+          .map((e: object) => ({ ...e, windowed }));
+      await ctx.db.patch(f.actionId, {
+        proposedChanges: {
+          ...action.proposedChanges,
+          findingCount: 2,
+          findings: [
+            { ...first, evidence: tag(true) },
+            {
+              ...first,
+              title: "Keep the requested key in the second group",
+              suggestion: undefined,
+              evidence: tag(false),
+            },
+          ],
+        },
+      });
+    });
+    const read = vi.mocked(github.readReviewFile);
+    read.mockClear();
+    expect(
+      await f.t.action(internal.pullRequests.internalAction.publish, {
+        actionId: f.actionId,
+        manual: true,
+      }),
+    ).toEqual({ success: true });
+    const views = read.mock.calls
+      .filter(([, path]) => path === "src/main.ts")
+      .map((call) => call[3] !== undefined);
+    expect(views.sort()).toEqual([false, true]);
+  });
   it("falls back to one body when GitHub rejects an inline comment", async () => {
     const f = await batchedPublication();
     f.fetch.mockResolvedValueOnce(new Response("{}", { status: 422 }));

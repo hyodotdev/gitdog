@@ -356,6 +356,8 @@ export async function readReviewFile(
   ref: string,
   changed?: ChangedFile,
   onWindowed?: () => void,
+  // Evidence saved before 24 KB windowing keeps the earlier 40 KB rule.
+  windowFrom = WINDOWED_CHANGED_FILE_BYTES,
 ): Promise<string> {
   if (!changed?.patch || !hasReviewablePatch(changed))
     return await readFile(access, path, ref);
@@ -363,7 +365,7 @@ export async function readReviewFile(
   const bytes = new TextEncoder().encode(content).length;
   // Medium files are also shown around their diff, so one review can afford
   // the source of every changed file instead of a few whole ones.
-  if (bytes <= WINDOWED_CHANGED_FILE_BYTES) return content;
+  if (bytes <= windowFrom) return content;
   const windowed = windowChangedSource(content, changed.patch);
   if (windowed !== null) {
     onWindowed?.();
