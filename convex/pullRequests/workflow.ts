@@ -788,7 +788,8 @@ export async function reviewWithContext(args: {
     let shown = 0;
     for (const file of args.files) {
       const { filename } = file;
-
+      // Stop fetching once the source budget cannot take another file.
+      if (readBudget >= 96_000) break;
       if (
         excludedPaths.includes(filename) ||
         unavailablePaths.has(filename) ||
@@ -1048,24 +1049,44 @@ export async function reviewWithContext(args: {
     return await finalize(findings);
   }
   await args.guard();
-  if (needsSource() && !sourceRetried) await showUninspected();
+  const readsBeforePass = reads.length;
+  const passShown =
+    needsSource() && !sourceRetried ? await showUninspected() : false;
   rebuildMessages();
-  const final = await chat(
-    [
+  const synthesize = () =>
+    chat(
+      [
+        {
+          role: "system",
+          content:
+            findingsPrompt +
+            "\nExploration is complete. Tools are unavailable. Return JSON using only the inspected source blocks below. Omit findings that still need context. Do not claim full coverage.",
+        },
+        messages[1],
+      ],
       {
-        role: "system",
-        content:
-          findingsPrompt +
-          "\nExploration is complete. Tools are unavailable. Return JSON using only the inspected source blocks below. Omit findings that still need context. Do not claim full coverage.",
+        maxTokens: REVIEW_OUTPUT_TOKENS,
+        billingLabel: "pr-review/final",
+        responseFormat: REVIEW_RESPONSE_FORMAT,
       },
-      messages[1],
-    ],
-    {
-      maxTokens: REVIEW_OUTPUT_TOKENS,
-      billingLabel: "pr-review/final",
-      responseFormat: REVIEW_RESPONSE_FORMAT,
-    },
-  );
+    );
+  let final: Awaited<ReturnType<typeof chat>>;
+  try {
+    final = await synthesize();
+  } catch (error) {
+    const cause = reviewFailureCause(error);
+    if (
+      !passShown ||
+      !(cause instanceof ChatBillingError) ||
+      cause.reason !== "limit_reached"
+    )
+      throw error;
+    // Synthesize from the source read before the pass; the files it added
+    // are reported as not reviewed.
+    reads.splice(readsBeforePass);
+    rebuildMessages();
+    final = await synthesize();
+  }
   if (final.finishReason !== "stop")
     throw new Error("Review final synthesis did not complete");
   return await finalize(

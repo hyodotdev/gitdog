@@ -822,38 +822,40 @@ describe("batched publication", () => {
     const request = JSON.parse(f.fetch.mock.calls[0][1]!.body as string);
     expect(request.comments).toHaveLength(1);
   });
-  it("re-reads around the diff only the files the review saw that way", async () => {
-    const f = await batchedPublication();
+  it("re-reads each quoted file the way its review group saw it", async () => {
     const github = await import("../../../convex/pullRequests/github");
-    const read = vi.mocked(github.readReviewFile);
-    await f.t.action(internal.pullRequests.internalAction.publish, {
-      actionId: f.actionId,
-      manual: true,
-    });
-    // Nothing was windowed during review, so nothing is windowed now.
-    expect(
-      read.mock.calls.filter(([, path]) => path === "src/main.ts")[0][3],
-    ).toBeUndefined();
-    await f.t.run(async (ctx) => {
-      const action = (await ctx.db.get(f.actionId))!;
-      await ctx.db.patch(f.actionId, {
-        status: "pending_approval",
-        executionClaimedAt: undefined,
-        executionResult: undefined,
-        proposedChanges: {
-          ...action.proposedChanges,
-          windowedPaths: ["src/main.ts"],
-        },
+    for (const windowed of [false, true, undefined]) {
+      const f = await batchedPublication();
+      await f.t.run(async (ctx) => {
+        const action = (await ctx.db.get(f.actionId))!;
+        const proposal = action.proposedChanges;
+        await ctx.db.patch(f.actionId, {
+          proposedChanges: {
+            ...proposal,
+            findings: proposal.findings.map(
+              (finding: { evidence: object[] }) => ({
+                ...finding,
+                evidence: finding.evidence.map((e) => ({ ...e, windowed })),
+              }),
+            ),
+          },
+        });
       });
-    });
-    read.mockClear();
-    await f.t.action(internal.pullRequests.internalAction.publish, {
-      actionId: f.actionId,
-      manual: true,
-    });
-    expect(
-      read.mock.calls.filter(([, path]) => path === "src/main.ts")[0][3],
-    ).toMatchObject({ filename: "src/main.ts" });
+      const read = vi.mocked(github.readReviewFile);
+      read.mockClear();
+      await f.t.action(internal.pullRequests.internalAction.publish, {
+        actionId: f.actionId,
+        manual: true,
+      });
+      const changed = read.mock.calls.find(
+        ([, path]) => path === "src/main.ts",
+      )?.[3];
+      // A group that read the file whole quotes the whole file; evidence
+      // saved before the flag existed keeps the earlier rule.
+      if (windowed === false) expect(changed).toBeUndefined();
+      else expect(changed).toMatchObject({ filename: "src/main.ts" });
+      vi.restoreAllMocks();
+    }
   });
   it("falls back to one body when GitHub rejects an inline comment", async () => {
     const f = await batchedPublication();
@@ -1910,6 +1912,29 @@ describe("batched PR reviews", () => {
     });
   });
 
+  it("records on each quoted head file whether its group saw it windowed", async () => {
+    const f = await batchFixture(undefined, 0, 10_000_000, [], 61);
+    const github = await import("../../../convex/pullRequests/github");
+    vi.mocked(github.readReviewFile).mockImplementation(
+      async (_access, path, _ref, _changed, onWindowed) => {
+        if (path === "src/file-1.ts") onWindowed?.();
+        return "function find(key) {\n return cache.get('constant');\n}";
+      },
+    );
+    for (const page of [undefined, 2, 3, 4]) await f.generate(page);
+    const evidence = Object.fromEntries(
+      ((await f.getAction())?.proposedChanges?.findings ?? []).map(
+        (finding: {
+          path: string;
+          evidence: Array<{ windowed?: boolean }>;
+        }) => [finding.path, finding.evidence[0].windowed],
+      ),
+    );
+    expect(evidence).toEqual({
+      "src/file-1.ts": true,
+      "src/file-49.ts": false,
+    });
+  });
   it("keeps the paid batches when the model output of one batch cannot be used", async () => {
     const { ChatProviderRequestError } =
       await import("../../../convex/_ai/providerErrors");

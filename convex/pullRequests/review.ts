@@ -84,6 +84,9 @@ export const findingValidator = v.object({
       path: v.string(),
       ref: v.union(v.literal("head"), v.literal("base")),
       quote: v.string(),
+      // Set by Gitdog, not the model: whether the review saw this head file
+      // around its diff, so publication re-reads it the same way.
+      windowed: v.optional(v.boolean()),
     }),
   ),
 });
@@ -110,9 +113,6 @@ export const reviewBatchResultValidator = v.object({
   findings: v.array(findingValidator),
   filesRead: v.array(v.string()),
   excludedPaths: v.array(v.string()),
-  // Head files shown around their diff, which publication re-reads the same
-  // way so evidence matches.
-  windowedPaths: v.optional(v.array(v.string())),
 });
 export const MAX_REVIEW_FINDINGS = 8;
 
@@ -124,7 +124,12 @@ export type Finding = {
   body: string;
   confidence: number;
   suggestion?: { startLine: number; original: string; replacement: string };
-  evidence: Array<{ path: string; ref: "head" | "base"; quote: string }>;
+  evidence: Array<{
+    path: string;
+    ref: "head" | "base";
+    quote: string;
+    windowed?: boolean;
+  }>;
 };
 export type ChangedFile = {
   filename: string;

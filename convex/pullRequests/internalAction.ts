@@ -324,7 +324,8 @@ export const generate = internalAction({
       let uncoveredFiles = previous?.uncoveredFiles ?? 0;
       let failedGroups = previous?.failedGroups ?? 0;
       const filesRead = new Set(previous?.filesRead);
-      const windowedPaths = new Set(previous?.windowedPaths);
+      // Head files this group saw around their diff.
+      const windowedPaths = new Set<string>();
       const excludedPaths = new Set(previous?.excludedPaths);
       const groups = batched ? splitReviewDiff(data.files) : [data.files];
       // Later groups of a page must see the same ordered split as the first.
@@ -456,7 +457,18 @@ export const generate = internalAction({
             excludedPaths: selected.map((file) => file.filename),
           };
         }
-        findings.push(...result.findings);
+        // Each review group decides windowing for its own reads, so the way
+        // each quoted file was seen travels with the evidence itself.
+        findings.push(
+          ...result.findings.map((finding) => ({
+            ...finding,
+            evidence: finding.evidence.map((e) =>
+              e.ref === "head"
+                ? { ...e, windowed: windowedPaths.has(e.path) }
+                : e,
+            ),
+          })),
+        );
         findingCount += result.findings.length;
         const inspected = new Set(
           result.reads.filter((r) => r.ref === "head").map((r) => r.path),
@@ -502,7 +514,6 @@ export const generate = internalAction({
         source,
         page: args.page,
         mergeBaseSha: data.baseSha,
-        windowedPaths: [...windowedPaths],
         group: args.group,
         next,
         findings: findings.slice(0, MAX_REVIEW_FINDINGS),
@@ -698,11 +709,9 @@ export const publish = internalAction({
                       access,
                       e.path,
                       data.headSha,
-                      // Re-read around the diff exactly the files the review
-                      // saw that way; reviews saved before this was recorded
-                      // keep the earlier rule.
-                      !Array.isArray(proposal.windowedPaths) ||
-                        proposal.windowedPaths.includes(e.path)
+                      // Re-read the way the review saw this file; evidence
+                      // saved before that was recorded keeps the earlier rule.
+                      e.windowed !== false
                         ? data.files.find((file) => file.filename === e.path)
                         : undefined,
                     )
