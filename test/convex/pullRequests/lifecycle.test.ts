@@ -2004,13 +2004,11 @@ describe("batched PR reviews", () => {
     f.live.head = { sha: next.headSha };
     const nextId = (await f.observe(next))!;
     expect(await f.t.run((ctx) => ctx.db.get(nextId))).toMatchObject({
-      reviewSince: {
-        headSha: source.headSha,
-        mergeBaseSha: source.baseSha,
-        // Removed files the first review listed are carried, not lost.
-        uncoveredPaths: expect.arrayContaining(["src/file-17.ts"]),
-      },
+      reviewSince: { headSha: source.headSha, mergeBaseSha: source.baseSha },
     });
+    expect(
+      (await f.t.run((ctx) => ctx.db.get(nextId)))?.reviewSince,
+    ).not.toHaveProperty("uncoveredPaths");
     f.batches.length = 0;
     f.fetch.mockResolvedValue(
       Response.json({
@@ -2040,6 +2038,33 @@ describe("batched PR reviews", () => {
       `Reviewed the 1 file affected since \`${source.headSha.slice(0, 12)}\`.`,
     );
     expect(request.comments).toHaveLength(1);
+  });
+
+  it("does not resend files a legacy follow-up record carried", async () => {
+    const f = await batchFixture(undefined, 0, 10_000_000, [], 61);
+    for (const page of [undefined, 2, 3, 4]) await f.generate(page);
+    await drainScheduledFunctions(f.t);
+    const next = { ...source, headSha: "e".repeat(40) };
+    f.live.head = { sha: next.headSha };
+    const nextId = (await f.observe(next))!;
+    await f.t.run((ctx) =>
+      ctx.db.patch(nextId, {
+        reviewSince: {
+          headSha: source.headSha,
+          mergeBaseSha: source.baseSha,
+          uncoveredPaths: ["src/file-40.ts", "src/file-41.ts"],
+        },
+      }),
+    );
+    f.batches.length = 0;
+    await f.t.action(internal.pullRequests.internalAction.generate, {
+      actionId: nextId,
+    });
+    expect(f.batches).toEqual([`pr/${nextId}/${next.headSha}`]);
+    // The carried files are not sent with the one file the push changed.
+    expect(
+      (await f.t.run((ctx) => ctx.db.get(nextId)))?.proposedChanges,
+    ).toMatchObject({ changedFiles: 1, reviewedSince: source.headSha });
   });
 
   async function followUp(changed: Set<string> | null) {
@@ -2206,9 +2231,10 @@ describe("batched PR reviews", () => {
     const next = { ...source, headSha: "e".repeat(40) };
     f.live.head = { sha: next.headSha };
     const nextId = (await f.observe(next))!;
-    expect(
-      (await f.t.run((ctx) => ctx.db.get(nextId)))?.reviewSince?.uncoveredPaths,
-    ).toEqual([]);
+    expect((await f.t.run((ctx) => ctx.db.get(nextId)))?.reviewSince).toEqual({
+      headSha: source.headSha,
+      mergeBaseSha: source.baseSha,
+    });
   });
   it("stops paying for batches once model output keeps failing", async () => {
     const { ChatProviderRequestError } =
@@ -2231,7 +2257,7 @@ describe("batched PR reviews", () => {
     expect((await f.getAction())?.status).toBe("failed");
     expect(f.fetch).not.toHaveBeenCalled();
   });
-  it("does not build on a review that could not list what it missed", async () => {
+  it("builds on a review that could not list everything it missed", async () => {
     const f = await fixture();
     const first = (await f.observe())!;
     await f.t.run((ctx) =>
@@ -2240,6 +2266,7 @@ describe("batched PR reviews", () => {
         executionResult: { published: true },
         proposedChanges: {
           source,
+          mergeBaseSha: source.baseSha,
           findings: [],
           uncoveredFiles: 150,
           coverageLimited: true,
@@ -2248,9 +2275,10 @@ describe("batched PR reviews", () => {
       }),
     );
     const next = (await f.observe({ ...source, headSha: "e".repeat(40) }))!;
-    expect(
-      (await f.t.run((ctx) => ctx.db.get(next)))?.reviewSince,
-    ).toBeUndefined();
+    expect((await f.t.run((ctx) => ctx.db.get(next)))?.reviewSince).toEqual({
+      headSha: source.headSha,
+      mergeBaseSha: source.baseSha,
+    });
   });
   it("still stops the whole review on an ambiguous provider outcome", async () => {
     const { ChatProviderRequestError } =

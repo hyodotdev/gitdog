@@ -242,26 +242,19 @@ export const generate = internalAction({
       // long as they fit one review; otherwise the whole PR is reviewed.
       const since = initial.action.reviewSince;
       let scoped: Awaited<ReturnType<typeof snapshot>> | undefined;
-      let changed: Set<string> | undefined;
       if (since && !batched && !verificationOnly) {
         const scope = await changedSince(access, since, pr);
-        // Files the earlier review could not cover get another chance.
         if (scope) {
           const candidate = await snapshot(access, pr, verificationOnly, {
-            findingPaths: new Set([...scope.paths, ...since.uncoveredPaths]),
+            findingPaths: scope.paths,
           });
-          // A removed file the earlier review listed has nothing to review.
-          const files = candidate.files.filter(
-            (f) => f.status !== "removed" || scope.paths.has(f.filename),
-          );
           if (
             // The scope is only valid against the merge base it was built on.
             candidate.baseSha === scope.mergeBaseSha &&
-            files.length <= BATCH_REVIEW_THRESHOLD &&
-            JSON.stringify(files).length <= REVIEW_DIFF_BUDGET
+            candidate.files.length <= BATCH_REVIEW_THRESHOLD &&
+            JSON.stringify(candidate.files).length <= REVIEW_DIFF_BUDGET
           ) {
-            scoped = { ...candidate, files };
-            changed = scope.paths;
+            scoped = candidate;
           }
         }
       }
@@ -296,10 +289,8 @@ export const generate = internalAction({
       if (scoped && !data.files.some(hasReviewablePatch)) {
         // Nothing reviewable changed in this PR's diff, such as a merge of the
         // base branch or a deletion, so no model call is made. A binary or
-        // oversized file this push changed is reported as not reviewed; one
-        // carried from an earlier review is carried again without a post.
+        // oversized file this push changed is reported as not reviewed.
         const unreviewable = data.files.filter((f) => f.status !== "removed");
-        const reported = unreviewable.filter((f) => changed?.has(f.filename));
         await ctx.runMutation(internal.pullRequests.internalMutation.propose, {
           actionId: args.actionId,
           source,
@@ -308,8 +299,8 @@ export const generate = internalAction({
           filesRead: [],
           mergeBaseSha: data.baseSha,
           coverage: {
-            changedFiles: reported.length,
-            uncoveredFiles: reported.length,
+            changedFiles: unreviewable.length,
+            uncoveredFiles: unreviewable.length,
             since: since?.headSha,
           },
         });
@@ -334,8 +325,7 @@ export const generate = internalAction({
       let uncoveredFiles = previous?.uncoveredFiles ?? 0;
       let failedGroups = previous?.failedGroups ?? 0;
       let refusedGroups = previous?.refusedGroups ?? 0;
-      // Files a safety filter declined are not carried into later reviews,
-      // where they would be declined again.
+      // A record of the files a safety filter declined.
       const refusedPaths = new Set(previous?.refusedPaths);
       const filesRead = new Set(previous?.filesRead);
       // Head files this group saw around their diff.
