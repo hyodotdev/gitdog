@@ -591,7 +591,7 @@ describe("Claude safety refusals", () => {
     );
     expect(JSON.parse(init.body as string).fallbacks).toBe("default");
   });
-  it("reads the fallback model's answer and bills every attempt", async () => {
+  it("reads the fallback model's answer and bills the attempt that produced it", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
       claude({
         model: "claude-sonnet-5",
@@ -619,9 +619,9 @@ describe("Claude safety refusals", () => {
       { type: "text", text: "Fallback answer" },
     ]);
     expect(result.usage).toEqual({
-      promptTokens: 20,
+      promptTokens: 10,
       completionTokens: 4,
-      totalTokens: 24,
+      totalTokens: 14,
     });
   });
   it("reports a decline with its category instead of a processing failure", async () => {
@@ -637,11 +637,53 @@ describe("Claude safety refusals", () => {
       .chat(messages)
       .catch((e: unknown) => e);
     expect(error).toBeInstanceOf(ChatProviderRequestError);
+    // A cyber decline before any output is not billed.
     expect(error).toMatchObject({
       message: "Claude declined the request",
-      billingOutcome: "billed",
+      billingOutcome: "not_billed",
       refusal: "cyber",
-      usage: { promptTokens: 18550, completionTokens: 0, totalTokens: 18550 },
     });
+    expect((error as ChatProviderRequestError).usage).toBeUndefined();
+  });
+  it("bills a decline in a billed category or after output", async () => {
+    const fetch = vi.spyOn(globalThis, "fetch");
+    for (const [category, output, outcome] of [
+      ["reasoning_extraction", 0, "billed"],
+      [null, 0, "not_billed"],
+      ["general_harms", 7, "billed"],
+    ] as const) {
+      fetch.mockResolvedValueOnce(
+        claude({
+          content: [],
+          stop_reason: "refusal",
+          stop_details: category === null ? null : { category },
+          usage: { input_tokens: 100, output_tokens: output },
+        }),
+      );
+      await expect(
+        new ClaudeProvider("fixture-key").chat(messages),
+      ).rejects.toMatchObject({
+        billingOutcome: outcome,
+        refusal: category ?? "unknown",
+      });
+    }
+  });
+  it("keeps only the served attempt's content after a fallback boundary", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      claude({
+        content: [
+          { type: "thinking", thinking: "", signature: "declined" },
+          { type: "text", text: "partial" },
+          {
+            type: "fallback",
+            from: { model: "claude-sonnet-5-5" },
+            to: { model: "claude-sonnet-5" },
+          },
+          { type: "text", text: "Served" },
+        ],
+      }),
+    );
+    const result = await new ClaudeProvider("fixture-key").chat(messages);
+    expect(result.historyContent).toEqual([{ type: "text", text: "Served" }]);
   });
 });

@@ -194,6 +194,7 @@ export const observe = internalAction({
 
 const REVIEW_COVERAGE_PREVIEW = 100;
 const MAX_FAILED_REVIEW_GROUPS = 2;
+const MAX_REFUSED_REVIEW_GROUPS = 5;
 // Reviews of one account share a single provider slot. Wait this long per
 // action for other work to release it before failing the review.
 const REVIEW_ACTIVE_PROVIDER_WAIT_MS = 90_000;
@@ -332,6 +333,10 @@ export const generate = internalAction({
       let inspectedFiles = previous?.inspectedFiles ?? 0;
       let uncoveredFiles = previous?.uncoveredFiles ?? 0;
       let failedGroups = previous?.failedGroups ?? 0;
+      let refusedGroups = previous?.refusedGroups ?? 0;
+      // Files a safety filter declined are not carried into later reviews,
+      // where they would be declined again.
+      const refusedPaths = new Set(previous?.refusedPaths);
       const filesRead = new Set(previous?.filesRead);
       // Head files this group saw around their diff.
       const windowedPaths = new Set<string>();
@@ -449,16 +454,21 @@ export const generate = internalAction({
           });
         } catch (error) {
           // A failure that keeps recurring is not one bad response; stop
-          // instead of paying for every remaining batch. A safety decline is
-          // about one group's content, so it does not count toward that.
+          // instead of paying for every remaining batch. Safety declines are
+          // about content, so they have their own, larger limit, and a single
+          // review reports declined files instead of failing.
           const refused = isReviewRefusal(error);
           if (
-            !batched ||
             !isReviewGroupModelFailure(error) ||
-            (!refused && failedGroups >= MAX_FAILED_REVIEW_GROUPS)
+            (!batched && !refused) ||
+            (!refused && failedGroups >= MAX_FAILED_REVIEW_GROUPS) ||
+            (refused && refusedGroups >= MAX_REFUSED_REVIEW_GROUPS)
           )
             throw error;
-          if (!refused) failedGroups++;
+          if (refused) {
+            refusedGroups++;
+            for (const file of selected) refusedPaths.add(file.filename);
+          } else failedGroups++;
           // Keep the batches already paid for and report this group as not
           // reviewed, as when its files cannot be read.
           await ensureCurrent();
@@ -524,6 +534,7 @@ export const generate = internalAction({
         group: args.group,
         next,
         findings: findings.slice(0, MAX_REVIEW_FINDINGS),
+        refusedPaths: [...refusedPaths],
         excludedPaths: [...excludedPaths].slice(
           0,
           batched ? REVIEW_COVERAGE_PREVIEW : undefined,
@@ -542,6 +553,7 @@ export const generate = internalAction({
               inspectedFiles,
               uncoveredFiles,
               failedGroups,
+              refusedGroups,
               remainingBatches: next
                 ? groups.length -
                   group -

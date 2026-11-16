@@ -2151,6 +2151,65 @@ describe("batched PR reviews", () => {
     const request = JSON.parse(f.fetch.mock.calls[0][1]!.body as string);
     expect(request.body).toContain("were not fully reviewed");
   });
+  it("stops after too many batches are declined", async () => {
+    const { ChatProviderRequestError } =
+      await import("../../../convex/_ai/providerErrors");
+    const f = await batchFixture(
+      [3, 4, 5, 6, 7, 8],
+      0,
+      10_000_000,
+      [],
+      144,
+      () =>
+        new ChatProviderRequestError("Claude declined the request", "billed", {
+          refusal: "general_harms",
+        }),
+    );
+    for (const page of [undefined, 2, 3, 4, 5, 6, 7]) await f.generate(page);
+    expect((await f.getAction())?.reviewBatch?.result).toMatchObject({
+      refusedGroups: 5,
+    });
+    await f.generate(8);
+    expect((await f.getAction())?.status).toBe("failed");
+    expect(f.fetch).not.toHaveBeenCalled();
+  });
+  it("reports a declined single review and does not carry its files forward", async () => {
+    const { ChatProviderRequestError } =
+      await import("../../../convex/_ai/providerErrors");
+    const f = await batchFixture(
+      0,
+      0,
+      10_000_000,
+      [],
+      3,
+      () =>
+        new ChatProviderRequestError(
+          "Claude declined the request",
+          "not_billed",
+          {
+            refusal: "cyber",
+          },
+        ),
+    );
+    await f.generate();
+    await drainScheduledFunctions(f.t);
+    const action = await f.getAction();
+    expect(action).toMatchObject({
+      status: "completed",
+      executionResult: { published: true },
+      proposedChanges: {
+        refusedPaths: ["src/file-1.ts", "src/file-2.ts", "src/file-3.ts"],
+      },
+    });
+    const request = JSON.parse(f.fetch.mock.calls[0][1]!.body as string);
+    expect(request.body).toContain("could not review the 3 changed files");
+    const next = { ...source, headSha: "e".repeat(40) };
+    f.live.head = { sha: next.headSha };
+    const nextId = (await f.observe(next))!;
+    expect(
+      (await f.t.run((ctx) => ctx.db.get(nextId)))?.reviewSince?.uncoveredPaths,
+    ).toEqual([]);
+  });
   it("stops paying for batches once model output keeps failing", async () => {
     const { ChatProviderRequestError } =
       await import("../../../convex/_ai/providerErrors");

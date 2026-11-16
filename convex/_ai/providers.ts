@@ -156,28 +156,12 @@ function usage(
 
 export const CLAUDE_FALLBACK_BETA = "server-side-fallback-2026-07-01";
 
-/**
- * Usage across every attempt of one request: with server-side fallbacks the
- * top-level usage covers only the attempt that produced the message, while
- * `usage.iterations` also lists declined attempts.
- */
-function attemptsUsage(counts: RecordValue, requestId?: string): ProviderUsage {
-  const served = usage(counts.input_tokens, counts.output_tokens, requestId);
-  if (!Array.isArray(counts.iterations) || counts.iterations.length === 0)
-    return served;
-  let input = 0;
-  let output = 0;
-  for (const entry of counts.iterations) {
-    if (!record(entry)) return served;
-    const attempt = usage(entry.input_tokens, entry.output_tokens, requestId);
-    input += attempt.promptTokens;
-    output += attempt.completionTokens;
-  }
-  // Never record less than the served attempt alone.
-  return input + output >= served.totalTokens
-    ? usage(input, output, requestId)
-    : served;
-}
+// A safety decline before any output is billed only in these categories.
+const BILLED_REFUSAL_CATEGORIES = new Set([
+  "bio",
+  "frontier_llm",
+  "reasoning_extraction",
+]);
 
 function parseTool(value: RecordValue, input: unknown): ToolUseContent {
   if (
@@ -277,7 +261,10 @@ export class ClaudeProvider implements AiProvider {
     const counts = record(data.usage) ? data.usage : {};
     // No prompt caching is requested. Reject unexpected cache billing rather
     // than recording an incorrect price or incomplete token count.
-    const billed = attemptsUsage(counts, requestId);
+    // With fallbacks, top-level usage covers the attempt that produced the
+    // message. A declined attempt before it is not charged to the account:
+    // most declines are free, and counting it could exceed the reservation.
+    const billed = usage(counts.input_tokens, counts.output_tokens, requestId);
     try {
       if (
         (counts.cache_creation_input_tokens ?? 0) !== 0 ||
@@ -291,16 +278,20 @@ export class ClaudeProvider implements AiProvider {
       }
       if (data.stop_reason === "refusal") {
         const details = record(data.stop_details) ? data.stop_details : {};
+        const category =
+          typeof details.category === "string" ? details.category : "unknown";
+        // Output already produced is billed; a decline before any output is
+        // billed only in some categories.
+        const charged =
+          billed.completionTokens > 0 ||
+          BILLED_REFUSAL_CATEGORIES.has(category);
         throw new ChatProviderRequestError(
           "Claude declined the request",
-          "billed",
+          charged ? "billed" : "not_billed",
           {
-            usage: billed,
+            ...(charged ? { usage: billed } : {}),
             providerRequestId: requestId,
-            refusal:
-              typeof details.category === "string"
-                ? details.category
-                : "unknown",
+            refusal: category,
           },
         );
       }

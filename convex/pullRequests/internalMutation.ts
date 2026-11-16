@@ -115,8 +115,15 @@ function lastReviewed(actions: Doc<"ticketActions">[], headSha: string) {
   return {
     headSha: source.headSha as string,
     mergeBaseSha: proposal.mergeBaseSha as string,
+    // Files a safety filter declined are not offered again unless a later
+    // push changes them.
     uncoveredPaths: (proposal.excludedPaths as unknown[]).filter(
-      (path): path is string => typeof path === "string",
+      (path): path is string =>
+        typeof path === "string" &&
+        !(
+          Array.isArray(proposal.refusedPaths) &&
+          proposal.refusedPaths.includes(path)
+        ),
     ),
   };
 }
@@ -693,6 +700,7 @@ export const propose = internalMutation({
     source: snapshotValidator,
     findings: v.array(findingValidator),
     excludedPaths: v.array(v.string()),
+    refusedPaths: v.optional(v.array(v.string())),
     filesRead: v.array(v.string()),
     page: v.optional(v.number()),
     group: v.optional(v.number()),
@@ -771,6 +779,7 @@ export const propose = internalMutation({
             findings: args.findings,
             filesRead: args.filesRead,
             excludedPaths: args.excludedPaths,
+            refusedPaths: args.refusedPaths,
           },
         },
       });
@@ -817,6 +826,9 @@ export const propose = internalMutation({
             : {}),
         findings: args.findings,
         excludedPaths: args.excludedPaths,
+        ...(args.refusedPaths?.length
+          ? { refusedPaths: args.refusedPaths }
+          : {}),
         filesRead: args.filesRead,
         ...(args.mergeBaseSha ? { mergeBaseSha: args.mergeBaseSha } : {}),
         // Approvers preview the posted summary and every finding, which a
