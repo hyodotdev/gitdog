@@ -954,13 +954,14 @@ const applicationTables = {
     ),
     reviewVerificationOnly: v.optional(v.boolean()),
     reviewRecheckOfActionId: v.optional(v.id("ticketActions")),
-    // The last fully accounted review of this PR: a later push reviews only
-    // the files changed since its head, plus the files it left unreviewed.
+    // The last finished review of this PR: a later push reviews only the
+    // files changed since its head.
     reviewSince: v.optional(
       v.object({
         headSha: v.string(),
         mergeBaseSha: v.string(),
-        uncoveredPaths: v.array(v.string()),
+        // Legacy: files earlier reviews carried into the next one.
+        uncoveredPaths: v.optional(v.array(v.string())),
       }),
     ),
     sourceCommentId: v.optional(v.number()), // GitHub comment delivery id for follow-up idempotency
