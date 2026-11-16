@@ -580,3 +580,68 @@ it("counts high-effort reasoning inside output usage exactly once", async () => 
     max_output_tokens: 16384,
   });
 });
+
+describe("Claude safety refusals", () => {
+  it("asks for Anthropic's recommended fallback on a policy decline", async () => {
+    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(claude());
+    await new ClaudeProvider("fixture-key").chat(messages);
+    const init = fetch.mock.calls[0][1]!;
+    expect((init.headers as Record<string, string>)["anthropic-beta"]).toBe(
+      "server-side-fallback-2026-07-01",
+    );
+    expect(JSON.parse(init.body as string).fallbacks).toBe("default");
+  });
+  it("reads the fallback model's answer and bills every attempt", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      claude({
+        model: "claude-sonnet-5",
+        content: [
+          {
+            type: "fallback",
+            from: { model: "claude-sonnet-5-5" },
+            to: { model: "claude-sonnet-5" },
+          },
+          { type: "text", text: "Fallback answer" },
+        ],
+        usage: {
+          input_tokens: 10,
+          output_tokens: 4,
+          iterations: [
+            { type: "message", input_tokens: 10, output_tokens: 0 },
+            { type: "fallback_message", input_tokens: 10, output_tokens: 4 },
+          ],
+        },
+      }),
+    );
+    const result = await new ClaudeProvider("fixture-key").chat(messages);
+    expect(result.content).toBe("Fallback answer");
+    expect(result.historyContent).toEqual([
+      { type: "text", text: "Fallback answer" },
+    ]);
+    expect(result.usage).toEqual({
+      promptTokens: 20,
+      completionTokens: 4,
+      totalTokens: 24,
+    });
+  });
+  it("reports a decline with its category instead of a processing failure", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      claude({
+        content: [],
+        stop_reason: "refusal",
+        stop_details: { type: "refusal", category: "cyber" },
+        usage: { input_tokens: 18550, output_tokens: 0 },
+      }),
+    );
+    const error = await new ClaudeProvider("fixture-key")
+      .chat(messages)
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ChatProviderRequestError);
+    expect(error).toMatchObject({
+      message: "Claude declined the request",
+      billingOutcome: "billed",
+      refusal: "cyber",
+      usage: { promptTokens: 18550, completionTokens: 0, totalTokens: 18550 },
+    });
+  });
+});

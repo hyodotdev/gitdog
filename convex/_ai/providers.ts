@@ -154,6 +154,31 @@ function usage(
   };
 }
 
+export const CLAUDE_FALLBACK_BETA = "server-side-fallback-2026-07-01";
+
+/**
+ * Usage across every attempt of one request: with server-side fallbacks the
+ * top-level usage covers only the attempt that produced the message, while
+ * `usage.iterations` also lists declined attempts.
+ */
+function attemptsUsage(counts: RecordValue, requestId?: string): ProviderUsage {
+  const served = usage(counts.input_tokens, counts.output_tokens, requestId);
+  if (!Array.isArray(counts.iterations) || counts.iterations.length === 0)
+    return served;
+  let input = 0;
+  let output = 0;
+  for (const entry of counts.iterations) {
+    if (!record(entry)) return served;
+    const attempt = usage(entry.input_tokens, entry.output_tokens, requestId);
+    input += attempt.promptTokens;
+    output += attempt.completionTokens;
+  }
+  // Never record less than the served attempt alone.
+  return input + output >= served.totalTokens
+    ? usage(input, output, requestId)
+    : served;
+}
+
 function parseTool(value: RecordValue, input: unknown): ToolUseContent {
   if (
     typeof value.id !== "string" ||
@@ -198,9 +223,13 @@ export class ClaudeProvider implements AiProvider {
           ? await this.authorize()
           : { "x-api-key": this.apiKey }),
         "anthropic-version": "2023-06-01",
+        // A request declined by a safety classifier is re-run server-side on
+        // the model Anthropic recommends for that refusal category.
+        "anthropic-beta": CLAUDE_FALLBACK_BETA,
       },
       {
         model: this.modelId,
+        fallbacks: "default",
         system: systemPrompt(messages),
         messages: messages
           .filter((m) => m.role !== "system")
@@ -248,7 +277,7 @@ export class ClaudeProvider implements AiProvider {
     const counts = record(data.usage) ? data.usage : {};
     // No prompt caching is requested. Reject unexpected cache billing rather
     // than recording an incorrect price or incomplete token count.
-    const billed = usage(counts.input_tokens, counts.output_tokens, requestId);
+    const billed = attemptsUsage(counts, requestId);
     try {
       if (
         (counts.cache_creation_input_tokens ?? 0) !== 0 ||
@@ -260,9 +289,34 @@ export class ClaudeProvider implements AiProvider {
           { providerRequestId: requestId },
         );
       }
+      if (data.stop_reason === "refusal") {
+        const details = record(data.stop_details) ? data.stop_details : {};
+        throw new ChatProviderRequestError(
+          "Claude declined the request",
+          "billed",
+          {
+            usage: billed,
+            providerRequestId: requestId,
+            refusal:
+              typeof details.category === "string"
+                ? details.category
+                : "unknown",
+          },
+        );
+      }
       if (!Array.isArray(data.content) || data.content.length === 0)
         throw new Error("Missing content");
-      const history: HistoryContent[] = data.content.map((p: unknown) => {
+      // A fallback block marks where a declined model handed over; anything
+      // before the last one belongs to the declined attempt and is dropped.
+      let lastFallback = -1;
+      data.content.forEach((p: unknown, index: number) => {
+        if (record(p) && p.type === "fallback") lastFallback = index;
+      });
+      const served = data.content
+        .slice(lastFallback + 1)
+        .filter((p: unknown) => !(record(p) && p.type === "fallback"));
+      if (served.length === 0) throw new Error("Missing content");
+      const history: HistoryContent[] = served.map((p: unknown) => {
         if (!record(p)) throw new Error("Invalid content block");
         if (p.type === "text" && typeof p.text === "string")
           return { type: "text", text: p.text };

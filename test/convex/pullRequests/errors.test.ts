@@ -229,3 +229,24 @@ describe("batch group failure isolation", () => {
       expect(isReviewGroupModelFailure(error)).toBe(false);
   });
 });
+
+describe("safety refusals", () => {
+  it("names the declined category instead of a processing failure", async () => {
+    const { reviewFailureDetails, isReviewRefusal } =
+      await import("../../../convex/pullRequests/errors");
+    const { ChatProviderRequestError } =
+      await import("../../../convex/_ai/providerErrors");
+    const refusal = new ChatProviderRequestError(
+      "Claude declined the request",
+      "billed",
+      { refusal: "cyber" },
+    );
+    expect(reviewFailureDetails(refusal, "Review")).toContain(
+      "The model's safety filter declined this content (cyber).",
+    );
+    expect(isReviewRefusal(refusal)).toBe(true);
+    expect(
+      isReviewRefusal(new ChatProviderRequestError("Unreadable", "billed")),
+    ).toBe(false);
+  });
+});

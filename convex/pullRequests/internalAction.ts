@@ -35,6 +35,7 @@ import { reviewWithContext } from "./workflow";
 import { REVIEW_QUOTA_FAILURES } from "./internalMutation";
 import {
   isReviewGroupModelFailure,
+  isReviewRefusal,
   ReviewQuotaError,
   reviewGenerationError,
   reviewFailureCause,
@@ -448,14 +449,16 @@ export const generate = internalAction({
           });
         } catch (error) {
           // A failure that keeps recurring is not one bad response; stop
-          // instead of paying for every remaining batch.
+          // instead of paying for every remaining batch. A safety decline is
+          // about one group's content, so it does not count toward that.
+          const refused = isReviewRefusal(error);
           if (
             !batched ||
-            failedGroups >= MAX_FAILED_REVIEW_GROUPS ||
-            !isReviewGroupModelFailure(error)
+            !isReviewGroupModelFailure(error) ||
+            (!refused && failedGroups >= MAX_FAILED_REVIEW_GROUPS)
           )
             throw error;
-          failedGroups++;
+          if (!refused) failedGroups++;
           // Keep the batches already paid for and report this group as not
           // reviewed, as when its files cannot be read.
           await ensureCurrent();

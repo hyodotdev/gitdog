@@ -1392,7 +1392,7 @@ describe("explicit verification of failed reviews", () => {
 
 describe("batched PR reviews", () => {
   async function batchFixture(
-    failedPage?: number,
+    failedPage?: number | number[],
     largeFiles = 0,
     purchasedTokens = 10_000_000,
     largeIndexes: number[] = [],
@@ -1509,7 +1509,12 @@ describe("batched PR reviews", () => {
           providerId: "openai",
           modelId: "fixture",
           chat: async (_messages, options) => {
-            if (page === failedPage || failedPage === -1) throw pageFailure();
+            if (
+              page === failedPage ||
+              failedPage === -1 ||
+              (Array.isArray(failedPage) && failedPage.includes(page))
+            )
+              throw pageFailure();
             return {
               content: JSON.stringify(
                 options?.billingLabel === "pr-review/critique"
@@ -2118,6 +2123,31 @@ describe("batched PR reviews", () => {
     expect(action?.proposedChanges?.excludedPaths).toEqual(
       expect.arrayContaining(["src/file-33.ts", "src/file-48.ts"]),
     );
+    const request = JSON.parse(f.fetch.mock.calls[0][1]!.body as string);
+    expect(request.body).toContain("were not fully reviewed");
+  });
+  it("finishes a review when the safety filter declines several batches", async () => {
+    const { ChatProviderRequestError } =
+      await import("../../../convex/_ai/providerErrors");
+    const f = await batchFixture(
+      [3, 4, 5],
+      0,
+      10_000_000,
+      [],
+      80,
+      () =>
+        new ChatProviderRequestError("Claude declined the request", "billed", {
+          refusal: "cyber",
+        }),
+    );
+    for (const page of [undefined, 2, 3, 4, 5]) await f.generate(page);
+    await drainScheduledFunctions(f.t);
+    const action = await f.getAction();
+    // Declines are about content, so three of them do not stop the review.
+    expect(action).toMatchObject({
+      status: "completed",
+      executionResult: { published: true },
+    });
     const request = JSON.parse(f.fetch.mock.calls[0][1]!.body as string);
     expect(request.body).toContain("were not fully reviewed");
   });

@@ -90,6 +90,14 @@ const REVIEW_GROUP_MODEL_FAILURES = new Set([
  * paid for. Provider, billing, quota, credential and lifecycle failures, which
  * would recur in every later batch, still stop the whole review.
  */
+/** A safety-classifier decline: specific to the content of one group. */
+export function isReviewRefusal(error: unknown): boolean {
+  const cause = reviewFailureCause(error);
+  return (
+    cause instanceof ChatProviderRequestError && cause.refusal !== undefined
+  );
+}
+
 export function isReviewGroupModelFailure(error: unknown): boolean {
   const cause = reviewFailureCause(error);
   if (cause instanceof ChatProviderRequestError)
@@ -297,6 +305,8 @@ function reviewFailureReason(error: unknown): string {
       status <= 599
     ) {
       reason = `The model provider returned HTTP ${status}.`;
+    } else if (error.refusal !== undefined) {
+      reason = `The model's safety filter declined this content (${error.refusal}).`;
     } else {
       reason =
         error.billingOutcome === "ambiguous"
