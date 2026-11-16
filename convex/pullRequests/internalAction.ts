@@ -534,7 +534,7 @@ export const generate = internalAction({
         group: args.group,
         next,
         findings: findings.slice(0, MAX_REVIEW_FINDINGS),
-        refusedPaths: [...refusedPaths],
+        refusedPaths: [...refusedPaths].slice(0, REVIEW_COVERAGE_PREVIEW),
         excludedPaths: [...excludedPaths].slice(
           0,
           batched ? REVIEW_COVERAGE_PREVIEW : undefined,
@@ -577,7 +577,13 @@ export const generate = internalAction({
                 uncoveredFiles,
                 since: since?.headSha,
               }
-            : { changedFiles: data.changedFiles, uncoveredFiles },
+            : {
+                // Counted like uncoveredFiles: removed files have nothing to
+                // review.
+                changedFiles: data.files.filter((f) => f.status !== "removed")
+                  .length,
+                uncoveredFiles,
+              },
       });
     } catch (error) {
       // Do not persist provider bodies, source snippets or credentials in errors.
