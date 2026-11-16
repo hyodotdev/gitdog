@@ -104,6 +104,8 @@ export const reviewBatchProgressValidator = v.object({
   coverageLimited: v.boolean(),
   // Groups whose model output could not be used and were left uncovered.
   failedGroups: v.optional(v.number()),
+  // Groups a safety filter declined, also left uncovered.
+  refusedGroups: v.optional(v.number()),
   // Digest of the current page's ordered group split, to detect a page that
   // splits differently between the workers that review its groups.
   pageLayout: v.optional(v.string()),
@@ -113,6 +115,7 @@ export const reviewBatchResultValidator = v.object({
   findings: v.array(findingValidator),
   filesRead: v.array(v.string()),
   excludedPaths: v.array(v.string()),
+  refusedPaths: v.optional(v.array(v.string())),
 });
 export const MAX_REVIEW_FINDINGS = 8;
 
@@ -427,10 +430,16 @@ export function reviewBody(
   const commit = `\`${headSha.slice(0, 12)}\``;
   // A review without findings is still posted, so authors can tell a finished
   // review from one that never ran, and see what it did not cover.
+  const reviewedNothing =
+    coverage !== undefined &&
+    coverage.changedFiles > 0 &&
+    coverage.uncoveredFiles >= coverage.changedFiles;
   const summary =
-    findingCount === 0
-      ? `Gitdog found no supported defects in ${commit}.${coverageNote(coverage)} This is not a merge approval; tests were not run.`
-      : `Gitdog found ${findingCount} potential defect${findingCount === 1 ? "" : "s"} in ${commit}.${coverageNote(coverage)} Findings are limited to the reviewed changes; tests were not run.`;
+    findingCount === 0 && reviewedNothing
+      ? `Gitdog could not review the ${coverage.changedFiles} changed ${coverage.changedFiles === 1 ? "file" : "files"} in ${commit}. This is not a merge approval; tests were not run.`
+      : findingCount === 0
+        ? `Gitdog found no supported defects in ${commit}.${coverageNote(coverage)} This is not a merge approval; tests were not run.`
+        : `Gitdog found ${findingCount} potential defect${findingCount === 1 ? "" : "s"} in ${commit}.${coverageNote(coverage)} Findings are limited to the reviewed changes; tests were not run.`;
   return `${summary}\n\n[Gitdog](https://gitdog.dev)`;
 }
 

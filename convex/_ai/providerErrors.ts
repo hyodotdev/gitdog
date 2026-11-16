@@ -14,6 +14,9 @@ export class ChatProviderRequestError extends Error {
       usage?: ProviderUsage;
       creditExhausted?: boolean;
       unavailable?: boolean;
+      // Set when the provider's safety classifiers declined the request; the
+      // refusal category when the provider reports one, otherwise "unknown".
+      refusal?: string;
     } = {},
   ) {
     super(message);
@@ -28,6 +31,9 @@ export class ChatProviderRequestError extends Error {
   }
   get usage() {
     return this.options.usage;
+  }
+  get refusal() {
+    return this.options.refusal;
   }
   get canFallback() {
     return (

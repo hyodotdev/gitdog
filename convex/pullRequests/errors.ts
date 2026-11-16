@@ -84,6 +84,14 @@ const REVIEW_GROUP_MODEL_FAILURES = new Set([
   "Verification introduced an unreviewed finding",
 ]);
 
+/** A safety-classifier decline: specific to the content of one group. */
+export function isReviewRefusal(error: unknown): boolean {
+  const cause = reviewFailureCause(error);
+  return (
+    cause instanceof ChatProviderRequestError && cause.refusal !== undefined
+  );
+}
+
 /**
  * Whether one batch group's failure is about the model's own output, so it can
  * be reported as uncovered files instead of discarding every batch already
@@ -93,8 +101,11 @@ const REVIEW_GROUP_MODEL_FAILURES = new Set([
 export function isReviewGroupModelFailure(error: unknown): boolean {
   const cause = reviewFailureCause(error);
   if (cause instanceof ChatProviderRequestError)
-    // A response that was billed but could not be processed.
-    return cause.billingOutcome === "billed" && cause.httpStatus === undefined;
+    // A safety decline, or a response billed but not processable.
+    return (
+      cause.refusal !== undefined ||
+      (cause.billingOutcome === "billed" && cause.httpStatus === undefined)
+    );
   return (
     cause instanceof ReviewEvidenceError ||
     cause instanceof ReviewResponseFormatError ||
@@ -297,6 +308,8 @@ function reviewFailureReason(error: unknown): string {
       status <= 599
     ) {
       reason = `The model provider returned HTTP ${status}.`;
+    } else if (error.refusal !== undefined) {
+      reason = `The model's safety filter declined this content (${error.refusal}).`;
     } else {
       reason =
         error.billingOutcome === "ambiguous"

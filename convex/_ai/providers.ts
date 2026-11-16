@@ -154,6 +154,15 @@ function usage(
   };
 }
 
+export const CLAUDE_FALLBACK_BETA = "server-side-fallback-2026-07-01";
+
+// A safety decline before any output is billed only in these categories.
+const BILLED_REFUSAL_CATEGORIES = new Set([
+  "bio",
+  "frontier_llm",
+  "reasoning_extraction",
+]);
+
 function parseTool(value: RecordValue, input: unknown): ToolUseContent {
   if (
     typeof value.id !== "string" ||
@@ -198,9 +207,13 @@ export class ClaudeProvider implements AiProvider {
           ? await this.authorize()
           : { "x-api-key": this.apiKey }),
         "anthropic-version": "2023-06-01",
+        // A request declined by a safety classifier is re-run server-side on
+        // the model Anthropic recommends for that refusal category.
+        "anthropic-beta": CLAUDE_FALLBACK_BETA,
       },
       {
         model: this.modelId,
+        fallbacks: "default",
         system: systemPrompt(messages),
         messages: messages
           .filter((m) => m.role !== "system")
@@ -248,6 +261,9 @@ export class ClaudeProvider implements AiProvider {
     const counts = record(data.usage) ? data.usage : {};
     // No prompt caching is requested. Reject unexpected cache billing rather
     // than recording an incorrect price or incomplete token count.
+    // With fallbacks, top-level usage covers the attempt that produced the
+    // message. A declined attempt before it is not charged to the account:
+    // most declines are free, and counting it could exceed the reservation.
     const billed = usage(counts.input_tokens, counts.output_tokens, requestId);
     try {
       if (
@@ -260,9 +276,38 @@ export class ClaudeProvider implements AiProvider {
           { providerRequestId: requestId },
         );
       }
+      if (data.stop_reason === "refusal") {
+        const details = record(data.stop_details) ? data.stop_details : {};
+        const category =
+          typeof details.category === "string" ? details.category : "unknown";
+        // Output already produced is billed; a decline before any output is
+        // billed only in some categories.
+        const charged =
+          billed.completionTokens > 0 ||
+          BILLED_REFUSAL_CATEGORIES.has(category);
+        throw new ChatProviderRequestError(
+          "Claude declined the request",
+          charged ? "billed" : "not_billed",
+          {
+            ...(charged ? { usage: billed } : {}),
+            providerRequestId: requestId,
+            refusal: category,
+          },
+        );
+      }
       if (!Array.isArray(data.content) || data.content.length === 0)
         throw new Error("Missing content");
-      const history: HistoryContent[] = data.content.map((p: unknown) => {
+      // A fallback block marks where a declined model handed over; anything
+      // before the last one belongs to the declined attempt and is dropped.
+      let lastFallback = -1;
+      data.content.forEach((p: unknown, index: number) => {
+        if (record(p) && p.type === "fallback") lastFallback = index;
+      });
+      const served = data.content
+        .slice(lastFallback + 1)
+        .filter((p: unknown) => !(record(p) && p.type === "fallback"));
+      if (served.length === 0) throw new Error("Missing content");
+      const history: HistoryContent[] = served.map((p: unknown) => {
         if (!record(p)) throw new Error("Invalid content block");
         if (p.type === "text" && typeof p.text === "string")
           return { type: "text", text: p.text };
