@@ -54,7 +54,7 @@ A command is a comment line that starts with the mention, or follows another rev
 In issues and discussions, mention `@gitdogbot` with a question to get a reply grounded in the repository.
 
 - A review that finds no issues in fully reviewed changes approves the pull request; a later push, including updating the branch, withdraws the approval until `@gitdogbot review` reviews the new commits.
-- When the account runs out of tokens, Gitdog says so on the pull request at most once a day.
+- When a review cannot finish, for example because the account ran out of tokens, its status comment says why; for automatic reviews Gitdog posts at most one such comment a day per pull request.
 - Someone who sends more than 10 commands an hour or 40 a day to one repository is paused there for 24 hours.
 
 ### Gitdog CLI

@@ -511,6 +511,129 @@ describe("review commands", () => {
         "**Reviewed**",
       );
     });
+    it("posts a failure of an automatic review at most once a day", async () => {
+      const f = await fixture();
+      await withAccess(f);
+      const fail = async (headSha: string) => {
+        const id = (await f.observe({ ...source, headSha }))!;
+        await f.t.run((ctx) =>
+          ctx.db.patch(id, {
+            status: "failed",
+            errorMessage: "Review exceeded its processing deadline",
+          }),
+        );
+        await settle(f, id);
+      };
+      await fail("c".repeat(40));
+      await fail("d".repeat(40));
+      expect(f.statusComments.add).toHaveBeenCalledTimes(1);
+      vi.advanceTimersByTime(24 * 60 * 60_000 + 1);
+      await fail("e".repeat(40));
+      expect(f.statusComments.add).toHaveBeenCalledTimes(2);
+    });
+    it.each([
+      [
+        "a review that changed under it as cancelled",
+        "Pull request changed before review",
+        "**Review cancelled**",
+        "try again",
+      ],
+      [
+        "an oversized pull request without a retry hint",
+        "Review covers at most 300 changed files; split this PR for complete coverage",
+        "too large to review completely. Split it",
+        "try again",
+      ],
+    ])("words %s", async (_case, errorMessage, expected, absent) => {
+      const f = await fixture();
+      await withAccess(f);
+      const actionId = (await f.observe())!;
+      await f.t.run((ctx) =>
+        ctx.db.patch(actionId, {
+          status: "failed",
+          errorMessage,
+          statusCommentId: 7,
+        }),
+      );
+      await settle(f, actionId);
+      const body = f.statusComments.update.mock.calls[0][3];
+      expect(body).toContain(expected);
+      expect(body).not.toContain(absent);
+    });
+    it("says when the owner rejects a review", async () => {
+      const f = await fixture();
+      await withAccess(f);
+      const actionId = (await f.observe())!;
+      await f.t.run((ctx) =>
+        ctx.db.patch(actionId, {
+          status: "pending_approval",
+          statusCommentId: 7,
+        }),
+      );
+      await f.t.mutation(
+        internal.ticketActions.internalMutation.rejectPendingApproval,
+        { actionId },
+      );
+      await drainScheduledFunctions(f.t);
+      expect(f.statusComments.update.mock.calls.at(-1)?.[3]).toContain(
+        "**Review not posted**",
+      );
+    });
+    it("leaves a running review's comment alone", async () => {
+      const f = await fixture();
+      await withAccess(f);
+      const actionId = (await f.observe())!;
+      await f.t.run((ctx) => ctx.db.patch(actionId, { statusCommentId: 7 }));
+      await settle(f, actionId);
+      expect(f.statusComments.update).not.toHaveBeenCalled();
+    });
+    it("settles a review that ended before its comment was recorded", async () => {
+      const f = await fixture();
+      const actionId = (await f.observe())!;
+      await f.t.run((ctx) =>
+        ctx.db.patch(actionId, {
+          status: "failed",
+          errorMessage:
+            "Pull request changed or closed; this review is superseded",
+        }),
+      );
+      await f.t.mutation(
+        internal.pullRequests.internalMutation.recordStatusComment,
+        { actionId, commentId: 9 },
+      );
+      const scheduled = await f.t.run((ctx) =>
+        ctx.db.system.query("_scheduled_functions").collect(),
+      );
+      expect(
+        scheduled.some((job) => job.name.includes("settleStatusComment")),
+      ).toBe(true);
+    });
+    it("does not settle when an expiry finds the review already moved on", async () => {
+      const f = await fixture();
+      const actionId = (await f.observe())!;
+      await f.t.run((ctx) =>
+        ctx.db.patch(actionId, {
+          status: "completed",
+          executionResult: { published: true },
+        }),
+      );
+      const before = (
+        await f.t.run((ctx) =>
+          ctx.db.system.query("_scheduled_functions").collect(),
+        )
+      ).length;
+      await f.t.mutation(internal.pullRequests.internalMutation.expire, {
+        actionId,
+      });
+      const after = await f.t.run((ctx) =>
+        ctx.db.system.query("_scheduled_functions").collect(),
+      );
+      expect(
+        after
+          .slice(before)
+          .some((job) => job.name.includes("settleStatusComment")),
+      ).toBe(false);
+    });
     it("posts nothing for a recheck or a cancelled review without a comment", async () => {
       const f = await fixture();
       await withAccess(f);

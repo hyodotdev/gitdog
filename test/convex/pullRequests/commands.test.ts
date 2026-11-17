@@ -27,6 +27,11 @@ describe("pull request commands", () => {
     ["@coderabbitai full review @gitdog full review", "full_review"],
     ["@gitdogbot review @coderabbitai review", "review"],
     ["@alice I think @gitdogbot review is broken", null],
+    ["@mai I think @gitdogbot review is broken", null],
+    ["@kai please @gitdogbot review", null],
+    ["@coderabbitai and @gitdogbot, thanks for the reviews", null],
+    ["@coderabbitai @gitdogbot thanks", null],
+    ["@renovate[bot] rebase @gitdogbot review", "review"],
     ["@gitdoghouse review", null],
     ["no mention here", null],
     ["@gitdogbot-dev review", null],
@@ -37,6 +42,8 @@ describe("pull request commands", () => {
     expect(parseReviewCommand(body, "gitdogbot")).toBe(expected);
   });
   it("uses the configured app slug", () => {
+    // The shorthand belongs to the production app only.
+    expect(parseReviewCommand("@gitdog review", "gitdogbot-dev")).toBeNull();
     expect(parseReviewCommand("@gitdogbot-dev review", "gitdogbot-dev")).toBe(
       "review",
     );

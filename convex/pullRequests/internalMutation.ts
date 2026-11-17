@@ -269,13 +269,16 @@ export const queueVerification = internalMutation({
         action.executionClaimedAt === undefined &&
         (!matches(action) ||
           (!args.open && action.reviewVerificationOnly !== true))
-      )
+      ) {
         await ctx.db.patch(action._id, {
           status: "failed",
           errorMessage: SUPERSEDED_REVIEW,
           ...ENDED_BATCH,
           completedAt: Date.now(),
         });
+        if (action.statusCommentId !== undefined)
+          await settleStatus(ctx, action._id);
+      }
     }
     await ctx.db.patch(ticket._id, {
       pullRequestObservedAt: Math.max(
@@ -454,7 +457,7 @@ async function observePullRequest(
     ticket.githubTitle !== source.title ||
     ticket.githubBody !== source.body;
   // A requested review a push cancelled before it ran carries over to the
-  // new head, so "Review started" is still answered with a review.
+  // new head, so the command is still answered with a review.
   if (
     !request &&
     args.open &&
@@ -1115,6 +1118,7 @@ export const claim = internalMutation({
       action.proposedChanges?.findings?.length !== 0
     ) {
       await ctx.db.patch(action._id, { status: "pending_approval" });
+      await settleStatus(ctx, action._id);
       return false;
     }
     const user = await ctx.db.get(repo.userId);
@@ -1226,13 +1230,13 @@ export const expire = internalMutation({
   },
   handler: async (ctx, args) => {
     const action = await ctx.db.get(args.actionId);
-    if (
+    const expired =
       action?.actionType === "review" &&
       (args.claimedAt === undefined
         ? action.status === "pending" && isBatchCursor(action.reviewBatch, args)
         : action.status === "approved" &&
-          action.executionClaimedAt === args.claimedAt)
-    )
+          action.executionClaimedAt === args.claimedAt);
+    if (action && expired)
       await ctx.db.patch(action._id, {
         status: "failed",
         completedAt: Date.now(),
@@ -1248,7 +1252,8 @@ export const expire = internalMutation({
             : "GitHub publication outcome requires inspection; automatic retries are disabled",
       });
     if (action) {
-      await settleStatus(ctx, action._id);
+      // Only an expiry that ended the review changes what the comment says.
+      if (expired) await settleStatus(ctx, action._id);
       await observeDroppedPush(ctx, action.ticketId);
     }
   },
@@ -1380,6 +1385,26 @@ export const recordCommand = internalMutation({
   },
 });
 
+/**
+ * Allow one new status comment a day for a pull request's automatic
+ * reviews, so a pull request that keeps failing is not flooded.
+ */
+export const claimAutomaticNotice = internalMutation({
+  args: { ticketId: v.id("tickets") },
+  handler: async (ctx, args) => {
+    const ticket = await ctx.db.get(args.ticketId);
+    const now = Date.now();
+    if (
+      !ticket ||
+      (ticket.pullRequestLimitNoticeAt !== undefined &&
+        ticket.pullRequestLimitNoticeAt > now - COMMAND_PAUSE_MS)
+    )
+      return false;
+    await ctx.db.patch(ticket._id, { pullRequestLimitNoticeAt: now });
+    return true;
+  },
+});
+
 /** Remember the status comment posted for a review, once. */
 export const recordStatusComment = internalMutation({
   args: { actionId: v.id("ticketActions"), commentId: v.number() },
@@ -1387,6 +1412,8 @@ export const recordStatusComment = internalMutation({
     const action = await ctx.db.get(args.actionId);
     if (!action || action.statusCommentId !== undefined) return false;
     await ctx.db.patch(action._id, { statusCommentId: args.commentId });
+    // The review may have ended while its comment was being posted.
+    if (action.status !== "pending") await settleStatus(ctx, action._id);
     return true;
   },
 });

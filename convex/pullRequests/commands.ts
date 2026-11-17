@@ -2,6 +2,20 @@ import { getConfiguredGitHubAppSlug } from "../github/botIdentity";
 
 export type ReviewCommand = "review" | "full_review" | "resolve" | "help";
 
+// Review bots whose commands another may follow on the same line. Any
+// GitHub App account, named "...[bot]", counts too.
+const REVIEW_BOTS = [
+  "coderabbitai",
+  "copilot",
+  "gemini-code-assist",
+  "sourcery-ai",
+  "greptile-apps",
+  "greptileai",
+  "codeant-ai",
+  "qodo-merge",
+  "[\\w-]+\\[bot\\]",
+].join("|");
+
 // Commands one commenter may send to one repository before being paused.
 export const COMMANDS_PER_HOUR = 10;
 export const COMMANDS_PER_DAY = 40;
@@ -44,20 +58,26 @@ export function parseReviewCommand(
     )
     .join("\n");
   // A command starts a line, or follows another review bot's command on it,
-  // as in "@coderabbitai review @gitdogbot review"; "@gitdogbot review"
-  // inside a sentence does not run one. "@gitdog" is accepted as shorthand.
+  // as in "@coderabbitai review @gitdogbot review". "@gitdog" is shorthand
+  // for the production app only, so a development app never answers it.
+  const names = slug === "gitdogbot" ? `${slug}|gitdog` : slug;
   const match = new RegExp(
-    `^[ \\t]*(?:@(?:[\\w-]*(?:bot|ai|copilot|assist)|[\\w-]+\\[bot\\])(?:[ \\t]+[a-z-]+){0,2}[ \\t]+){0,2}@(?:${slug}|gitdog)(?=\\s|[:,]|$)[:,]?[ \\t]*([^@\\n]*)`,
+    `^[ \\t]*((?:@(?:${REVIEW_BOTS})(?:[ \\t]+[a-z-]+){0,2}[ \\t]+){0,3})@(?:${names})(?=\\s|[:,]|$)[:,]?[ \\t]*([^@\\n]*)`,
     "im",
   ).exec(text);
   if (!match) return null;
-  const words = match[1]
+  const chained = match[1].length > 0;
+  const words = match[2]
     .toLowerCase()
     .replace(/[^a-z\s]/g, " ")
     .trim()
     .split(/\s+/)
     .filter(Boolean);
   switch (true) {
+    // A chained mention without a command is a thank-you, not a request.
+    case chained &&
+      !["help", "review", "full", "resolve"].includes(words[0] ?? ""):
+      return null;
     case words.length === 0 || words[0] === "help":
       return "help";
     case words[0] === "full" && words[1] === "review":
@@ -87,7 +107,6 @@ export function helpText(slug: string): string {
 type StatusAction = {
   status: string;
   errorMessage?: string;
-  reviewRequested?: boolean;
   executionResult?: {
     published?: boolean;
     reason?: string;
@@ -100,23 +119,45 @@ type StatusAction = {
   };
 };
 
-// Failures safe to show on a public pull request, in the owner's words.
-function failureReason(message: string | undefined): string {
+// A review cancelled because the pull request moved on, not one to retry.
+export function isCancelledReview(message: string | undefined): boolean {
+  return (
+    message !== undefined &&
+    (message.includes("superseded") ||
+      /^Pull request changed (before|during|after)/.test(message))
+  );
+}
+
+// Failures safe to show on a public pull request, in the owner's words. The
+// second value says whether asking again can help.
+function failureReason(message: string | undefined): [string, boolean] {
   switch (true) {
     case !message:
-      return "Gitdog could not complete the review.";
+      return ["Gitdog could not complete the review.", true];
     case message!.startsWith("Not enough tokens remain") ||
       message!.startsWith("Token limit reached"):
-      return "The token limit of the account that connected this repository has been reached.";
+      return [
+        "The token limit of the account that connected this repository has been reached.",
+        true,
+      ];
     // A user's own provider key is the owner's business, not the public's.
     case message!.startsWith("Your "):
-      return "The AI provider settings of the account that connected this repository need attention.";
+      return [
+        "The AI provider settings of the account that connected this repository need attention.",
+        true,
+      ];
     case message!.startsWith("GitHub publication outcome requires inspection"):
-      return "Gitdog could not confirm that the review was posted. Check the reviews above before asking again.";
+      return [
+        "Gitdog could not confirm that the review was posted. Check the reviews above before asking again.",
+        false,
+      ];
     case /split this PR/.test(message!):
-      return message!;
+      return [
+        "This pull request is too large to review completely. Split it into smaller pull requests.",
+        false,
+      ];
     default:
-      return "Gitdog could not complete the review.";
+      return ["Gitdog could not complete the review.", true];
   }
 }
 
@@ -142,6 +183,8 @@ export function reviewStatusBody(
       return `**Review ready for approval** for ${sha}\n\nThe repository owner can post it from Gitdog.`;
     case "approved":
       return `**Posting the review** for ${sha}`;
+    case "rejected":
+      return `**Review not posted** for ${sha}\n\nThe repository owner chose not to post this review.`;
     case "completed":
       if (action.executionResult?.published)
         return `**Reviewed** ${sha}${
@@ -156,12 +199,14 @@ export function reviewStatusBody(
             : ""
         }\n\nNothing in the pull request diff changed, so no review was posted. Comment \`@${slug} full review\` to review the whole pull request again.`;
       return null;
-    case "failed":
-      if (action.errorMessage?.includes("superseded"))
-        return `**Review cancelled** for ${sha}\n\nA newer push replaced this commit.`;
-      return `**Review not completed** for ${sha}\n\n${failureReason(
-        action.errorMessage,
-      )} Comment \`@${slug} review\` to try again.`;
+    case "failed": {
+      if (isCancelledReview(action.errorMessage))
+        return `**Review cancelled** for ${sha}\n\nThe pull request changed before the review finished.`;
+      const [reason, retry] = failureReason(action.errorMessage);
+      return `**Review not completed** for ${sha}\n\n${reason}${
+        retry ? ` Comment \`@${slug} review\` to try again.` : ""
+      }`;
+    }
     default:
       return null;
   }

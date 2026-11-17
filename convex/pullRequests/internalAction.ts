@@ -61,7 +61,12 @@ import {
   GITHUB_API_VERSION,
   fetchGitHubAppJsonWithRetry,
 } from "../github/helpers";
-import { helpText, reviewStatusBody } from "./commands";
+import {
+  COMMAND_PAUSE_MS,
+  helpText,
+  isCancelledReview,
+  reviewStatusBody,
+} from "./commands";
 import { getConfiguredGitHubAppSlug } from "../github/botIdentity";
 
 type Source = { headSha: string; baseSha: string; title: string; body: string };
@@ -332,7 +337,13 @@ export const generate = internalAction({
       if (
         !previous &&
         !verificationOnly &&
-        initial.action.statusCommentId === undefined
+        initial.action.statusCommentId === undefined &&
+        // After a recent automatic failure, a retry on the next push stays
+        // quiet until it has something to show.
+        (initial.action.reviewRequested === true ||
+          initial.ticket.pullRequestLimitNoticeAt === undefined ||
+          initial.ticket.pullRequestLimitNoticeAt <
+            Date.now() - COMMAND_PAUSE_MS)
       )
         await postReviewingStatus(ctx, access, initial, data);
       const fileKeys = new Set(previous?.fileKeys);
@@ -1384,34 +1395,43 @@ export const runCommand = internalAction({
 });
 
 /**
- * Bring a review's status comment up to date: post it for a failure or a
- * no-change follow-up that has none yet, and otherwise edit it in place.
+ * Bring a review's status comment up to date once its outcome is known: post
+ * one for a failure or a no-change follow-up that has none yet, and
+ * otherwise edit it in place. A running review is left alone; its comment
+ * already says so.
  */
 export const settleStatusComment = internalAction({
   args: { actionId: v.id("ticketActions") },
   handler: async (ctx, args): Promise<void> => {
-    const state = await ctx.runQuery(
-      internal.pullRequests.internalQuery.get,
-      args,
-    );
     const slug = getConfiguredGitHubAppSlug();
-    if (!state || !slug || state.action.reviewVerificationOnly === true) return;
-    const body = reviewStatusBody(state.action, slug);
-    const existing = state.action.statusCommentId;
-    // Only something a reader is waiting on gets a new comment; a posted
-    // review or a cancelled one speaks for itself.
-    const postNew =
-      existing === undefined &&
-      body !== null &&
-      (state.action.status === "failed"
-        ? !state.action.errorMessage?.includes("superseded")
-        : state.action.executionResult?.reason === "no_new_changes");
-    if (!body || (existing === undefined && !postNew)) return;
+    const read = () =>
+      ctx.runQuery(internal.pullRequests.internalQuery.get, args);
+    const first = await read();
+    if (
+      !first ||
+      !slug ||
+      first.action.reviewVerificationOnly === true ||
+      first.action.status === "pending" ||
+      first.action.status === "approved"
+    )
+      return;
     const access = await resolveVerifiedRepositoryAccess(
       ctx,
-      state.repository._id,
+      first.repository._id,
     );
-    if (existing !== undefined)
+    // Re-read right before writing, so a late settle never overwrites a
+    // newer outcome with an older one.
+    const state = await read();
+    if (
+      !state ||
+      state.action.status === "pending" ||
+      state.action.status === "approved"
+    )
+      return;
+    const body = reviewStatusBody(state.action, slug);
+    if (!body) return;
+    const existing = state.action.statusCommentId;
+    if (existing !== undefined) {
       await updateIssueComment(
         access.owner,
         access.repo,
@@ -1419,18 +1439,37 @@ export const settleStatusComment = internalAction({
         body,
         access.token,
       );
-    else {
-      const commentId = await addIssueComment(
-        access.owner,
-        access.repo,
-        state.ticket.githubNumber,
-        body,
-        access.token,
-      );
-      await ctx.runMutation(
-        internal.pullRequests.internalMutation.recordStatusComment,
-        { actionId: args.actionId, commentId },
-      );
+      return;
     }
+    // Only something a reader is waiting on gets a new comment: a failure
+    // worth retrying or a no-change follow-up, while reviews stay on. An
+    // automatic review says so at most once a day per pull request.
+    const failed = state.action.status === "failed";
+    if (
+      (failed
+        ? isCancelledReview(state.action.errorMessage)
+        : // Only a requested review was promised an answer.
+          state.action.executionResult?.reason !== "no_new_changes" ||
+          state.action.reviewRequested !== true) ||
+      state.ticket.status !== "open" ||
+      state.repository.settings.pullRequestReviewsEnabled !== true ||
+      (state.action.reviewRequested !== true &&
+        !(await ctx.runMutation(
+          internal.pullRequests.internalMutation.claimAutomaticNotice,
+          { ticketId: state.ticket._id },
+        )))
+    )
+      return;
+    const commentId = await addIssueComment(
+      access.owner,
+      access.repo,
+      state.ticket.githubNumber,
+      body,
+      access.token,
+    );
+    await ctx.runMutation(
+      internal.pullRequests.internalMutation.recordStatusComment,
+      { actionId: args.actionId, commentId },
+    );
   },
 });

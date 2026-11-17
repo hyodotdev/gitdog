@@ -102,8 +102,7 @@ but a full review. A review that failed or ran out of tokens can be requested
 again, and pull requests opened by bots such as Dependabot are not reviewed.
 
 In an issue or discussion, mention `@gitdogbot` with a question to get a reply
-grounded in the repository. When the account runs out of tokens, Gitdog says so
-on the pull request at most once a day. Someone who sends more than 10 commands
+grounded in the repository. When a review cannot finish, for example because the account ran out of tokens, its status comment says why; for automatic reviews Gitdog posts at most one such comment a day per pull request. Someone who sends more than 10 commands
 an hour or 40 a day to one repository is paused there for 24 hours.
 
 ## Get started

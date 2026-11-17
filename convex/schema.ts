@@ -849,8 +849,8 @@ const applicationTables = {
     pullRequestDroppedAt: v.optional(v.number()),
     // The commit Gitdog last approved; a push past it withdraws the approval.
     pullRequestApprovedSha: v.optional(v.string()),
-    // When Gitdog last told this PR its review limit was reached, so the
-    // notice is posted at most once a day.
+    // When Gitdog last posted a status comment for a failed automatic
+    // review, so a pull request that keeps failing hears it once a day.
     pullRequestLimitNoticeAt: v.optional(v.number()),
 
     // GitHub reference
