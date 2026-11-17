@@ -112,7 +112,13 @@ function latestFinishedReview(
 }
 
 function lastReviewed(actions: Doc<"ticketActions">[], headSha: string) {
-  const latest = latestFinishedReview(actions);
+  // A rerun on the same head scopes from the review before it, never from a
+  // review of this head, which would make it review the whole PR.
+  const latest = latestFinishedReview(
+    actions.filter(
+      (action) => action.proposedChanges?.source?.headSha !== headSha,
+    ),
+  );
   const proposal = latest?.proposedChanges;
   const source = proposal?.source;
   // Older reviews do not record the merge base or their coverage counts, so
@@ -447,11 +453,8 @@ async function observePullRequest(
     actions.some(
       (action) =>
         action.reviewRequested === true &&
-        action.executionClaimedAt === undefined &&
-        ((action.status === "pending" &&
-          action.reviewGenerationToken === undefined) ||
-          action.status === "pending_approval" ||
-          action.status === "approved"),
+        action.status === "pending" &&
+        action.reviewGenerationToken === undefined,
     )
   )
     request = "review";

@@ -363,6 +363,7 @@ describe("review commands", () => {
   });
   it("lets a request restore an approval after a no-change follow-up", async () => {
     const f = await reviewed();
+    vi.advanceTimersByTime(60_000);
     const followUp = (await requestStatus(f, next)).actionId!;
     await f.t.run((ctx) =>
       ctx.db.patch(followUp, {
@@ -370,8 +371,22 @@ describe("review commands", () => {
         executionResult: { published: false, reason: "no_new_changes" },
       }),
     );
-    // Not approved yet: asking again may approve, for no model call.
-    expect((await requestStatus(f, next)).status).toBe("started");
+    vi.advanceTimersByTime(60_000);
+    // Not approved yet: asking again may approve. It scopes from the earlier
+    // review, so it is no model call and never a whole-PR review.
+    const rerun = await requestStatus(f, next);
+    expect(rerun.status).toBe("started");
+    expect(
+      (await f.t.run((ctx) => ctx.db.get(rerun.actionId!)))?.reviewSince,
+    ).toMatchObject({ headSha: source.headSha });
+  });
+  it("does not carry a requested review that already waits for approval", async () => {
+    const f = await reviewed();
+    const requested = (await requestStatus(f, next)).actionId!;
+    await f.t.run((ctx) =>
+      ctx.db.patch(requested, { status: "pending_approval" }),
+    );
+    expect(await f.observe({ ...source, headSha: "f".repeat(40) })).toBeNull();
   });
   it("lets a request pass a review whose post never started", async () => {
     const f = await fixture();
@@ -1841,6 +1856,18 @@ describe("approval", () => {
     expect(
       (await f.t.run((ctx) => ctx.db.get(ticketId)))?.pullRequestApprovedSha,
     ).toBe(source.headSha);
+  });
+  it("keeps a server error as an outcome that needs inspection", async () => {
+    const f = await publicationFixture();
+    await github([]);
+    f.fetch.mockResolvedValue(new Response(null, { status: 502 }));
+    await f.t.action(internal.pullRequests.internalAction.publish, {
+      actionId: f.actionId,
+      manual: true,
+    });
+    expect(
+      (await f.t.run((ctx) => ctx.db.get(f.actionId)))?.errorMessage,
+    ).toContain("requires inspection");
   });
   it("records a review GitHub refused as not published, so it can be retried", async () => {
     const f = await publicationFixture();

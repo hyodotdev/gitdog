@@ -1060,8 +1060,9 @@ export const publish = internalAction({
           }
           if (!response.ok) {
             await response.body?.cancel().catch(() => undefined);
-            // GitHub answered, so it created no review.
-            mayHavePosted = false;
+            // A client error means GitHub created no review; a server error
+            // may come after it did.
+            if (response.status < 500) mayHavePosted = false;
             throw new Error(
               `Publish GitHub review failed (HTTP ${response.status})`,
             );
