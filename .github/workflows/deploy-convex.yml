@@ -63,15 +63,10 @@ jobs:
             production_env["$name"]="$value"
           done
 
-          # gitdogbot is the production app's former name, accepted while the
-          # rename to gitdogai rolls out.
-          case "${production_env[GITHUB_APP_SLUG]}" in
-            gitdogai | gitdogbot) ;;
-            *)
-              echo "::error::GITHUB_APP_SLUG must be gitdogai in production."
-              exit 1
-              ;;
-          esac
+          if [ "${production_env[GITHUB_APP_SLUG]}" != "gitdogai" ]; then
+            echo "::error::GITHUB_APP_SLUG must be exactly gitdogai in production."
+            exit 1
+          fi
 
           if ! DEPLOY_URL_TO_VALIDATE="${production_env[SITE_URL]}" bun run .github/scripts/validateDeployUrl.ts; then
             echo "::error::SITE_URL must exactly match a public HTTPS origin without a trailing slash in production."

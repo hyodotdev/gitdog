@@ -112,11 +112,10 @@ describe("Convex production deploy preflight", () => {
 
   it("pins production to the production GitHub App identity", () => {
     expect(workflowSource).toContain(
-      'case "${production_env[GITHUB_APP_SLUG]}" in',
+      'if [ "${production_env[GITHUB_APP_SLUG]}" != "gitdogai" ]; then',
     );
-    expect(workflowSource).toContain("gitdogai | gitdogbot) ;;");
     expect(workflowSource).toContain(
-      "GITHUB_APP_SLUG must be gitdogai in production.",
+      "GITHUB_APP_SLUG must be exactly gitdogai in production.",
     );
   });
 
