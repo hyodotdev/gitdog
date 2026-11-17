@@ -2096,6 +2096,32 @@ describe("approval", () => {
       "GitHub did not accept the review; no review was published",
     );
   });
+  it("records a pull request closed after the claim as cancelled", async () => {
+    const f = await publicationFixture();
+    await github([]);
+    const live = await f.live.getMockImplementation()!(
+      {} as never,
+      12 as never,
+    );
+    // The read before the claim still sees the reviewed head.
+    f.live.mockResolvedValueOnce(live as never).mockResolvedValue({
+      ...live,
+      state: "closed",
+    } as never);
+    f.fetch.mockClear();
+    await f.t.action(internal.pullRequests.internalAction.publish, {
+      actionId: f.actionId,
+      manual: true,
+    });
+    expect(f.fetch).not.toHaveBeenCalled();
+    expect(
+      (await f.t.run((ctx) => ctx.db.get(f.actionId)))?.executionClaimedAt,
+    ).toBeDefined();
+    expect(await f.t.run((ctx) => ctx.db.get(f.actionId))).toMatchObject({
+      status: "failed",
+      reviewCancelled: true,
+    });
+  });
   it("records an earlier approval GitHub refused to dismiss", async () => {
     const f = await publicationFixture();
     await github([], { dismissFails: true });

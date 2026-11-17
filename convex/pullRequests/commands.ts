@@ -205,7 +205,7 @@ export function reviewStatusBody(
       if (action.executionResult?.reason === "no_new_changes")
         return action.proposedChanges?.reviewedSince
           ? `**No new changes to review** in ${sha} since ${action.proposedChanges.reviewedSince}\n\nNothing in the pull request diff changed, so no review was posted. Comment \`@${slug} full review\` to review the whole pull request again.`
-          : `**Nothing to review** in ${sha}\n\nThe pull request has no changes Gitdog can review, such as only deleted or binary files.`;
+          : `**Nothing to review** in ${sha}\n\nThe pull request has no changes Gitdog can review, such as only deleted files.`;
       return null;
     case "failed": {
       if (isCancelledReview(action))

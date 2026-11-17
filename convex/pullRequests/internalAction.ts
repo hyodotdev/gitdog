@@ -1120,8 +1120,9 @@ export const publish = internalAction({
       await ctx.runMutation(internal.pullRequests.internalMutation.finish, {
         actionId: args.actionId,
         stage: claimed ? "publication" : "preflight",
-        // A pull request that moved on before the post was cancelled.
-        cancelled: !claimed && isLifecycleChange(error),
+        // A pull request that moved on before anything could be posted was
+        // cancelled.
+        cancelled: !mayHavePosted && isLifecycleChange(error),
         claimedAt: claimed || undefined,
         error: !claimed
           ? "Review is stale or GitHub access is unavailable; no review was published"
