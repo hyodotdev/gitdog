@@ -15,7 +15,7 @@ import {
   findingBody,
   findingValidator,
   reviewBatchProgressValidator,
-  reviewBody,
+  reviewSummary,
 } from "./review";
 import { isBotPullRequestAuthor, REVIEW_BATCH_TOKEN_ESTIMATE } from "./github";
 
@@ -85,7 +85,10 @@ function isBatchCursor(
  * The newest automatic review that finished, which a later push can build on
  * instead of reviewing the whole PR again.
  */
-function lastReviewed(actions: Doc<"ticketActions">[], headSha: string) {
+function latestFinishedReview(
+  actions: Doc<"ticketActions">[],
+  headSha?: string,
+) {
   let latest: Doc<"ticketActions"> | undefined;
   for (const action of actions) {
     if (
@@ -93,11 +96,18 @@ function lastReviewed(actions: Doc<"ticketActions">[], headSha: string) {
       action.reviewVerificationOnly === true ||
       action.status !== "completed" ||
       (action.executionResult?.published !== true &&
-        action.executionResult?.reason !== "no_new_changes")
+        action.executionResult?.reason !== "no_new_changes") ||
+      (headSha !== undefined &&
+        action.proposedChanges?.source?.headSha !== headSha)
     )
       continue;
     if (!latest || action.createdAt > latest.createdAt) latest = action;
   }
+  return latest;
+}
+
+function lastReviewed(actions: Doc<"ticketActions">[], headSha: string) {
+  const latest = latestFinishedReview(actions);
   const proposal = latest?.proposedChanges;
   const source = proposal?.source;
   // Older reviews do not record the merge base or their coverage counts, so
@@ -368,6 +378,21 @@ export const observe = internalMutation({
       },
       source,
     );
+    // Gitdog's approval covered only the commit it approved.
+    if (
+      ticket.pullRequestApprovedSha !== undefined &&
+      ticket.pullRequestApprovedSha !== source.headSha
+    )
+      await ctx.scheduler.runAfter(
+        0,
+        internal.pullRequests.internalAction.dismissStaleApproval,
+        {
+          repositoryId: repo._id,
+          number: args.number,
+          ticketId: ticket._id,
+          staleSha: ticket.pullRequestApprovedSha,
+        },
+      );
     // A push while a review is running is dropped: the review finishes on
     // the commit it started on, and the ticket keeps that commit so a later
     // push is reviewed from there.
@@ -785,10 +810,9 @@ export const propose = internalMutation({
       return true;
     }
     const noFindings = args.findings.length === 0;
-    // A push that changed nothing in the PR diff completes without a post.
+    // A push that changed nothing in the PR diff, such as a base merge.
     const nothingNew = noFindings && args.coverage?.changedFiles === 0;
     const verificationOnly = action.reviewVerificationOnly === true;
-    const unpublished = verificationOnly || nothingNew;
     const approval = repo.settings.requireApprovalForPullRequests !== false;
     const suggestions = repo.settings.pullRequestSuggestionsEnabled !== false;
     const coverage = batch ?? args.coverage;
@@ -796,18 +820,22 @@ export const propose = internalMutation({
     // for a follow-up also by the review it built on.
     const since = batch ? undefined : args.coverage?.since;
     const base = since
-      ? (await listTicketActions(ctx, ticket._id)).find(
-          (a) =>
-            a.actionType === "review" &&
-            a.reviewVerificationOnly !== true &&
-            a.status === "completed" &&
-            a.proposedChanges?.source?.headSha === since,
-        )
+      ? latestFinishedReview(await listTicketActions(ctx, ticket._id), since)
       : undefined;
+    // An earlier finding without its own thread can never be seen resolved.
+    const baseFindings =
+      base?.proposedChanges?.findingCount ??
+      base?.proposedChanges?.findings?.length;
     const coverageComplete =
       coverage !== undefined &&
       coverage.uncoveredFiles === 0 &&
-      (!since || base?.proposedChanges?.coverageComplete === true);
+      (!since ||
+        (base?.proposedChanges?.coverageComplete === true &&
+          (baseFindings === 0 ||
+            base.executionResult?.inlineFindings === true)));
+    // A follow-up with nothing new still posts when it can approve, so the
+    // approval a push withdrew (such as a base merge) comes back.
+    const unpublished = verificationOnly || (nothingNew && !coverageComplete);
     await ctx.db.patch(action._id, {
       ...ENDED_BATCH,
       proposedChanges: {
@@ -840,7 +868,7 @@ export const propose = internalMutation({
         // Approvers preview the posted summary and every finding, which a
         // batched review posts inline like a single one.
         suggestedResponse: [
-          reviewBody(
+          reviewSummary(
             batch?.findingCount ?? args.findings.length,
             args.source.headSha,
             coverage,
@@ -981,6 +1009,10 @@ export const finish = internalMutation({
     reviewFailureDetails: v.optional(v.string()),
     reviewId: v.optional(v.number()),
     reviewUrl: v.optional(v.string()),
+    // Whether every finding of the post became its own review thread.
+    inlineFindings: v.optional(v.boolean()),
+    // Earlier Gitdog approvals GitHub refused to dismiss.
+    keptApprovals: v.optional(v.array(v.number())),
   },
   handler: async (ctx, args) => {
     const action = await ctx.db.get(args.actionId);
@@ -1014,6 +1046,12 @@ export const finish = internalMutation({
             reviewId: args.reviewId,
             reviewUrl: args.reviewUrl,
             published: true,
+            ...(args.inlineFindings !== undefined
+              ? { inlineFindings: args.inlineFindings }
+              : {}),
+            ...(args.keptApprovals
+              ? { keptApprovals: args.keptApprovals }
+              : {}),
           }
         : undefined,
     });
@@ -1051,5 +1089,47 @@ export const expire = internalMutation({
             : "GitHub publication outcome requires inspection; automatic retries are disabled",
       });
     if (action) await observeDroppedPush(ctx, action.ticketId);
+  },
+});
+
+/** Note that Gitdog approved, or may have approved, the reviewed commit. */
+export const markApproval = internalMutation({
+  args: { actionId: v.id("ticketActions") },
+  handler: async (ctx, args) => {
+    const action = await ctx.db.get(args.actionId);
+    const headSha = action?.proposedChanges?.source?.headSha;
+    if (action && typeof headSha === "string")
+      await ctx.db.patch(action.ticketId, { pullRequestApprovedSha: headSha });
+  },
+});
+
+/** Forget a withdrawn approval, unless a newer one replaced it meanwhile. */
+export const forgetApproval = internalMutation({
+  args: { ticketId: v.id("tickets"), staleSha: v.string() },
+  handler: async (ctx, args) => {
+    const ticket = await ctx.db.get(args.ticketId);
+    if (ticket?.pullRequestApprovedSha === args.staleSha)
+      await ctx.db.patch(ticket._id, { pullRequestApprovedSha: undefined });
+  },
+});
+
+/** End an approved review that turned out to have nothing to post. */
+export const completeUnposted = internalMutation({
+  args: { actionId: v.id("ticketActions") },
+  handler: async (ctx, args) => {
+    const action = await ctx.db.get(args.actionId);
+    if (
+      !action ||
+      action.actionType !== "review" ||
+      action.status !== "approved" ||
+      action.executionClaimedAt !== undefined
+    )
+      return;
+    await ctx.db.patch(action._id, {
+      status: "completed",
+      completedAt: Date.now(),
+      executionResult: { published: false, reason: "no_new_changes" },
+    });
+    await observeDroppedPush(ctx, action.ticketId);
   },
 });

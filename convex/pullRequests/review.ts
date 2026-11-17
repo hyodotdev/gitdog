@@ -428,16 +428,19 @@ function plural(count: number, noun: string): string {
 
 function coverageNote(coverage?: ReviewCoverage): string {
   if (!coverage) return "";
-  const scope = coverage.since
-    ? `Reviewed the ${plural(coverage.changedFiles, "file")} changed since ${commitRef(coverage.since)}.`
-    : "";
+  const scope = !coverage.since
+    ? ""
+    : coverage.changedFiles === 0
+      ? `No pull request changes since ${commitRef(coverage.since)}.`
+      : `Reviewed the ${plural(coverage.changedFiles, "file")} changed since ${commitRef(coverage.since)}.`;
   return coverage.uncoveredFiles > 0
     ? `${scope} ${coverage.uncoveredFiles} of ${plural(coverage.changedFiles, "changed file")} ${coverage.uncoveredFiles === 1 ? "was" : "were"} not fully reviewed.`.trim()
     : scope;
 }
 
-// The summary without the footer, followed by any extra notes.
-function reviewSummary(
+// The summary without the footer, followed by any extra notes. Previews use
+// it alone: whether the post approves is decided when it is published.
+export function reviewSummary(
   findingCount: number,
   headSha: string,
   coverage?: ReviewCoverage,

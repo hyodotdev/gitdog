@@ -58,6 +58,7 @@ import {
   GITHUB_API_VERSION,
   fetchGitHubAppJsonWithRetry,
 } from "../github/helpers";
+import { getConfiguredGitHubAppSlug } from "../github/botIdentity";
 
 type Source = { headSha: string; baseSha: string; title: string; body: string };
 function readReviewSource(
@@ -632,13 +633,13 @@ type Review = {
   user: { type: string; login: string };
 };
 function botLogin() {
-  return `${process.env.GITHUB_APP_SLUG}[bot]`.toLowerCase();
+  return `${getConfiguredGitHubAppSlug() ?? ""}[bot]`;
 }
 /** This review if it was already posted, and Gitdog's standing approvals. */
 async function ownReviews(
   access: VerifiedRepositoryAccess,
   number: number,
-  marker: string,
+  marker: string | null,
   sha: string,
 ): Promise<{ prior: Review | null; approvals: Review[] }> {
   let prior: Review | null = null;
@@ -654,7 +655,8 @@ async function ownReviews(
     for (const r of reviews) {
       if (r.user?.type !== "Bot" || r.user.login.toLowerCase() !== botLogin())
         continue;
-      if (r.body?.includes(marker) && r.commit_id === sha) prior ??= r;
+      if (marker && r.body?.includes(marker) && r.commit_id === sha)
+        prior ??= r;
       if (r.state === "APPROVED") approvals.push(r);
     }
     if (reviews.length < 100) return { prior, approvals };
@@ -669,25 +671,29 @@ async function dismissApprovals(
   access: VerifiedRepositoryAccess,
   number: number,
   approvals: Review[],
-  reviewUrl: string,
-) {
-  for (const approval of approvals)
+  message: string,
+  // Only approvals posted before this review id; a newer one stands.
+  before = Number.MAX_SAFE_INTEGER,
+): Promise<number[]> {
+  const kept: number[] = [];
+  // Bounded, so a degraded GitHub cannot hold a posted review past expiry.
+  for (const approval of approvals.filter((a) => a.id < before).slice(0, 5))
     await fetchGitHubAppJsonWithRetry(
       `${root(access)}/pulls/${number}/reviews/${approval.id}/dismissals`,
       access.token,
       "Dismiss earlier approval",
       {
         method: "PUT",
-        jsonBody: {
-          message: `Superseded by a newer Gitdog review: ${reviewUrl}`,
-        },
+        jsonBody: { message },
       },
-    ).catch((error) =>
+    ).catch((error) => {
+      kept.push(approval.id);
       console.warn(
         "Earlier Gitdog approval could not be dismissed:",
         error instanceof Error ? error.message : "unknown error",
-      ),
-    );
+      );
+    });
+  return kept;
 }
 export const publish = internalAction({
   args: { actionId: v.id("ticketActions"), manual: v.boolean() },
@@ -833,6 +839,30 @@ export const publish = internalAction({
         marker,
         source.headSha,
       );
+      // Read before claiming, so a slow read never delays a claimed post.
+      // A failed read is no reason to fail a review that is ready.
+      const threadsOpen =
+        findings.length === 0 && canApproveReview(0, proposal.coverageComplete)
+          ? await hasUnresolvedOwnThreads(
+              access,
+              live.number,
+              botLogin(),
+            ).catch(() => true)
+          : true;
+      // A follow-up with no new PR changes posts only to approve again.
+      if (
+        proposal.changedFiles === 0 &&
+        findings.length === 0 &&
+        (threadsOpen ||
+          live.head.sha !== source.headSha ||
+          initial.ticket.pullRequestDroppedAt !== undefined)
+      ) {
+        await ctx.runMutation(
+          internal.pullRequests.internalMutation.completeUnposted,
+          { actionId: args.actionId },
+        );
+        return { success: true };
+      }
       claimed = await ctx.runMutation(
         internal.pullRequests.internalMutation.claim,
         args,
@@ -848,13 +878,31 @@ export const publish = internalAction({
           reason: "Review approval or repository settings changed",
         };
       }
+      const findingCount = batched ? proposal.findingCount : findings.length;
       if (prior) {
+        if (prior.state === "APPROVED")
+          await ctx.runMutation(
+            internal.pullRequests.internalMutation.markApproval,
+            { actionId: args.actionId },
+          );
+        const kept =
+          findingCount > 0
+            ? await dismissApprovals(
+                access,
+                live.number,
+                approvals,
+                `A newer Gitdog review found issues: ${prior.html_url}`,
+                prior.id,
+              )
+            : [];
         await ctx.runMutation(internal.pullRequests.internalMutation.finish, {
           actionId: args.actionId,
           stage: "publication",
           claimedAt: claimed || undefined,
           reviewId: prior.id,
           reviewUrl: prior.html_url,
+          inlineFindings: undefined,
+          ...(kept.length ? { keptApprovals: kept } : {}),
         });
         return { success: true };
       }
@@ -865,7 +913,8 @@ export const publish = internalAction({
         "publication",
         args.manual,
       );
-      if (!sameSource(await getPullRequest(current.access, live.number)))
+      const latest = await getPullRequest(current.access, live.number);
+      if (!sameSource(latest))
         throw new Error("Pull request changed before publication");
       // POST has no automatic retries: an ambiguous external write must never be
       // repeated and spam the PR. Commit ID binds even a last-millisecond push.
@@ -875,9 +924,6 @@ export const publish = internalAction({
           const suggestions =
             current.state.repository.settings.pullRequestSuggestionsEnabled !==
             false;
-          const findingCount = batched
-            ? proposal.findingCount
-            : findings.length;
           const coverage =
             typeof proposal.changedFiles === "number" &&
             typeof proposal.uncoveredFiles === "number"
@@ -891,26 +937,35 @@ export const publish = internalAction({
                 }
               : undefined;
           // Approve only fully covered changes with no finding left open,
-          // including one an earlier Gitdog review raised.
-          const approve =
+          // including one an earlier Gitdog review raised, and only while
+          // the reviewed commit is still the PR head.
+          let approve =
             canApproveReview(findingCount, proposal.coverageComplete) &&
-            // A failed read is no reason to fail a review that is ready.
-            !(await hasUnresolvedOwnThreads(
-              current.access,
-              live.number,
-              botLogin(),
-            ).catch(() => true));
-          const body = reviewBody(
-            findingCount,
-            source.headSha,
-            coverage,
-            batched && findingCount > findings.length
-              ? [
-                  `Showing the ${findings.length} highest-priority findings out of ${findingCount}.`,
-                ]
-              : [],
-            approve,
-          );
+            !threadsOpen &&
+            latest.head.sha === source.headSha &&
+            current.state.ticket.pullRequestDroppedAt === undefined;
+          // Recorded before posting, so an approval whose outcome is unclear
+          // is still withdrawn after a later push.
+          if (approve)
+            await ctx.runMutation(
+              internal.pullRequests.internalMutation.markApproval,
+              { actionId: args.actionId },
+            );
+          const body = (approved: boolean) =>
+            reviewBody(
+              findingCount,
+              source.headSha,
+              coverage,
+              batched && findingCount > findings.length
+                ? [
+                    `Showing the ${findings.length} highest-priority findings out of ${findingCount}.`,
+                  ]
+                : [],
+              approved,
+            );
+          // Every finding becomes its own thread unless some are left out
+          // or GitHub refuses the inline comments.
+          let inlineFindings = findingCount === findings.length;
           const post = (payload: Record<string, unknown>) =>
             fetch(`${root(current.access)}/pulls/${live.number}/reviews`, {
               method: "POST",
@@ -929,15 +984,23 @@ export const publish = internalAction({
               signal: AbortSignal.timeout(30_000),
             });
           let response = await post({
-            body: `${body}\n\n${marker}`,
+            body: `${body(approve)}\n\n${marker}`,
             ...(findings.length
               ? { comments: reviewComments(findings, suggestions) }
               : {}),
           });
+          // GitHub creates nothing when it refuses an approval, for example
+          // after a merge, so the same review is posted as a comment.
+          if (response.status === 422 && approve) {
+            await response.body?.cancel().catch(() => undefined);
+            approve = false;
+            response = await post({ body: `${body(false)}\n\n${marker}` });
+          }
           // GitHub creates nothing when it rejects an inline comment, so a
           // batched review that cost many batches falls back to one body.
           if (response.status === 422 && batched && findings.length) {
             await response.body?.cancel().catch(() => undefined);
+            inlineFindings = false;
             response = await post({
               body: `${combinedReviewBody(
                 findings,
@@ -965,23 +1028,31 @@ export const publish = internalAction({
             !result.body?.includes(marker)
           )
             throw new Error("GitHub review result could not be verified");
-          return { ...result, approve };
+          return { ...result, approve, inlineFindings };
         },
       );
+      // An approval no longer holds once a review finds issues. The post is
+      // already made, so a dismissal that fails is recorded, never turned
+      // into a failed review.
+      const kept =
+        findingCount > 0
+          ? await dismissApprovals(
+              current.access,
+              live.number,
+              approvals,
+              `A newer Gitdog review found issues: ${posted.html_url}`,
+              posted.id,
+            )
+          : [];
       await ctx.runMutation(internal.pullRequests.internalMutation.finish, {
         actionId: args.actionId,
         stage: "publication",
         claimedAt: claimed || undefined,
         reviewId: posted.id,
         reviewUrl: posted.html_url,
+        inlineFindings: posted.inlineFindings,
+        ...(kept.length ? { keptApprovals: kept } : {}),
       });
-      if (!posted.approve)
-        await dismissApprovals(
-          current.access,
-          live.number,
-          approvals,
-          posted.html_url,
-        );
       return { success: true };
     } catch (error) {
       await ctx.runMutation(internal.pullRequests.internalMutation.finish, {
@@ -1002,5 +1073,38 @@ export const publish = internalAction({
           "Review could not be safely published. Inspect the PR and its current commit.",
       };
     }
+  },
+});
+
+/**
+ * Withdraw Gitdog's approvals of commits older than the PR head after a push.
+ * The ticket forgets the approval only once this ran, so a failure is
+ * retried on the next push.
+ */
+export const dismissStaleApproval = internalAction({
+  args: {
+    repositoryId: v.id("repositories"),
+    number: v.number(),
+    ticketId: v.id("tickets"),
+    staleSha: v.string(),
+  },
+  handler: async (ctx, args): Promise<void> => {
+    const access = await resolveVerifiedRepositoryAccess(
+      ctx,
+      args.repositoryId,
+    );
+    const pr = await getPullRequest(access, args.number);
+    const { approvals } = await ownReviews(access, args.number, null, "");
+    await dismissApprovals(
+      access,
+      args.number,
+      // An approval of the current head is a newer review's; keep it.
+      approvals.filter((approval) => approval.commit_id !== pr.head.sha),
+      "New commits were pushed after the commit Gitdog approved.",
+    );
+    await ctx.runMutation(
+      internal.pullRequests.internalMutation.forgetApproval,
+      { ticketId: args.ticketId, staleSha: args.staleSha },
+    );
   },
 });

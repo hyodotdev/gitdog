@@ -390,6 +390,7 @@ export async function treePaths(
 }
 
 type ReviewThreadPage = {
+  errors?: unknown[];
   data?: {
     repository?: {
       pullRequest?: {
@@ -435,12 +436,19 @@ export async function hasUnresolvedOwnThreads(
       ),
   );
   const threads = page.data?.repository?.pullRequest?.reviewThreads;
-  if (!threads?.nodes || threads.pageInfo?.hasNextPage !== false) return true;
   // GraphQL names an app by its slug, REST by `slug[bot]`.
-  const own = botLogin.toLowerCase().replace(/\[bot\]$/, "");
+  const login = (value: string) => value.toLowerCase().replace(/\[bot\]$/, "");
+  const own = login(botLogin);
+  if (
+    !own ||
+    page.errors?.length ||
+    !threads?.nodes ||
+    threads.pageInfo?.hasNextPage !== false
+  )
+    return true;
   return threads.nodes.some(
     (thread) =>
       thread.isResolved !== true &&
-      thread.comments?.nodes?.[0]?.author?.login?.toLowerCase() === own,
+      login(thread.comments?.nodes?.[0]?.author?.login ?? "") === own,
   );
 }
