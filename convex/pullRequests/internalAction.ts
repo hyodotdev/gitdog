@@ -308,6 +308,8 @@ export const generate = internalAction({
             changedFiles: unreviewable.length,
             uncoveredFiles: unreviewable.length,
             since: since?.headSha,
+            // A deletion has no added line a finding could point at.
+            removedFiles: data.files.length - unreviewable.length,
           },
         });
         return;
@@ -951,6 +953,9 @@ export const publish = internalAction({
               internal.pullRequests.internalMutation.markApproval,
               { actionId: args.actionId },
             );
+          // A follow-up with no new PR changes posts only to approve again.
+          const noChange = proposal.changedFiles === 0 && findingCount === 0;
+          if (noChange && !approve) return null;
           const body = (approved: boolean) =>
             reviewBody(
               findingCount,
@@ -993,6 +998,7 @@ export const publish = internalAction({
           // after a merge, so the same review is posted as a comment.
           if (response.status === 422 && approve) {
             await response.body?.cancel().catch(() => undefined);
+            if (noChange) return null;
             approve = false;
             response = await post({ body: `${body(false)}\n\n${marker}` });
           }
@@ -1031,6 +1037,13 @@ export const publish = internalAction({
           return { ...result, approve, inlineFindings };
         },
       );
+      if (!posted) {
+        await ctx.runMutation(
+          internal.pullRequests.internalMutation.completeUnposted,
+          { actionId: args.actionId, claimedAt: claimed || undefined },
+        );
+        return { success: true };
+      }
       // An approval no longer holds once a review finds issues. The post is
       // already made, so a dismissal that fails is recorded, never turned
       // into a failed review.
@@ -1095,13 +1108,15 @@ export const dismissStaleApproval = internalAction({
     );
     const pr = await getPullRequest(access, args.number);
     const { approvals } = await ownReviews(access, args.number, null, "");
-    await dismissApprovals(
+    const kept = await dismissApprovals(
       access,
       args.number,
       // An approval of the current head is a newer review's; keep it.
       approvals.filter((approval) => approval.commit_id !== pr.head.sha),
       "New commits were pushed after the commit Gitdog approved.",
     );
+    // Remembered until GitHub accepts the dismissal, so a push retries it.
+    if (kept.length) return;
     await ctx.runMutation(
       internal.pullRequests.internalMutation.forgetApproval,
       { ticketId: args.ticketId, staleSha: args.staleSha },

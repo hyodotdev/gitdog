@@ -730,6 +730,7 @@ export const propose = internalMutation({
         uncoveredFiles: v.number(),
         // Set when only the files changed since this reviewed head were covered.
         since: v.optional(v.string()),
+        removedFiles: v.optional(v.number()),
       }),
     ),
   },
@@ -835,7 +836,9 @@ export const propose = internalMutation({
             base.executionResult?.inlineFindings === true)));
     // A follow-up with nothing new still posts when it can approve, so the
     // approval a push withdrew (such as a base merge) comes back.
-    const unpublished = verificationOnly || (nothingNew && !coverageComplete);
+    const unpublished =
+      verificationOnly ||
+      (nothingNew && !(coverageComplete && !args.coverage?.removedFiles));
     await ctx.db.patch(action._id, {
       ...ENDED_BATCH,
       proposedChanges: {
@@ -1108,21 +1111,29 @@ export const forgetApproval = internalMutation({
   args: { ticketId: v.id("tickets"), staleSha: v.string() },
   handler: async (ctx, args) => {
     const ticket = await ctx.db.get(args.ticketId);
-    if (ticket?.pullRequestApprovedSha === args.staleSha)
+    // A review being posted may still approve the stale commit; the push it
+    // dropped is observed again once it ends, which retries the dismissal.
+    if (
+      ticket?.pullRequestApprovedSha === args.staleSha &&
+      !(await listTicketActions(ctx, ticket._id)).some(isRunningReview)
+    )
       await ctx.db.patch(ticket._id, { pullRequestApprovedSha: undefined });
   },
 });
 
 /** End an approved review that turned out to have nothing to post. */
 export const completeUnposted = internalMutation({
-  args: { actionId: v.id("ticketActions") },
+  args: {
+    actionId: v.id("ticketActions"),
+    claimedAt: v.optional(v.number()),
+  },
   handler: async (ctx, args) => {
     const action = await ctx.db.get(args.actionId);
     if (
       !action ||
       action.actionType !== "review" ||
       action.status !== "approved" ||
-      action.executionClaimedAt !== undefined
+      action.executionClaimedAt !== args.claimedAt
     )
       return;
     await ctx.db.patch(action._id, {

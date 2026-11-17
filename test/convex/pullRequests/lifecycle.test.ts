@@ -1243,6 +1243,113 @@ describe("approval", () => {
       false,
     );
   });
+  async function noChangeFollowUp(removedFiles?: number) {
+    const f = await publicationFixture(true, 0);
+    await f.t.run((ctx) =>
+      ctx.db.patch(f.actionId, {
+        status: "completed",
+        executionResult: { published: true, inlineFindings: true },
+      }),
+    );
+    const next = { ...source, headSha: "e".repeat(40) };
+    const actionId = (await f.observe(next))!;
+    await f.t.mutation(internal.pullRequests.internalMutation.propose, {
+      actionId,
+      source: next,
+      findings: [],
+      excludedPaths: [],
+      filesRead: [],
+      coverage: {
+        changedFiles: 0,
+        uncoveredFiles: 0,
+        since: source.headSha,
+        ...(removedFiles ? { removedFiles } : {}),
+      },
+    });
+    const live = await f.live.getMockImplementation()!(
+      {} as never,
+      12 as never,
+    );
+    f.live.mockResolvedValue({ ...live, head: { sha: next.headSha } } as never);
+    const publish = () =>
+      f.t.action(internal.pullRequests.internalAction.publish, {
+        actionId,
+        manual: false,
+      });
+    return { ...f, actionId, next, publish };
+  }
+  it("approves again after a push that changed nothing in the PR diff", async () => {
+    const f = await noChangeFollowUp();
+    await github([]);
+    f.fetch.mockClear();
+    f.fetch.mockResolvedValue(
+      Response.json({
+        id: 78,
+        commit_id: f.next.headSha,
+        body: `<!-- gitdog-pr-review:${f.actionId} -->`,
+        html_url: "https://github.com/owner/repo/pull/12#pullrequestreview-78",
+      }),
+    );
+    expect(await f.publish()).toEqual({ success: true });
+    const request = JSON.parse(f.fetch.mock.calls[0][1]!.body as string);
+    expect(request.event).toBe("APPROVE");
+    expect(request.body).toContain(
+      `No pull request changes since ${source.headSha}.`,
+    );
+  });
+  it("posts nothing for a no-change follow-up that cannot approve", async () => {
+    const f = await noChangeFollowUp();
+    await github([{ isResolved: false }]);
+    f.fetch.mockClear();
+    expect(await f.publish()).toEqual({ success: true });
+    expect(f.fetch).not.toHaveBeenCalled();
+    expect(
+      (await f.t.run((ctx) => ctx.db.get(f.actionId)))?.executionResult,
+    ).toEqual({ published: false, reason: "no_new_changes" });
+  });
+  it("does not approve again after a push that only deleted files", async () => {
+    const f = await noChangeFollowUp(1);
+    expect(
+      (await f.t.run((ctx) => ctx.db.get(f.actionId)))?.executionResult,
+    ).toEqual({ published: false, reason: "no_new_changes" });
+  });
+  it("keeps tracking an approval GitHub refused to dismiss after a push", async () => {
+    const f = await publicationFixture(true, 0);
+    await github([], { dismissFails: true });
+    const ticketId = (await f.t.run((ctx) => ctx.db.query("tickets").first()))!
+      ._id;
+    await f.t.run((ctx) =>
+      ctx.db.patch(ticketId, { pullRequestApprovedSha: "c".repeat(40) }),
+    );
+    await f.t.action(
+      internal.pullRequests.internalAction.dismissStaleApproval,
+      {
+        repositoryId: f.repositoryId,
+        number: 12,
+        ticketId,
+        staleSha: "c".repeat(40),
+      },
+    );
+    expect(
+      (await f.t.run((ctx) => ctx.db.get(ticketId)))?.pullRequestApprovedSha,
+    ).toBe("c".repeat(40));
+  });
+  it("keeps tracking an approval while a review may still post it", async () => {
+    const f = await publicationFixture(true, 0);
+    const ticketId = (await f.t.run((ctx) => ctx.db.query("tickets").first()))!
+      ._id;
+    await f.t.run(async (ctx) => {
+      await ctx.db.patch(ticketId, { pullRequestApprovedSha: source.headSha });
+      await ctx.db.patch(f.actionId, { executionClaimedAt: 1 });
+    });
+    await f.t.mutation(internal.pullRequests.internalMutation.forgetApproval, {
+      ticketId,
+      staleSha: source.headSha,
+    });
+    expect(
+      (await f.t.run((ctx) => ctx.db.get(ticketId)))?.pullRequestApprovedSha,
+    ).toBe(source.headSha);
+  });
   it("records an earlier approval GitHub refused to dismiss", async () => {
     const f = await publicationFixture();
     await github([], { dismissFails: true });
