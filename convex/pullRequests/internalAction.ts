@@ -542,6 +542,10 @@ export const generate = internalAction({
         group: args.group,
         next,
         findings: findings.slice(0, MAX_REVIEW_FINDINGS),
+        // Findings past the cap never become threads.
+        ...(!batched && findings.length > MAX_REVIEW_FINDINGS
+          ? { findingCount: findings.length }
+          : {}),
         refusedPaths: [...refusedPaths].slice(0, REVIEW_COVERAGE_PREVIEW),
         excludedPaths: [...excludedPaths].slice(
           0,
@@ -584,6 +588,7 @@ export const generate = internalAction({
                   .length,
                 uncoveredFiles,
                 since: since?.headSha,
+                ...(leftDiff ? { removedFiles: leftDiff } : {}),
               }
             : {
                 // Counted like uncoveredFiles: removed files have nothing to
@@ -890,7 +895,10 @@ export const publish = internalAction({
           reason: "Review approval or repository settings changed",
         };
       }
-      const findingCount = batched ? proposal.findingCount : findings.length;
+      const findingCount =
+        typeof proposal.findingCount === "number"
+          ? proposal.findingCount
+          : findings.length;
       if (prior) {
         if (prior.state === "APPROVED")
           await ctx.runMutation(
@@ -971,7 +979,7 @@ export const publish = internalAction({
               findingCount,
               source.headSha,
               coverage,
-              batched && findingCount > findings.length
+              findingCount > findings.length
                 ? [
                     `Showing the ${findings.length} highest-priority findings out of ${findingCount}.`,
                   ]

@@ -1130,6 +1130,42 @@ describe("approval", () => {
         );
     },
   );
+  it("does not approve a review that had nothing to review", async () => {
+    const f = await fixture();
+    const actionId = (await f.observe())!;
+    await f.t.mutation(internal.pullRequests.internalMutation.propose, {
+      actionId,
+      source,
+      findings: [],
+      excludedPaths: [],
+      filesRead: [],
+      // A pull request that only deletes files.
+      coverage: { changedFiles: 0, uncoveredFiles: 0 },
+    });
+    expect(
+      (await f.t.run((ctx) => ctx.db.get(actionId)))?.proposedChanges
+        ?.coverageComplete,
+    ).toBe(false);
+  });
+  it("records how many findings a single review left out", async () => {
+    const f = await fixture();
+    const actionId = (await f.observe())!;
+    await f.t.mutation(internal.pullRequests.internalMutation.propose, {
+      actionId,
+      source,
+      findings,
+      findingCount: 10,
+      excludedPaths: [],
+      filesRead: [],
+      coverage: { changedFiles: 1, uncoveredFiles: 0 },
+    });
+    const proposal = (await f.t.run((ctx) => ctx.db.get(actionId)))
+      ?.proposedChanges;
+    expect(proposal?.findingCount).toBe(10);
+    expect(proposal?.suggestedResponse).toContain(
+      "Showing the 1 highest-priority findings out of 10.",
+    );
+  });
   it("builds a follow-up on the review of the commit it started from", async () => {
     const f = await fixture();
     const first = (await f.observe())!;

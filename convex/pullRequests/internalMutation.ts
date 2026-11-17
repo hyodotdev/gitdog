@@ -720,6 +720,8 @@ export const propose = internalMutation({
     group: v.optional(v.number()),
     next: v.optional(v.object({ page: v.number(), group: v.number() })),
     batchProgress: v.optional(reviewBatchProgressValidator),
+    // A single review's finding count when more were found than kept.
+    findingCount: v.optional(v.number()),
     // Coverage of a single (non-batched) review; batches carry their own.
     // The merge base the review compared against, so a later push can tell
     // whether a merge of the base branch brought new changes into the diff.
@@ -832,6 +834,8 @@ export const propose = internalMutation({
       coverage !== undefined &&
       coverage.uncoveredFiles === 0 &&
       !args.coverage?.removedFiles &&
+      // A review that reviewed nothing approves nothing.
+      (since !== undefined || coverage.changedFiles > 0) &&
       (!since ||
         (base?.proposedChanges?.coverageComplete === true &&
           (baseFindings === 0 ||
@@ -858,6 +862,9 @@ export const propose = internalMutation({
                 ...(args.coverage.since
                   ? { reviewedSince: args.coverage.since }
                   : {}),
+                ...(args.findingCount !== undefined
+                  ? { findingCount: args.findingCount }
+                  : {}),
               }
             : {}),
         findings: args.findings,
@@ -872,12 +879,13 @@ export const propose = internalMutation({
         // batched review posts inline like a single one.
         suggestedResponse: [
           reviewSummary(
-            batch?.findingCount ?? args.findings.length,
+            batch?.findingCount ?? args.findingCount ?? args.findings.length,
             args.source.headSha,
             coverage,
-            batch && batch.findingCount > args.findings.length
+            (batch?.findingCount ?? args.findingCount ?? 0) >
+              args.findings.length
               ? [
-                  `Showing the ${args.findings.length} highest-priority findings out of ${batch.findingCount}.`,
+                  `Showing the ${args.findings.length} highest-priority findings out of ${batch?.findingCount ?? args.findingCount}.`,
                 ]
               : [],
           ),
