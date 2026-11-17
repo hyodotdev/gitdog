@@ -7,7 +7,8 @@ export const COMMANDS_PER_HOUR = 10;
 export const COMMANDS_PER_DAY = 40;
 export const COMMAND_PAUSE_MS = 24 * 60 * 60_000;
 
-// Only people who can already change the PR may spend the owner's tokens.
+// GitHub's association for repository owners, organization members and
+// collaborators; others cannot spend the owner's tokens on full reviews.
 const TRUSTED_ASSOCIATIONS = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
 
 /**

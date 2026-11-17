@@ -385,7 +385,9 @@ or reviewers with write access. Disable them with
 `config set pullRequestSuggestionsEnabled false`. A review with no findings in
 fully reviewed changes posts at once and approves the reviewed commit when
 no Gitdog thread is open; a later
-push withdraws the approval while pull request reviews stay on. Gitdog does not commit changes automatically or
+push, including updating the branch, withdraws the approval while pull
+request reviews stay on; `reviews request` (or `@gitdogbot review`) reviews the
+new commits and can approve again. Gitdog does not commit changes automatically or
 execute PR code. Incomplete coverage
 and failed reviews remain visible. New settings require the corresponding
 Gitdog server release.

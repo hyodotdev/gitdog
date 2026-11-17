@@ -494,34 +494,43 @@ async function observePullRequest(
   });
   if (!args.open) return UNAVAILABLE;
   if (request) {
-    // One review at a time: a queued or running review answers the request.
+    const thisHead = actions.filter(
+      (action) =>
+        action.actionType === "review" &&
+        action.proposedChanges?.source?.headSha === source.headSha,
+    );
+    // One review at a time: a queued, running or about-to-post review, or a
+    // queued recheck, answers the request.
     if (
       actions.some(isRunningReview) ||
-      sameHeadReviews.some(
+      thisHead.some(
         (action) =>
-          action.status === "pending" &&
-          action.reviewGenerationToken === undefined,
+          (action.status === "pending" &&
+            action.reviewGenerationToken === undefined) ||
+          // Publication is scheduled; one that never claimed within the
+          // expiry window is stuck and no longer holds the commit.
+          (action.status === "approved" &&
+            action.executionClaimedAt === undefined &&
+            action.createdAt > now - 15 * 60_000),
       )
     )
       return RUNNING;
-    if (
-      sameHeadReviews.some(
-        (action) =>
-          action.status === "pending_approval" ||
-          (action.status === "approved" &&
-            action.executionClaimedAt === undefined),
-      )
-    )
+    if (sameHeadReviews.some((action) => action.status === "pending_approval"))
       return AWAITING_APPROVAL;
     // Only a finished review of this commit makes it up to date; a failed
-    // or limit-stopped one can be retried.
+    // or limit-stopped one can be retried. One whose post could not be
+    // confirmed may already be on GitHub, so it is not posted again.
     if (
       request === "review" &&
       sameHeadReviews.some(
         (action) =>
-          action.status === "completed" &&
-          (action.executionResult?.published === true ||
-            action.executionResult?.reason === "no_new_changes"),
+          (action.status === "completed" &&
+            (action.executionResult?.published === true ||
+              action.executionResult?.reason === "no_new_changes")) ||
+          (action.status === "failed" &&
+            action.errorMessage?.startsWith(
+              "GitHub publication outcome requires inspection",
+            ) === true),
       )
     )
       return UP_TO_DATE;
@@ -941,8 +950,9 @@ export const propose = internalMutation({
         (base?.proposedChanges?.coverageComplete === true &&
           (baseFindings === 0 ||
             base.executionResult?.inlineFindings === true)));
-    // A follow-up with nothing new still posts when it can approve, so the
-    // approval a push withdrew (such as a base merge) comes back.
+    // A requested follow-up with nothing new still posts when it can
+    // approve, so "@gitdogbot review" restores an approval a push such as a
+    // base merge withdrew.
     const unpublished = verificationOnly || (nothingNew && !coverageComplete);
     await ctx.db.patch(action._id, {
       ...ENDED_BATCH,
@@ -1281,6 +1291,13 @@ export const recordCommand = internalMutation({
     allowed: v.boolean(),
   },
   handler: async (ctx, { login, allowed, ...args }) => {
+    const repo = await ctx.db.get(args.repositoryId);
+    if (
+      !repo?.isActive ||
+      repo.disconnectCleanupPending ||
+      repo.settings.pullRequestReviewsEnabled !== true
+    )
+      return "unavailable" as const;
     const seen = await ctx.db
       .query("pullRequestCommands")
       .withIndex("by_comment", (q) =>

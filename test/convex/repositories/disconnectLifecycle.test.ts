@@ -318,6 +318,15 @@ describe("repository lifecycle fencing", () => {
         updatedAt: now,
       });
 
+      await ctx.db.insert("pullRequestCommands", {
+        repositoryId,
+        githubNumber: 12,
+        commentId: 1,
+        githubUserId: 7,
+        command: "review",
+        outcome: "accepted",
+        createdAt: now,
+      });
       for (let index = 0; index < 55; index++) {
         await ctx.db.insert("repoChunks", {
           repositoryId,
@@ -582,6 +591,10 @@ describe("repository lifecycle fencing", () => {
     ).resolves.toBeNull();
 
     const final = await t.run(async (ctx) => ({
+      commands: await ctx.db
+        .query("pullRequestCommands")
+        .withIndex("by_repository", (q) => q.eq("repositoryId", repositoryId))
+        .collect(),
       repository: await ctx.db.get(repositoryId),
       chunks: await ctx.db
         .query("repoChunks")
@@ -624,6 +637,7 @@ describe("repository lifecycle fencing", () => {
       sharedStorageUrl: await ctx.storage.getUrl(seeded.sharedStorageId),
       queueStorageUrl: await ctx.storage.getUrl(seeded.queueStorageId),
     }));
+    expect(final.commands).toHaveLength(0);
     expect(final.repository).toBeNull();
     expect(final.chunks).toHaveLength(0);
     expect(final.maps).toHaveLength(0);

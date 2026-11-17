@@ -324,6 +324,74 @@ describe("review commands", () => {
       ]);
     });
   });
+  it("reviews the next push automatically when the first review failed", async () => {
+    const f = await fixture();
+    const first = (await f.observe())!;
+    await claim(f, first);
+    await f.t.run((ctx) =>
+      ctx.db.patch(first, { status: "failed", errorMessage: "GitHub 502" }),
+    );
+    expect(await f.observe(next)).toBeTruthy();
+  });
+  it("lets a request pass a review whose post never started", async () => {
+    const f = await fixture();
+    const first = (await f.observe())!;
+    await f.t.run((ctx) => ctx.db.patch(first, { status: "approved" }));
+    expect((await requestStatus(f)).status).toBe("running");
+    vi.advanceTimersByTime(16 * 60_000);
+    expect((await requestStatus(f)).status).toBe("started");
+  });
+  it("does not post again a review whose post could not be confirmed", async () => {
+    const f = await fixture();
+    const first = (await f.observe())!;
+    await claim(f, first);
+    await f.t.run((ctx) =>
+      ctx.db.patch(first, {
+        status: "failed",
+        errorMessage:
+          "GitHub publication outcome requires inspection; no automatic retry was performed",
+      }),
+    );
+    expect((await requestStatus(f)).status).toBe("up_to_date");
+  });
+  it("records nothing while pull request reviews are off", async () => {
+    const f = await fixture();
+    await f.t.run(async (ctx) => {
+      const repo = (await ctx.db.get(f.repositoryId))!;
+      await ctx.db.patch(f.repositoryId, {
+        settings: { ...repo.settings, pullRequestReviewsEnabled: false },
+      });
+    });
+    expect(
+      await f.t.mutation(internal.pullRequests.internalMutation.recordCommand, {
+        repositoryId: f.repositoryId,
+        githubNumber: 12,
+        commentId: 9,
+        githubUserId: 7,
+        login: "octo",
+        command: "review",
+        allowed: true,
+      }),
+    ).toBe("unavailable");
+  });
+  it.each([
+    ["a recheck", { reviewVerificationOnly: true }, {}],
+    ["a closed pull request", {}, { status: "closed" as const }],
+  ])("posts no limit notice for %s", async (_case, action, ticket) => {
+    const f = await fixture();
+    const actionId = (await f.observe())!;
+    await f.t.run(async (ctx) => {
+      const current = (await ctx.db.get(actionId))!;
+      await ctx.db.patch(actionId, action);
+      await ctx.db.patch(current.ticketId, ticket);
+    });
+    expect(
+      await f.t.mutation(
+        internal.pullRequests.internalMutation.claimLimitNotice,
+        { actionId },
+      ),
+    ).toBeNull();
+  });
   it("pauses a commenter who sends too many commands", async () => {
     const f = await fixture();
     const r = await replies(f);

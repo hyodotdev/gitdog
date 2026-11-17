@@ -1149,7 +1149,7 @@ export const dismissStaleApproval = internalAction({
       access,
       args.number,
       stale,
-      "New commits were pushed after the commit Gitdog approved.",
+      "New commits were pushed after the commit Gitdog approved. Comment @gitdogbot review to review them.",
     );
     // Remembered until GitHub accepts every dismissal, including any past
     // the per-run cap, so a later push retries.
@@ -1314,7 +1314,15 @@ export const runCommand = internalAction({
           args.repositoryId,
           args.number,
           args.command,
-        );
+        ).catch(async (error) => {
+          // A command that could not run says so instead of going silent.
+          await reply(
+            access,
+            args.number,
+            "**Command not completed**\n\nGitdog could not reach GitHub or the review queue. Try again in a few minutes.",
+          ).catch(() => undefined);
+          throw error;
+        });
         // A bot-authored pull request gets no reply.
         if (result.command !== "resolve" && result.status === "bot_author")
           return;

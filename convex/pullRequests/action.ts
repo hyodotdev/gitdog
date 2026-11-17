@@ -60,8 +60,9 @@ export const recheck = action({
 
 /**
  * The CLI and web counterpart of the "@gitdogbot review", "full review" and
- * "resolve" pull request comments. Nothing is posted on the pull request
- * except the review itself; the result is returned instead.
+ * "resolve" pull request comments. No reply is posted on the pull request;
+ * the result is returned instead. The review itself, and a limit notice if
+ * it runs out of tokens, are posted as for comment commands.
  */
 export const command = action({
   args: {
