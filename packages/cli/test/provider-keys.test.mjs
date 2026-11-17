@@ -2,12 +2,16 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createProgram } from "../dist/commands.js";
 import { CaptureUi } from "./helpers.mjs";
-import { Ui, singleSecretLine } from "../dist/ui.js";
+import { Ui, singleSecretLine, redactSecrets } from "../dist/ui.js";
 
 const SECRET = `sk-proj-${"s".repeat(40)}`;
 
 class KeyUi extends CaptureUi {
   secretPrompts = [];
+  warnings = [];
+  warn(message) {
+    this.warnings.push(message);
+  }
   constructor({ secret, stdin } = {}) {
     super();
     this.secretValue = secret;
@@ -254,4 +258,44 @@ test("provider-keys list prints every column for people", async () => {
       ],
     },
   ]);
+});
+
+test("provider-keys set names a non-default backend before reading the key", async () => {
+  const ui = new KeyUi({ secret: SECRET });
+  const api = recordingApi(() => ({
+    provider: "anthropic",
+    last4: "ssss",
+    status: "active",
+  }));
+  await run(api, ui, [
+    "--api-url",
+    "https://other.example.test",
+    "provider-keys",
+    "set",
+    "anthropic",
+  ]);
+  assert.deepEqual(ui.warnings, [
+    "This key will be sent to other.example.test, not Gitdog's default backend.",
+  ]);
+  const quiet = new KeyUi({ secret: SECRET });
+  await run(api, quiet, ["provider-keys", "set", "anthropic"]);
+  assert.deepEqual(quiet.warnings, []);
+});
+
+test("output never shows an Anthropic or OpenAI key", () => {
+  for (const key of [
+    `sk-ant-api03-${"a".repeat(40)}`,
+    `sk-proj-${"b".repeat(40)}`,
+    `sk-svcacct-${"d".repeat(40)}`,
+    `sk-${"c".repeat(48)}`,
+  ]) {
+    const text = redactSecrets(`Request failed for ${key}.`);
+    assert.equal(text, "Request failed for [redacted provider key].");
+  }
+  // Ordinary names that start with sk- are left alone.
+  for (const name of [
+    "owner/sk-react-native-components",
+    "sk-feature-login-refactor-2",
+  ])
+    assert.equal(redactSecrets(name), name);
 });
