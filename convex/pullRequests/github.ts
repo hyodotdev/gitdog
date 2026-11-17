@@ -473,7 +473,7 @@ export async function resolveOwnThreads(
   access: VerifiedRepositoryAccess,
   number: number,
   botLogin: string,
-): Promise<number> {
+): Promise<{ open: number; resolved: number }> {
   const page = await fetchGitHubAppJsonWithRetry<{
     errors?: unknown[];
     data?: {
@@ -504,7 +504,7 @@ export async function resolveOwnThreads(
     throw new Error("Review threads could not be read");
   const login = (value: string) => value.toLowerCase().replace(/\[bot\]$/, "");
   const own = login(botLogin);
-  if (!own) return 0;
+  if (!own) return { open: 0, resolved: 0 };
   const open = (page.data?.repository?.pullRequest?.reviewThreads?.nodes ?? [])
     .filter(
       (thread) =>
@@ -534,5 +534,5 @@ export async function resolveOwnThreads(
     if (result.data?.resolveReviewThread?.thread?.isResolved === true)
       resolved++;
   }
-  return resolved;
+  return { open: open.length, resolved };
 }

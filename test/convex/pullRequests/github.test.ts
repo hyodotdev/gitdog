@@ -616,7 +616,10 @@ describe("resolving Gitdog review threads", () => {
         data: { resolveReviewThread: { thread: { isResolved: true } } },
       })
       .mockResolvedValueOnce({ errors: [{ message: "refused" }], data: null });
-    expect(await resolveOwnThreads(access, 12, "gitdogbot[bot]")).toBe(1);
+    expect(await resolveOwnThreads(access, 12, "gitdogbot[bot]")).toEqual({
+      open: 2,
+      resolved: 1,
+    });
     // Only Gitdog's two open threads are resolved.
     expect(get).toHaveBeenCalledTimes(3);
   });

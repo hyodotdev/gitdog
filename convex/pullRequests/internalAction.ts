@@ -1194,7 +1194,7 @@ export type PullRequestCommandResult =
       // The review a "started" request queued.
       actionId?: Id<"ticketActions"> | null;
     }
-  | { command: "resolve"; resolved: number };
+  | { command: "resolve"; resolved: number; open: number };
 
 /**
  * Run a review, full review or resolve command on a pull request. Comment
@@ -1210,7 +1210,7 @@ export async function runPullRequestCommand(
   if (command === "resolve")
     return {
       command,
-      resolved: await resolveOwnThreads(access, number, botLogin()),
+      ...(await resolveOwnThreads(access, number, botLogin())),
     };
   // Stamped before the read, so a push observed meanwhile wins.
   const observedAt = Date.now();
@@ -1251,9 +1251,11 @@ export function commandReply(
 ): string {
   const mention = `@${slug}`;
   if (result.command === "resolve")
-    return result.resolved
-      ? `**Resolved ${result.resolved} Gitdog review ${result.resolved === 1 ? "thread" : "threads"}.**`
-      : "**No open Gitdog review threads to resolve.**";
+    return result.open === 0
+      ? "**No open Gitdog review threads to resolve.**"
+      : result.resolved === result.open
+        ? `**Resolved ${result.resolved} Gitdog review ${result.resolved === 1 ? "thread" : "threads"}.**`
+        : `**Resolved ${result.resolved} of ${result.open} Gitdog review threads.** GitHub refused the rest; try again or resolve them on GitHub.`;
   switch (result.status) {
     case "started":
       return `**${result.command === "full_review" ? "Full review" : "Review"} started** for ${result.headSha}`;
@@ -1263,6 +1265,8 @@ export function commandReply(
       return `**Already reviewed** ${result.headSha}\n\nComment \`${mention} full review\` to review the whole pull request again.`;
     case "closed":
       return "**Review not started**\n\nGitdog reviews open pull requests that are ready for review.";
+    case "bot_author":
+      return "**Review not started**\n\nGitdog does not review pull requests opened by bots, such as Dependabot.";
     case "awaiting_approval":
       return "**A review of this commit is waiting for approval.** The repository owner can post it from Gitdog.";
     case "stale":
@@ -1331,9 +1335,6 @@ export const runCommand = internalAction({
           ).catch(() => undefined);
           throw error;
         });
-        // A bot-authored pull request gets no reply.
-        if (result.command !== "resolve" && result.status === "bot_author")
-          return;
         return reply(access, args.number, commandReply(result, slug));
       }
     }

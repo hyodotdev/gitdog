@@ -348,6 +348,31 @@ describe("review commands", () => {
     });
     expect((await requestStatus(f, source, true)).status).toBe("running");
   });
+  it("carries a requested review a push cancelled over to the new head", async () => {
+    const f = await reviewed();
+    const requested = (await requestStatus(f, next)).actionId!;
+    const newer = { ...source, headSha: "f".repeat(40) };
+    const carried = (await f.observe(newer))!;
+    expect((await f.t.run((ctx) => ctx.db.get(requested)))?.status).toBe(
+      "failed",
+    );
+    expect(await f.t.run((ctx) => ctx.db.get(carried))).toMatchObject({
+      reviewRequested: true,
+      proposedChanges: { source: { headSha: newer.headSha } },
+    });
+  });
+  it("lets a request restore an approval after a no-change follow-up", async () => {
+    const f = await reviewed();
+    const followUp = (await requestStatus(f, next)).actionId!;
+    await f.t.run((ctx) =>
+      ctx.db.patch(followUp, {
+        status: "completed",
+        executionResult: { published: false, reason: "no_new_changes" },
+      }),
+    );
+    // Not approved yet: asking again may approve, for no model call.
+    expect((await requestStatus(f, next)).status).toBe("started");
+  });
   it("lets a request pass a review whose post never started", async () => {
     const f = await fixture();
     const first = (await f.observe())!;

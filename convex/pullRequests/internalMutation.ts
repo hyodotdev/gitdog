@@ -341,8 +341,9 @@ const STALE = { status: "stale" as const, actionId: null };
 async function observePullRequest(
   ctx: MutationCtx,
   args: ObserveArgs,
-  request?: "review" | "full",
+  requested?: "review" | "full",
 ) {
+  let request = requested;
   const repo = await ctx.db.get(args.repositoryId);
   if (
     !repo ||
@@ -437,6 +438,23 @@ async function observePullRequest(
     commitChanged ||
     ticket.githubTitle !== source.title ||
     ticket.githubBody !== source.body;
+  // A requested review a push cancelled before it ran carries over to the
+  // new head, so "Review started" is still answered with a review.
+  if (
+    !request &&
+    args.open &&
+    commitChanged &&
+    actions.some(
+      (action) =>
+        action.reviewRequested === true &&
+        action.executionClaimedAt === undefined &&
+        ((action.status === "pending" &&
+          action.reviewGenerationToken === undefined) ||
+          action.status === "pending_approval" ||
+          action.status === "approved"),
+    )
+  )
+    request = "review";
   const sameHeadReviews = actions.filter((action) =>
     isAutomaticReviewForHead(action, source.headSha),
   );
@@ -526,7 +544,9 @@ async function observePullRequest(
         (action) =>
           (action.status === "completed" &&
             (action.executionResult?.published === true ||
-              action.executionResult?.reason === "no_new_changes")) ||
+              // Asking again may restore an approval, for no model call.
+              (action.executionResult?.reason === "no_new_changes" &&
+                ticket.pullRequestApprovedSha === source.headSha))) ||
           (action.status === "failed" &&
             action.errorMessage?.startsWith(
               "GitHub publication outcome requires inspection",

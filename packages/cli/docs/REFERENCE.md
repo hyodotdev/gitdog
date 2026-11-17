@@ -374,7 +374,8 @@ Gitdog reviews a pull request once, when it is opened or marked ready for
 review. The `reviews` commands match the pull request comments
 `@gitdogbot review` (commits since the last review), `@gitdogbot full review`
 and `@gitdogbot resolve` (resolves Gitdog's threads); the CLI prints the result
-instead of replying on GitHub. `reviews request` asks before spending tokens
+instead of replying on GitHub. On GitHub, commands go in the pull request
+conversation, not in replies inside a review thread. `reviews request` asks before spending tokens
 (skip with `--yes`) and prints the queued review's action id. `reviews recheck`
 reruns a failed review on the latest commit without posting.
 

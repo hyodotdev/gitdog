@@ -84,7 +84,7 @@ a pull request comment, or from the CLI:
 | `@gitdogbot resolve`     | `gitdog reviews resolve <ticket-id>`        | Resolves every Gitdog review thread              |
 | `@gitdogbot help`        | `gitdog reviews --help`                     | Lists the commands                               |
 
-A command is a comment line that starts with the mention. Collaborators can
+A command is a comment line that starts with the mention. Commands go in the pull request conversation; replies inside a review thread are not read, and pull requests opened by bots such as Dependabot are not reviewed. Collaborators can
 run every command; the pull request author, who may work from a fork, can run
 all but a full review. A review that failed or ran out of tokens can be
 requested again.
