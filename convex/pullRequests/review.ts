@@ -412,39 +412,82 @@ export type ReviewCoverage = {
   since?: string;
 };
 
+const REVIEW_FOOTER =
+  "<sub>Not a merge approval. Tests were not run. [Gitdog](https://gitdog.dev)</sub>";
+const APPROVAL_FOOTER =
+  "<sub>Approved because no issues were found in fully reviewed changes. Tests were not run. [Gitdog](https://gitdog.dev)</sub>";
+
+// GitHub links a bare commit hash in a comment, but not one in a code span.
+function commitRef(sha: string): string {
+  return /^[0-9a-f]{40}$/i.test(sha) ? sha : codeSpan(sha);
+}
+
+function plural(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
+
 function coverageNote(coverage?: ReviewCoverage): string {
   if (!coverage) return "";
   const scope = coverage.since
-    ? ` Reviewed the ${coverage.changedFiles} ${coverage.changedFiles === 1 ? "file" : "files"} affected since \`${coverage.since.slice(0, 12)}\`.`
+    ? `Reviewed the ${plural(coverage.changedFiles, "file")} changed since ${commitRef(coverage.since)}.`
     : "";
   return coverage.uncoveredFiles > 0
-    ? `${scope} ${coverage.uncoveredFiles} of ${coverage.changedFiles} changed files were not fully reviewed.`
+    ? `${scope} ${coverage.uncoveredFiles} of ${plural(coverage.changedFiles, "changed file")} ${coverage.uncoveredFiles === 1 ? "was" : "were"} not fully reviewed.`.trim()
     : scope;
 }
 
-export function reviewBody(
+// The summary without the footer, followed by any extra notes.
+function reviewSummary(
   findingCount: number,
   headSha: string,
   coverage?: ReviewCoverage,
+  notes: string[] = [],
 ): string {
-  const commit = `\`${headSha.slice(0, 12)}\``;
+  const commit = commitRef(headSha);
   // A review without findings is still posted, so authors can tell a finished
   // review from one that never ran, and see what it did not cover.
   const reviewedNothing =
     coverage !== undefined &&
     coverage.changedFiles > 0 &&
     coverage.uncoveredFiles >= coverage.changedFiles;
-  const summary =
+  const [heading, detail] =
     findingCount === 0 && reviewedNothing
-      ? `Gitdog could not review the ${coverage.changedFiles} changed ${coverage.changedFiles === 1 ? "file" : "files"} in ${commit}. This is not a merge approval; tests were not run.`
+      ? [
+          `**Review not completed** for ${commit}`,
+          `Gitdog could not review the ${plural(coverage.changedFiles, "changed file")}.`,
+        ]
       : findingCount === 0
-        ? `Gitdog found no supported defects in ${commit}.${coverageNote(coverage)} This is not a merge approval; tests were not run.`
-        : `Gitdog found ${findingCount} potential defect${findingCount === 1 ? "" : "s"} in ${commit}.${coverageNote(coverage)} Findings are limited to the reviewed changes; tests were not run.`;
-  return `${summary}\n\n[Gitdog](https://gitdog.dev)`;
+        ? [`**No issues found** in ${commit}`, coverageNote(coverage)]
+        : [
+            `**${plural(findingCount, "potential issue")}** in ${commit}`,
+            coverageNote(coverage),
+          ];
+  return [heading, detail, ...notes].filter(Boolean).join("\n\n");
+}
+
+export function reviewBody(
+  findingCount: number,
+  headSha: string,
+  coverage?: ReviewCoverage,
+  notes: string[] = [],
+  approved = false,
+): string {
+  return `${reviewSummary(findingCount, headSha, coverage, notes)}\n\n${approved ? APPROVAL_FOOTER : REVIEW_FOOTER}`;
+}
+
+/**
+ * A review approves only what it fully covered: no findings, no unreviewed
+ * file in it or in the reviews it built on.
+ */
+export function canApproveReview(
+  findingCount: number,
+  coverageComplete: unknown,
+): boolean {
+  return findingCount === 0 && coverageComplete === true;
 }
 
 export function findingBody(finding: Finding, suggestions = true): string {
-  const body = `[${finding.priority}] ${finding.title}\n\n${finding.body}`;
+  const body = `**[${finding.priority}] ${finding.title}**\n\n${finding.body}`;
   return suggestions && finding.suggestion
     ? `${body}\n\n\`\`\`suggestion\n${finding.suggestion.replacement}\n\`\`\``
     : body;
@@ -498,15 +541,13 @@ export function combinedReviewBody(
   suggestions: boolean,
 ): string {
   const { batchCount, findingCount, changedFiles, uncoveredFiles } = summary;
-  const coverage = `Processed in ${batchCount} file ${batchCount === 1 ? "batch" : "batches"}.${
-    uncoveredFiles > 0
-      ? ` ${uncoveredFiles} of ${changedFiles} changed files were not fully reviewed.`
-      : ""
-  }`;
-  const limit =
-    findingCount > findings.length
-      ? ` Showing the ${findings.length} highest-priority findings out of ${findingCount}.`
-      : "";
+  const notes = [
+    `Processed in ${batchCount} file ${batchCount === 1 ? "batch" : "batches"}.${
+      findingCount > findings.length
+        ? ` Showing the ${findings.length} highest-priority findings out of ${findingCount}.`
+        : ""
+    }`,
+  ];
   const entries = findings.map((finding) => {
     const fix = suggestions ? finding.suggestion : undefined;
     return `${codeSpan(`${finding.path}:${finding.line}`)}\n\n${blockQuote(findingBody(finding, false))}${
@@ -515,7 +556,14 @@ export function combinedReviewBody(
         : ""
     }`;
   });
-  return [reviewBody(findingCount, headSha), coverage + limit, ...entries].join(
-    "\n\n",
-  );
+  return [
+    reviewSummary(
+      findingCount,
+      headSha,
+      { changedFiles, uncoveredFiles },
+      notes,
+    ),
+    ...entries,
+    REVIEW_FOOTER,
+  ].join("\n\n");
 }

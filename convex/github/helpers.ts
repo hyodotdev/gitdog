@@ -31,9 +31,13 @@ export class GitHubAppRateLimitError extends Error {
   }
 }
 
-type GitHubAppJsonRequestBody = {
-  repository_ids: ReadonlyArray<number>;
-};
+// Only idempotent requests: a retry must never repeat a side effect.
+type GitHubAppJsonRequestBody =
+  | { repository_ids: ReadonlyArray<number> }
+  // A read-only GraphQL query.
+  | { query: string; variables: Record<string, string | number> }
+  // Dismissing a review again leaves it dismissed.
+  | { message: string };
 
 type GitHubAppRequestControls = {
   maxAttempts?: number;
@@ -45,7 +49,7 @@ type GitHubAppRequestControls = {
 type GitHubAppRequestOptions = GitHubAppRequestControls &
   (
     | { method?: "GET"; jsonBody?: never }
-    | { method: "POST"; jsonBody?: GitHubAppJsonRequestBody }
+    | { method: "POST" | "PUT"; jsonBody?: GitHubAppJsonRequestBody }
   );
 
 function sanitizeRequestErrorName(error: unknown): string {

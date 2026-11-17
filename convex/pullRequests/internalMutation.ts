@@ -792,6 +792,22 @@ export const propose = internalMutation({
     const approval = repo.settings.requireApprovalForPullRequests !== false;
     const suggestions = repo.settings.pullRequestSuggestionsEnabled !== false;
     const coverage = batch ?? args.coverage;
+    // Whether every file of the PR so far was reviewed: by this review, and
+    // for a follow-up also by the review it built on.
+    const since = batch ? undefined : args.coverage?.since;
+    const base = since
+      ? (await listTicketActions(ctx, ticket._id)).find(
+          (a) =>
+            a.actionType === "review" &&
+            a.reviewVerificationOnly !== true &&
+            a.status === "completed" &&
+            a.proposedChanges?.source?.headSha === since,
+        )
+      : undefined;
+    const coverageComplete =
+      coverage !== undefined &&
+      coverage.uncoveredFiles === 0 &&
+      (!since || base?.proposedChanges?.coverageComplete === true);
     await ctx.db.patch(action._id, {
       ...ENDED_BATCH,
       proposedChanges: {
@@ -820,6 +836,7 @@ export const propose = internalMutation({
           : {}),
         filesRead: args.filesRead,
         ...(args.mergeBaseSha ? { mergeBaseSha: args.mergeBaseSha } : {}),
+        coverageComplete,
         // Approvers preview the posted summary and every finding, which a
         // batched review posts inline like a single one.
         suggestedResponse: [
@@ -827,12 +844,12 @@ export const propose = internalMutation({
             batch?.findingCount ?? args.findings.length,
             args.source.headSha,
             coverage,
+            batch && batch.findingCount > args.findings.length
+              ? [
+                  `Showing the ${args.findings.length} highest-priority findings out of ${batch.findingCount}.`,
+                ]
+              : [],
           ),
-          ...(batch && batch.findingCount > args.findings.length
-            ? [
-                `Showing the ${args.findings.length} highest-priority findings out of ${batch.findingCount}.`,
-              ]
-            : []),
           ...args.findings.map(
             (f) => `${f.path}:${f.line}\n${findingBody(f, suggestions)}`,
           ),

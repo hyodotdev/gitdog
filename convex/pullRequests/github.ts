@@ -388,3 +388,59 @@ export async function treePaths(
     .filter((x) => x.type === "blob" && safePath(x.path))
     .map((x) => x.path);
 }
+
+type ReviewThreadPage = {
+  data?: {
+    repository?: {
+      pullRequest?: {
+        reviewThreads?: {
+          pageInfo?: { hasNextPage?: boolean };
+          nodes?: Array<{
+            isResolved?: boolean;
+            comments?: {
+              nodes?: Array<{ author?: { login?: string } | null }>;
+            };
+          }>;
+        };
+      };
+    };
+  };
+};
+
+/**
+ * Whether a review thread Gitdog started is still unresolved. An answer that
+ * cannot be read completely counts as unresolved, so it never approves.
+ */
+export async function hasUnresolvedOwnThreads(
+  access: VerifiedRepositoryAccess,
+  number: number,
+  botLogin: string,
+): Promise<boolean> {
+  const page = await runReviewRequest(
+    { operation: "Read review threads" },
+    () =>
+      fetchGitHubAppJsonWithRetry<ReviewThreadPage>(
+        "https://api.github.com/graphql",
+        access.token,
+        "Read review threads",
+        {
+          method: "POST",
+          maxAttempts: REVIEW_READ_ATTEMPTS,
+          jsonBody: {
+            query:
+              "query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){reviewThreads(first:100){pageInfo{hasNextPage} nodes{isResolved comments(first:1){nodes{author{login}}}}}}}}",
+            variables: { owner: access.owner, repo: access.repo, number },
+          },
+        },
+      ),
+  );
+  const threads = page.data?.repository?.pullRequest?.reviewThreads;
+  if (!threads?.nodes || threads.pageInfo?.hasNextPage !== false) return true;
+  // GraphQL names an app by its slug, REST by `slug[bot]`.
+  const own = botLogin.toLowerCase().replace(/\[bot\]$/, "");
+  return threads.nodes.some(
+    (thread) =>
+      thread.isResolved !== true &&
+      thread.comments?.nodes?.[0]?.author?.login?.toLowerCase() === own,
+  );
+}

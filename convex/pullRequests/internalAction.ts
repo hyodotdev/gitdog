@@ -18,6 +18,7 @@ import {
   BATCH_REVIEW_THRESHOLD,
   changedSince,
   getPullRequest,
+  hasUnresolvedOwnThreads,
   isBotPullRequestAuthor,
   minimumReviewBatches,
   PullRequestDiffBudgetError,
@@ -43,6 +44,7 @@ import {
   runReviewRequest,
 } from "./errors";
 import {
+  canApproveReview,
   combinedReviewBody,
   hasReviewablePatch,
   MAX_REVIEW_FINDINGS,
@@ -52,7 +54,10 @@ import {
   type ChangedFile,
   type Finding,
 } from "./review";
-import { GITHUB_API_VERSION } from "../github/helpers";
+import {
+  GITHUB_API_VERSION,
+  fetchGitHubAppJsonWithRetry,
+} from "../github/helpers";
 
 type Source = { headSha: string; baseSha: string; title: string; body: string };
 function readReviewSource(
@@ -623,14 +628,21 @@ type Review = {
   html_url: string;
   body: string;
   commit_id: string;
+  state?: string;
   user: { type: string; login: string };
 };
-async function existingReview(
+function botLogin() {
+  return `${process.env.GITHUB_APP_SLUG}[bot]`.toLowerCase();
+}
+/** This review if it was already posted, and Gitdog's standing approvals. */
+async function ownReviews(
   access: VerifiedRepositoryAccess,
   number: number,
   marker: string,
   sha: string,
-): Promise<Review | null> {
+): Promise<{ prior: Review | null; approvals: Review[] }> {
+  let prior: Review | null = null;
+  const approvals: Review[] = [];
   for (let page = 1; page <= 5; page++) {
     const reviews = await readReviewJson<Review[]>(
       access,
@@ -639,18 +651,43 @@ async function existingReview(
     );
     if (!Array.isArray(reviews))
       throw new Error("Review history is unavailable");
-    const own = reviews.find(
-      (r) =>
-        r.body?.includes(marker) &&
-        r.commit_id === sha &&
-        r.user?.type === "Bot" &&
-        r.user.login.toLowerCase() ===
-          `${process.env.GITHUB_APP_SLUG}[bot]`.toLowerCase(),
-    );
-    if (own) return own;
-    if (reviews.length < 100) return null;
+    for (const r of reviews) {
+      if (r.user?.type !== "Bot" || r.user.login.toLowerCase() !== botLogin())
+        continue;
+      if (r.body?.includes(marker) && r.commit_id === sha) prior ??= r;
+      if (r.state === "APPROVED") approvals.push(r);
+    }
+    if (reviews.length < 100) return { prior, approvals };
   }
   throw new Error("Review history exceeded the reconciliation limit");
+}
+/**
+ * An earlier approval no longer holds once a review of newer changes does not
+ * approve. Dismissing is best effort: the new review is already posted.
+ */
+async function dismissApprovals(
+  access: VerifiedRepositoryAccess,
+  number: number,
+  approvals: Review[],
+  reviewUrl: string,
+) {
+  for (const approval of approvals)
+    await fetchGitHubAppJsonWithRetry(
+      `${root(access)}/pulls/${number}/reviews/${approval.id}/dismissals`,
+      access.token,
+      "Dismiss earlier approval",
+      {
+        method: "PUT",
+        jsonBody: {
+          message: `Superseded by a newer Gitdog review: ${reviewUrl}`,
+        },
+      },
+    ).catch((error) =>
+      console.warn(
+        "Earlier Gitdog approval could not be dismissed:",
+        error instanceof Error ? error.message : "unknown error",
+      ),
+    );
 }
 export const publish = internalAction({
   args: { actionId: v.id("ticketActions"), manual: v.boolean() },
@@ -790,7 +827,7 @@ export const publish = internalAction({
         }
       }
       const marker = `<!-- gitdog-pr-review:${args.actionId} -->`;
-      const prior = await existingReview(
+      const { prior, approvals } = await ownReviews(
         access,
         live.number,
         marker,
@@ -853,14 +890,27 @@ export const publish = internalAction({
                       : undefined,
                 }
               : undefined;
-          const body = [
-            reviewBody(findingCount, source.headSha, coverage),
-            ...(batched && findingCount > findings.length
+          // Approve only fully covered changes with no finding left open,
+          // including one an earlier Gitdog review raised.
+          const approve =
+            canApproveReview(findingCount, proposal.coverageComplete) &&
+            // A failed read is no reason to fail a review that is ready.
+            !(await hasUnresolvedOwnThreads(
+              current.access,
+              live.number,
+              botLogin(),
+            ).catch(() => true));
+          const body = reviewBody(
+            findingCount,
+            source.headSha,
+            coverage,
+            batched && findingCount > findings.length
               ? [
                   `Showing the ${findings.length} highest-priority findings out of ${findingCount}.`,
                 ]
-              : []),
-          ].join("\n\n");
+              : [],
+            approve,
+          );
           const post = (payload: Record<string, unknown>) =>
             fetch(`${root(current.access)}/pulls/${live.number}/reviews`, {
               method: "POST",
@@ -873,7 +923,7 @@ export const publish = internalAction({
               },
               body: JSON.stringify({
                 commit_id: source.headSha,
-                event: "COMMENT",
+                event: approve ? "APPROVE" : "COMMENT",
                 ...payload,
               }),
               signal: AbortSignal.timeout(30_000),
@@ -915,7 +965,7 @@ export const publish = internalAction({
             !result.body?.includes(marker)
           )
             throw new Error("GitHub review result could not be verified");
-          return result;
+          return { ...result, approve };
         },
       );
       await ctx.runMutation(internal.pullRequests.internalMutation.finish, {
@@ -925,6 +975,13 @@ export const publish = internalAction({
         reviewId: posted.id,
         reviewUrl: posted.html_url,
       });
+      if (!posted.approve)
+        await dismissApprovals(
+          current.access,
+          live.number,
+          approvals,
+          posted.html_url,
+        );
       return { success: true };
     } catch (error) {
       await ctx.runMutation(internal.pullRequests.internalMutation.finish, {

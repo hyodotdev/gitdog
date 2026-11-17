@@ -267,10 +267,10 @@ describe("PR review durable lifecycle", () => {
       proposedChanges: { changedFiles: 2, uncoveredFiles: 1 },
     });
     expect(action?.proposedChanges?.suggestedResponse).toContain(
-      "Gitdog found no supported defects",
+      "**No issues found**",
     );
     expect(action?.proposedChanges?.suggestedResponse).toContain(
-      "1 of 2 changed files were not fully reviewed.",
+      "1 of 2 changed files was not fully reviewed.",
     );
     expect(action).not.toHaveProperty("executionResult");
   });
@@ -741,7 +741,7 @@ it("allows one generation across two automatic actions already queued for the sa
   );
 });
 
-async function publicationFixture(empty = false) {
+async function publicationFixture(empty = false, uncoveredFiles = 1) {
   const f = await fixture();
   const actionId = (await f.observe())!;
   const suggestion = {
@@ -755,7 +755,7 @@ async function publicationFixture(empty = false) {
     findings: empty ? [] : [{ ...findings[0], suggestion }],
     excludedPaths: [],
     filesRead: ["head:src/main.ts"],
-    ...(empty ? { coverage: { changedFiles: 3, uncoveredFiles: 1 } } : {}),
+    ...(empty ? { coverage: { changedFiles: 3, uncoveredFiles } } : {}),
   });
   const identity = await import("../../../convex/github/repositoryIdentity");
   const github = await import("../../../convex/pullRequests/github");
@@ -855,11 +855,138 @@ it("posts a summary review without inline comments when nothing was found", asyn
   const request = JSON.parse(f.fetch.mock.calls[0][1]!.body as string);
   expect(request).not.toHaveProperty("comments");
   expect(request.body).toBe(
-    `Gitdog found no supported defects in \`${source.headSha.slice(0, 12)}\`. 1 of 3 changed files were not fully reviewed. This is not a merge approval; tests were not run.\n\n[Gitdog](https://gitdog.dev)\n\n<!-- gitdog-pr-review:${f.actionId} -->`,
+    `**No issues found** in ${source.headSha}\n\n1 of 3 changed files was not fully reviewed.\n\n<sub>Not a merge approval. Tests were not run. [Gitdog](https://gitdog.dev)</sub>\n\n<!-- gitdog-pr-review:${f.actionId} -->`,
   );
   expect(
     (await f.t.run((ctx) => ctx.db.get(f.actionId)))?.executionResult,
   ).toMatchObject({ reviewId: 77, published: true });
+});
+describe("approval", () => {
+  const ownApproval = {
+    id: 5,
+    state: "APPROVED",
+    body: "earlier",
+    commit_id: "c".repeat(40),
+    html_url: "https://github.com/owner/repo/pull/12#pullrequestreview-5",
+    user: { type: "Bot", login: "gitdogbot[bot]" },
+  };
+  async function github(threads: Array<{ isResolved: boolean }>) {
+    const helpers = await import("../../../convex/github/helpers");
+    return vi
+      .mocked(helpers.fetchGitHubAppJsonWithRetry)
+      .mockImplementation(async (url) => {
+        if (url.endsWith("/graphql"))
+          return {
+            data: {
+              repository: {
+                pullRequest: {
+                  reviewThreads: {
+                    pageInfo: { hasNextPage: false },
+                    nodes: threads.map((t) => ({
+                      ...t,
+                      comments: { nodes: [{ author: { login: "gitdogbot" } }] },
+                    })),
+                  },
+                },
+              },
+            },
+          } as never;
+        if (url.includes("/reviews?")) return [ownApproval] as never;
+        return {} as never;
+      });
+  }
+  it("approves a fully covered review with nothing found", async () => {
+    const f = await publicationFixture(true, 0);
+    const calls = await github([{ isResolved: true }]);
+    await f.t.action(internal.pullRequests.internalAction.publish, {
+      actionId: f.actionId,
+      manual: false,
+    });
+    const request = JSON.parse(f.fetch.mock.calls[0][1]!.body as string);
+    expect(request.event).toBe("APPROVE");
+    expect(request.body).toContain("Approved because no issues were found");
+    expect(calls.mock.calls.some(([url]) => url.includes("/dismissals"))).toBe(
+      false,
+    );
+  });
+  it("only comments while an earlier Gitdog thread is unresolved", async () => {
+    const f = await publicationFixture(true, 0);
+    await github([{ isResolved: false }]);
+    await f.t.action(internal.pullRequests.internalAction.publish, {
+      actionId: f.actionId,
+      manual: false,
+    });
+    expect(JSON.parse(f.fetch.mock.calls[0][1]!.body as string).event).toBe(
+      "COMMENT",
+    );
+  });
+  it("only comments when a changed file was not fully reviewed", async () => {
+    const f = await publicationFixture(true, 1);
+    await github([]);
+    await f.t.action(internal.pullRequests.internalAction.publish, {
+      actionId: f.actionId,
+      manual: false,
+    });
+    expect(JSON.parse(f.fetch.mock.calls[0][1]!.body as string).event).toBe(
+      "COMMENT",
+    );
+  });
+  it("dismisses an earlier Gitdog approval when a review has findings", async () => {
+    const f = await publicationFixture();
+    const calls = await github([]);
+    expect(
+      await f.t.action(internal.pullRequests.internalAction.publish, {
+        actionId: f.actionId,
+        manual: true,
+      }),
+    ).toEqual({ success: true });
+    expect(JSON.parse(f.fetch.mock.calls[0][1]!.body as string).event).toBe(
+      "COMMENT",
+    );
+    const dismissal = calls.mock.calls.find(([url]) =>
+      url.endsWith("/pulls/12/reviews/5/dismissals"),
+    );
+    expect(dismissal?.[3]).toMatchObject({ method: "PUT" });
+  });
+  it.each([
+    [1, [false, false]],
+    [0, [true, true]],
+  ])(
+    "carries coverage into a follow-up when the first review left %i files",
+    async (uncovered, expected) => {
+      const f = await fixture();
+      const first = (await f.observe())!;
+      await f.t.mutation(internal.pullRequests.internalMutation.propose, {
+        actionId: first,
+        source,
+        findings: [],
+        excludedPaths: uncovered ? ["binary.png"] : [],
+        filesRead: [],
+        coverage: { changedFiles: 2, uncoveredFiles: uncovered },
+      });
+      await f.t.run((ctx) =>
+        ctx.db.patch(first, {
+          status: "completed",
+          executionResult: { published: true },
+        }),
+      );
+      const next = { ...source, headSha: "e".repeat(40) };
+      const second = (await f.observe(next))!;
+      await f.t.mutation(internal.pullRequests.internalMutation.propose, {
+        actionId: second,
+        source: next,
+        findings: [],
+        excludedPaths: [],
+        filesRead: [],
+        coverage: { changedFiles: 1, uncoveredFiles: 0, since: source.headSha },
+      });
+      const proposals = await f.t.run(async (ctx) => [
+        (await ctx.db.get(first))?.proposedChanges?.coverageComplete,
+        (await ctx.db.get(second))?.proposedChanges?.coverageComplete,
+      ]);
+      expect(proposals).toEqual(expected);
+    },
+  );
 });
 describe("batched publication", () => {
   async function batchedPublication() {
@@ -1614,7 +1741,7 @@ describe("batched PR reviews", () => {
     expect(JSON.stringify(request.comments)).toContain(
       "return cache.get(key);",
     );
-    expect(request.body).toContain("Gitdog found 2 potential defects");
+    expect(request.body).toContain("**2 potential issues**");
     expect(request.body).not.toContain("were not fully reviewed");
     expect(request.body).toContain(`<!-- gitdog-pr-review:${f.actionId} -->`);
     // Approvers still preview every finding.
@@ -1676,7 +1803,7 @@ describe("batched PR reviews", () => {
       "src/file-1.ts",
     ]);
     expect(request.body).toContain(
-      "1 of 3 changed files were not fully reviewed.",
+      "1 of 3 changed files was not fully reviewed.",
     );
   });
 
@@ -2035,7 +2162,7 @@ describe("batched PR reviews", () => {
     });
     const request = JSON.parse(f.fetch.mock.calls.at(-1)![1]!.body as string);
     expect(request.body).toContain(
-      `Reviewed the 1 file affected since \`${source.headSha.slice(0, 12)}\`.`,
+      `Reviewed the 1 file changed since ${source.headSha}.`,
     );
     expect(request.comments).toHaveLength(1);
   });
