@@ -13,7 +13,7 @@
 <p align="center">
   <strong>The codebase-aware assistant for GitHub issues, discussions and pull requests.</strong>
   <br>
-  Grounded in your repository. Published only when you approve.
+  Grounded in your repository. Drafts are published only when you approve.
 </p>
 
 <p align="center">
@@ -43,14 +43,14 @@ Maintainers answer the same questions, triage vague reports and review routine
 changes every day. Gitdog indexes your repository and drafts the work for you —
 with the actual code as evidence, not generic advice.
 
-|                          | What it does                                                                     |
-| ------------------------ | -------------------------------------------------------------------------------- |
-| **Issue assistant**      | Turns rough reports into clear, structured issues and answers questions          |
-| **Discussion assistant** | Replies to GitHub Discussions with context from your codebase                    |
-| **Pull request reviews** | Reviews changed code against the repository and suggests concrete fixes          |
-| **Maintainer tagging**   | Notifies the right people when a request needs a code change                     |
-| **Approval first**       | With approval on (the default), drafts wait in your queue until you approve them |
-| **Team workspace**       | Share projects with members and keep per-project settings and usage in one place |
+|                          | What it does                                                                                                                                                                                                                                               |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Issue assistant**      | Turns rough reports into clear, structured issues and answers questions                                                                                                                                                                                    |
+| **Discussion assistant** | Replies to GitHub Discussions with context from your codebase                                                                                                                                                                                              |
+| **Pull request reviews** | Reviews changed code against the repository and suggests concrete fixes                                                                                                                                                                                    |
+| **Maintainer tagging**   | Notifies the right people when a request needs a code change                                                                                                                                                                                               |
+| **Approval first**       | With approval on (the default), drafts wait in your queue until you approve them; a clean pull request review posts at once and approves the commit when every changed file was reviewed and no Gitdog thread is open; a later push withdraws the approval |
+| **Team workspace**       | Share projects with members and keep per-project settings and usage in one place                                                                                                                                                                           |
 
 ## How it works
 

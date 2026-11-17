@@ -846,6 +846,8 @@ const applicationTables = {
     // Set when a push was dropped because a review was running; the PR is
     // observed again once that review ends, so the newest head is reviewed.
     pullRequestDroppedAt: v.optional(v.number()),
+    // The commit Gitdog last approved; a push past it withdraws the approval.
+    pullRequestApprovedSha: v.optional(v.string()),
 
     // GitHub reference
     githubNumber: v.number(), // Issue or discussion number

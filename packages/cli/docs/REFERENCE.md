@@ -369,7 +369,10 @@ Reviews are opt-in and require GitHub App pull-request write permission.
 Proposals appear in Tickets; approval posts inline comments on the reviewed
 commit. GitHub commit suggestions can be applied individually or as a batch by authors
 or reviewers with write access. Disable them with
-`config set pullRequestSuggestionsEnabled false`. Gitdog does not approve merges,
-commit changes automatically or execute PR code. Incomplete coverage
+`config set pullRequestSuggestionsEnabled false`. A review with no findings in
+fully reviewed changes posts at once and approves the reviewed commit when
+no Gitdog thread is open; a later
+push withdraws the approval while pull request reviews stay on. Gitdog does not commit changes automatically or
+execute PR code. Incomplete coverage
 and failed reviews remain visible. New settings require the corresponding
 Gitdog server release.

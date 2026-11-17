@@ -267,10 +267,10 @@ describe("PR review durable lifecycle", () => {
       proposedChanges: { changedFiles: 2, uncoveredFiles: 1 },
     });
     expect(action?.proposedChanges?.suggestedResponse).toContain(
-      "Gitdog found no supported defects",
+      "**No issues found**",
     );
     expect(action?.proposedChanges?.suggestedResponse).toContain(
-      "1 of 2 changed files were not fully reviewed.",
+      "1 of 2 changed files was not fully reviewed.",
     );
     expect(action).not.toHaveProperty("executionResult");
   });
@@ -741,7 +741,7 @@ it("allows one generation across two automatic actions already queued for the sa
   );
 });
 
-async function publicationFixture(empty = false) {
+async function publicationFixture(empty = false, uncoveredFiles = 1) {
   const f = await fixture();
   const actionId = (await f.observe())!;
   const suggestion = {
@@ -755,7 +755,7 @@ async function publicationFixture(empty = false) {
     findings: empty ? [] : [{ ...findings[0], suggestion }],
     excludedPaths: [],
     filesRead: ["head:src/main.ts"],
-    ...(empty ? { coverage: { changedFiles: 3, uncoveredFiles: 1 } } : {}),
+    ...(empty ? { coverage: { changedFiles: 3, uncoveredFiles } } : {}),
   });
   const identity = await import("../../../convex/github/repositoryIdentity");
   const github = await import("../../../convex/pullRequests/github");
@@ -855,11 +855,631 @@ it("posts a summary review without inline comments when nothing was found", asyn
   const request = JSON.parse(f.fetch.mock.calls[0][1]!.body as string);
   expect(request).not.toHaveProperty("comments");
   expect(request.body).toBe(
-    `Gitdog found no supported defects in \`${source.headSha.slice(0, 12)}\`. 1 of 3 changed files were not fully reviewed. This is not a merge approval; tests were not run.\n\n[Gitdog](https://gitdog.dev)\n\n<!-- gitdog-pr-review:${f.actionId} -->`,
+    `**No issues found** in ${source.headSha}\n\n1 of 3 changed files was not fully reviewed.\n\n<sub>Not a merge approval. Tests were not run. [Gitdog](https://gitdog.dev)</sub>\n\n<!-- gitdog-pr-review:${f.actionId} -->`,
   );
   expect(
     (await f.t.run((ctx) => ctx.db.get(f.actionId)))?.executionResult,
   ).toMatchObject({ reviewId: 77, published: true });
+});
+describe("approval", () => {
+  const ownApproval = {
+    id: 5,
+    state: "APPROVED",
+    body: "earlier",
+    commit_id: "c".repeat(40),
+    html_url: "https://github.com/owner/repo/pull/12#pullrequestreview-5",
+    user: { type: "Bot", login: "gitdogbot[bot]" },
+  };
+  async function github(
+    threads: Array<{ isResolved: boolean }>,
+    graphql: {
+      failed?: boolean;
+      more?: boolean;
+      dismissFails?: boolean;
+      errors?: boolean;
+      author?: string;
+    } = {},
+  ) {
+    const helpers = await import("../../../convex/github/helpers");
+    return vi
+      .mocked(helpers.fetchGitHubAppJsonWithRetry)
+      .mockImplementation(async (url) => {
+        if (url.endsWith("/graphql") && graphql.failed)
+          throw new Error("GraphQL unavailable");
+        if (url.includes("/dismissals") && graphql.dismissFails)
+          throw new Error("Dismissal refused");
+        if (url.endsWith("/graphql"))
+          return {
+            ...(graphql.errors ? { errors: [{ message: "partial" }] } : {}),
+            data: {
+              repository: {
+                pullRequest: {
+                  reviewThreads: {
+                    pageInfo: { hasNextPage: graphql.more === true },
+                    nodes: threads.map((t) => ({
+                      ...t,
+                      comments: {
+                        nodes: [
+                          { author: { login: graphql.author ?? "gitdogbot" } },
+                        ],
+                      },
+                    })),
+                  },
+                },
+              },
+            },
+          } as never;
+        if (url.includes("/reviews?")) return [ownApproval] as never;
+        return {} as never;
+      });
+  }
+  it("approves past a thread someone else left open", async () => {
+    const f = await publicationFixture(true, 0);
+    await github([{ isResolved: false }], { author: "maintainer" });
+    await f.t.action(internal.pullRequests.internalAction.publish, {
+      actionId: f.actionId,
+      manual: false,
+    });
+    expect(JSON.parse(f.fetch.mock.calls[0][1]!.body as string).event).toBe(
+      "APPROVE",
+    );
+  });
+  it("approves a fully covered review with nothing found", async () => {
+    const f = await publicationFixture(true, 0);
+    const calls = await github([{ isResolved: true }]);
+    await f.t.action(internal.pullRequests.internalAction.publish, {
+      actionId: f.actionId,
+      manual: false,
+    });
+    const request = JSON.parse(f.fetch.mock.calls[0][1]!.body as string);
+    expect(request.event).toBe("APPROVE");
+    expect(request.body).toContain("Approved because no issues were found");
+    expect(calls.mock.calls.some(([url]) => url.includes("/dismissals"))).toBe(
+      false,
+    );
+  });
+  it.each([
+    ["an earlier Gitdog thread is unresolved", [{ isResolved: false }], {}],
+    ["the thread read fails", [], { failed: true }],
+    ["the threads do not fit one page", [], { more: true }],
+    ["GitHub reports errors with the threads", [], { errors: true }],
+  ] as const)("only comments when %s", async (_case, threads, graphql) => {
+    const f = await publicationFixture(true, 0);
+    const calls = await github([...threads], graphql);
+    expect(
+      await f.t.action(internal.pullRequests.internalAction.publish, {
+        actionId: f.actionId,
+        manual: false,
+      }),
+    ).toEqual({ success: true });
+    expect(calls.mock.calls.some(([url]) => url.endsWith("/graphql"))).toBe(
+      true,
+    );
+    expect(JSON.parse(f.fetch.mock.calls[0][1]!.body as string).event).toBe(
+      "COMMENT",
+    );
+  });
+  it("only comments when the PR head moved past the reviewed commit", async () => {
+    const f = await publicationFixture(true, 0);
+    const calls = await github([]);
+    const answer = calls.getMockImplementation()!;
+    calls.mockImplementation(async (url, ...rest) =>
+      url.includes("/compare/")
+        ? ({ status: "ahead" } as never)
+        : answer(url, ...rest),
+    );
+    f.live.mockResolvedValue({
+      id: 1,
+      number: 12,
+      state: "open",
+      draft: false,
+      title: source.title,
+      body: source.body,
+      user: { login: "author" },
+      head: { sha: "d".repeat(40) },
+      base: { sha: source.baseSha, repo: { id: 123 } },
+      changed_files: 1,
+    });
+    await f.t.action(internal.pullRequests.internalAction.publish, {
+      actionId: f.actionId,
+      manual: false,
+    });
+    expect(JSON.parse(f.fetch.mock.calls[0][1]!.body as string)).toMatchObject({
+      event: "COMMENT",
+      commit_id: source.headSha,
+    });
+  });
+  it("posts a comment when GitHub refuses the approval", async () => {
+    const f = await publicationFixture(true, 0);
+    await github([]);
+    const posted = f.fetch.getMockImplementation()!;
+    f.fetch
+      .mockResolvedValueOnce(new Response(null, { status: 422 }))
+      .mockImplementation(posted);
+    expect(
+      await f.t.action(internal.pullRequests.internalAction.publish, {
+        actionId: f.actionId,
+        manual: false,
+      }),
+    ).toEqual({ success: true });
+    const [first, second] = f.fetch.mock.calls.map(
+      (call) => JSON.parse(call[1]!.body as string) as Record<string, string>,
+    );
+    expect(first.event).toBe("APPROVE");
+    expect(second.event).toBe("COMMENT");
+    expect(second.body).toContain("Not a merge approval");
+  });
+  it("withdraws its approval once a newer commit is pushed", async () => {
+    const f = await publicationFixture(true, 0);
+    await github([]);
+    await f.t.action(internal.pullRequests.internalAction.publish, {
+      actionId: f.actionId,
+      manual: false,
+    });
+    const ticket = () =>
+      f.t.run(async (ctx) => ctx.db.query("tickets").first());
+    expect((await ticket())?.pullRequestApprovedSha).toBe(source.headSha);
+    // The same commit observed again keeps the approval.
+    await f.observe();
+    expect((await ticket())?.pullRequestApprovedSha).toBe(source.headSha);
+    const calls = await github([]);
+    await f.observe({ ...source, headSha: "e".repeat(40) });
+    await drainScheduledFunctions(f.t);
+    // Forgotten only once the dismissal ran.
+    expect((await ticket())?.pullRequestApprovedSha).toBeUndefined();
+    expect(
+      calls.mock.calls.some(([url]) =>
+        url.endsWith("/pulls/12/reviews/5/dismissals"),
+      ),
+    ).toBe(true);
+  });
+  it("only comments after a push was dropped during the review", async () => {
+    const f = await publicationFixture(true, 0);
+    await github([]);
+    await f.t.run(async (ctx) => {
+      const ticket = (await ctx.db.query("tickets").first())!;
+      await ctx.db.patch(ticket._id, { pullRequestDroppedAt: 1 });
+    });
+    await f.t.action(internal.pullRequests.internalAction.publish, {
+      actionId: f.actionId,
+      manual: false,
+    });
+    expect(JSON.parse(f.fetch.mock.calls[0][1]!.body as string).event).toBe(
+      "COMMENT",
+    );
+  });
+  it("does not withdraw an approval when only the thread read fails", async () => {
+    const f = await publicationFixture(true, 0);
+    const calls = await github([], { failed: true });
+    await f.t.action(internal.pullRequests.internalAction.publish, {
+      actionId: f.actionId,
+      manual: false,
+    });
+    expect(calls.mock.calls.some(([url]) => url.includes("/dismissals"))).toBe(
+      false,
+    );
+  });
+  it("dismisses earlier approvals when an already posted review had findings", async () => {
+    const f = await publicationFixture();
+    const calls = await github([]);
+    const answer = calls.getMockImplementation()!;
+    calls.mockImplementation(async (url, ...rest) =>
+      url.includes("/reviews?")
+        ? ([
+            {
+              id: 9,
+              state: "COMMENTED",
+              body: `<!-- gitdog-pr-review:${f.actionId} -->`,
+              commit_id: source.headSha,
+              html_url:
+                "https://github.com/owner/repo/pull/12#pullrequestreview-9",
+              user: { type: "Bot", login: "gitdogbot[bot]" },
+            },
+            ownApproval,
+          ] as never)
+        : answer(url, ...rest),
+    );
+    expect(
+      await f.t.action(internal.pullRequests.internalAction.publish, {
+        actionId: f.actionId,
+        manual: true,
+      }),
+    ).toEqual({ success: true });
+    expect(f.fetch).not.toHaveBeenCalled();
+    expect(
+      calls.mock.calls.some(([url]) => url.endsWith("/reviews/5/dismissals")),
+    ).toBe(true);
+  });
+  it.each([
+    [0, "approved"],
+    [1, "completed"],
+  ])(
+    "offers a no-change follow-up for approval only when everything was reviewed (first review left %i files)",
+    async (uncovered, status) => {
+      const f = await fixture();
+      const first = (await f.observe())!;
+      await f.t.mutation(internal.pullRequests.internalMutation.propose, {
+        actionId: first,
+        source,
+        findings: [],
+        excludedPaths: uncovered ? ["binary.png"] : [],
+        filesRead: [],
+        coverage: { changedFiles: 2, uncoveredFiles: uncovered },
+      });
+      await f.t.run((ctx) =>
+        ctx.db.patch(first, {
+          status: "completed",
+          executionResult: { published: true },
+        }),
+      );
+      const next = { ...source, headSha: "e".repeat(40) };
+      const second = (await f.observe(next))!;
+      await f.t.mutation(internal.pullRequests.internalMutation.propose, {
+        actionId: second,
+        source: next,
+        findings: [],
+        excludedPaths: [],
+        filesRead: [],
+        coverage: { changedFiles: 0, uncoveredFiles: 0, since: source.headSha },
+      });
+      const action = await f.t.run((ctx) => ctx.db.get(second));
+      expect(action?.status).toBe(status);
+      if (status === "approved")
+        expect(action?.proposedChanges?.suggestedResponse).toContain(
+          `No pull request changes since ${source.headSha}.`,
+        );
+    },
+  );
+  it("does not approve a review that had nothing to review", async () => {
+    const f = await fixture();
+    const actionId = (await f.observe())!;
+    await f.t.mutation(internal.pullRequests.internalMutation.propose, {
+      actionId,
+      source,
+      findings: [],
+      excludedPaths: [],
+      filesRead: [],
+      // A pull request that only deletes files.
+      coverage: { changedFiles: 0, uncoveredFiles: 0 },
+    });
+    expect(
+      (await f.t.run((ctx) => ctx.db.get(actionId)))?.proposedChanges
+        ?.coverageComplete,
+    ).toBe(false);
+  });
+  it("records how many findings a single review left out", async () => {
+    const f = await fixture();
+    const actionId = (await f.observe())!;
+    await f.t.mutation(internal.pullRequests.internalMutation.propose, {
+      actionId,
+      source,
+      findings,
+      findingCount: 10,
+      excludedPaths: [],
+      filesRead: [],
+      coverage: { changedFiles: 1, uncoveredFiles: 0 },
+    });
+    const proposal = (await f.t.run((ctx) => ctx.db.get(actionId)))
+      ?.proposedChanges;
+    expect(proposal?.findingCount).toBe(10);
+    expect(proposal?.suggestedResponse).toContain(
+      "Showing the 1 highest-priority findings out of 10.",
+    );
+  });
+  it("builds a follow-up on the review of the commit it started from", async () => {
+    const f = await fixture();
+    const first = (await f.observe())!;
+    const ticketId = (await f.t.run((ctx) => ctx.db.get(first)))!.ticketId;
+    await f.t.run((ctx) => ctx.db.delete(first));
+    const finished = (headSha: string, coverageComplete: boolean) =>
+      f.t.run((ctx) =>
+        ctx.db.insert("ticketActions", {
+          ticketId,
+          actionType: "review",
+          status: "completed",
+          proposalVersion: 1,
+          chatHistory: [],
+          createdAt: Date.now(),
+          executionResult: { published: true, inlineFindings: true },
+          proposedChanges: {
+            source: { ...source, headSha },
+            mergeBaseSha: source.baseSha,
+            findings: [],
+            uncoveredFiles: coverageComplete ? 0 : 1,
+            changedFiles: 1,
+            excludedPaths: [],
+            coverageComplete,
+          },
+        }),
+      );
+    await finished(source.headSha, true);
+    vi.advanceTimersByTime(1000);
+    // A newer, incomplete review of another commit must not be the base.
+    await finished("c".repeat(40), false);
+    const next = { ...source, headSha: "e".repeat(40) };
+    const followUp = (await f.observe(next))!;
+    await f.t.mutation(internal.pullRequests.internalMutation.propose, {
+      actionId: followUp,
+      source: next,
+      findings: [],
+      excludedPaths: [],
+      filesRead: [],
+      coverage: { changedFiles: 1, uncoveredFiles: 0, since: source.headSha },
+    });
+    expect(
+      (await f.t.run((ctx) => ctx.db.get(followUp)))?.proposedChanges
+        ?.coverageComplete,
+    ).toBe(true);
+  });
+  it("remembers an approval whose post outcome is unclear", async () => {
+    const f = await publicationFixture(true, 0);
+    await github([]);
+    f.fetch.mockRejectedValue(new TypeError("network interruption"));
+    await f.t.action(internal.pullRequests.internalAction.publish, {
+      actionId: f.actionId,
+      manual: false,
+    });
+    expect(
+      (await f.t.run((ctx) => ctx.db.query("tickets").first()))
+        ?.pullRequestApprovedSha,
+    ).toBe(source.headSha);
+  });
+  it("keeps an approval of the current head and retries a failed withdrawal", async () => {
+    const f = await publicationFixture(true, 0);
+    const calls = await github([]);
+    const answer = calls.getMockImplementation()!;
+    const current = { ...ownApproval, id: 6, commit_id: source.headSha };
+    calls.mockImplementation(async (url, ...rest) =>
+      url.includes("/reviews?")
+        ? ([ownApproval, current] as never)
+        : answer(url, ...rest),
+    );
+    const ticketId = (await f.t.run((ctx) => ctx.db.query("tickets").first()))!
+      ._id;
+    const withdraw = () =>
+      f.t.action(internal.pullRequests.internalAction.dismissStaleApproval, {
+        repositoryId: f.repositoryId,
+        number: 12,
+        ticketId,
+        staleSha: "c".repeat(40),
+      });
+    await f.t.run((ctx) =>
+      ctx.db.patch(ticketId, { pullRequestApprovedSha: "c".repeat(40) }),
+    );
+    f.live.mockRejectedValueOnce(new Error("GitHub unavailable"));
+    await expect(withdraw()).rejects.toThrow();
+    expect(
+      (await f.t.run((ctx) => ctx.db.get(ticketId)))?.pullRequestApprovedSha,
+    ).toBe("c".repeat(40));
+    await withdraw();
+    const dismissed = calls.mock.calls
+      .map(([url]) => url)
+      .filter((url) => url.includes("/dismissals"));
+    expect(dismissed).toEqual([
+      "https://api.github.com/repos/owner/repo/pulls/12/reviews/5/dismissals",
+    ]);
+    expect(
+      (await f.t.run((ctx) => ctx.db.get(ticketId)))?.pullRequestApprovedSha,
+    ).toBeUndefined();
+  });
+  it("keeps an approval newer than the review that found issues", async () => {
+    const f = await publicationFixture();
+    const calls = await github([]);
+    const answer = calls.getMockImplementation()!;
+    calls.mockImplementation(async (url, ...rest) =>
+      url.includes("/reviews?")
+        ? ([{ ...ownApproval, id: 500 }] as never)
+        : answer(url, ...rest),
+    );
+    await f.t.action(internal.pullRequests.internalAction.publish, {
+      actionId: f.actionId,
+      manual: true,
+    });
+    expect(calls.mock.calls.some(([url]) => url.includes("/dismissals"))).toBe(
+      false,
+    );
+  });
+  async function noChangeFollowUp(removedFiles?: number) {
+    const f = await publicationFixture(true, 0);
+    await f.t.run((ctx) =>
+      ctx.db.patch(f.actionId, {
+        status: "completed",
+        executionResult: { published: true, inlineFindings: true },
+      }),
+    );
+    const next = { ...source, headSha: "e".repeat(40) };
+    const actionId = (await f.observe(next))!;
+    await f.t.mutation(internal.pullRequests.internalMutation.propose, {
+      actionId,
+      source: next,
+      findings: [],
+      excludedPaths: [],
+      filesRead: [],
+      coverage: {
+        changedFiles: 0,
+        uncoveredFiles: 0,
+        since: source.headSha,
+        ...(removedFiles ? { removedFiles } : {}),
+      },
+    });
+    const live = await f.live.getMockImplementation()!(
+      {} as never,
+      12 as never,
+    );
+    f.live.mockResolvedValue({ ...live, head: { sha: next.headSha } } as never);
+    const publish = () =>
+      f.t.action(internal.pullRequests.internalAction.publish, {
+        actionId,
+        manual: false,
+      });
+    return { ...f, actionId, next, publish };
+  }
+  it("approves again after a push that changed nothing in the PR diff", async () => {
+    const f = await noChangeFollowUp();
+    await github([]);
+    f.fetch.mockClear();
+    f.fetch.mockResolvedValue(
+      Response.json({
+        id: 78,
+        commit_id: f.next.headSha,
+        body: `<!-- gitdog-pr-review:${f.actionId} -->`,
+        html_url: "https://github.com/owner/repo/pull/12#pullrequestreview-78",
+      }),
+    );
+    expect(await f.publish()).toEqual({ success: true });
+    const request = JSON.parse(f.fetch.mock.calls[0][1]!.body as string);
+    expect(request.event).toBe("APPROVE");
+    expect(request.body).toContain(
+      `No pull request changes since ${source.headSha}.`,
+    );
+  });
+  it("posts nothing for a no-change follow-up that cannot approve", async () => {
+    const f = await noChangeFollowUp();
+    await github([{ isResolved: false }]);
+    f.fetch.mockClear();
+    expect(await f.publish()).toEqual({ success: true });
+    expect(f.fetch).not.toHaveBeenCalled();
+    expect(
+      (await f.t.run((ctx) => ctx.db.get(f.actionId)))?.executionResult,
+    ).toEqual({ published: false, reason: "no_new_changes" });
+  });
+  it("does not approve again after a push that only deleted files", async () => {
+    const f = await noChangeFollowUp(1);
+    expect(
+      (await f.t.run((ctx) => ctx.db.get(f.actionId)))?.executionResult,
+    ).toEqual({ published: false, reason: "no_new_changes" });
+  });
+  it("keeps tracking an approval GitHub refused to dismiss after a push", async () => {
+    const f = await publicationFixture(true, 0);
+    await github([], { dismissFails: true });
+    const ticketId = (await f.t.run((ctx) => ctx.db.query("tickets").first()))!
+      ._id;
+    await f.t.run((ctx) =>
+      ctx.db.patch(ticketId, { pullRequestApprovedSha: "c".repeat(40) }),
+    );
+    await f.t.action(
+      internal.pullRequests.internalAction.dismissStaleApproval,
+      {
+        repositoryId: f.repositoryId,
+        number: 12,
+        ticketId,
+        staleSha: "c".repeat(40),
+      },
+    );
+    expect(
+      (await f.t.run((ctx) => ctx.db.get(ticketId)))?.pullRequestApprovedSha,
+    ).toBe("c".repeat(40));
+  });
+  it("keeps tracking an approval while a review may still post it", async () => {
+    const f = await publicationFixture(true, 0);
+    const ticketId = (await f.t.run((ctx) => ctx.db.query("tickets").first()))!
+      ._id;
+    await f.t.run(async (ctx) => {
+      await ctx.db.patch(ticketId, { pullRequestApprovedSha: source.headSha });
+      await ctx.db.patch(f.actionId, { executionClaimedAt: 1 });
+    });
+    await f.t.mutation(internal.pullRequests.internalMutation.forgetApproval, {
+      ticketId,
+      staleSha: source.headSha,
+    });
+    expect(
+      (await f.t.run((ctx) => ctx.db.get(ticketId)))?.pullRequestApprovedSha,
+    ).toBe(source.headSha);
+  });
+  it("records an earlier approval GitHub refused to dismiss", async () => {
+    const f = await publicationFixture();
+    await github([], { dismissFails: true });
+    expect(
+      await f.t.action(internal.pullRequests.internalAction.publish, {
+        actionId: f.actionId,
+        manual: true,
+      }),
+    ).toEqual({ success: true });
+    expect(
+      (await f.t.run((ctx) => ctx.db.get(f.actionId)))?.executionResult,
+    ).toMatchObject({ published: true, keptApprovals: [5] });
+  });
+  it("only comments when a changed file was not fully reviewed", async () => {
+    const f = await publicationFixture(true, 1);
+    await github([]);
+    await f.t.action(internal.pullRequests.internalAction.publish, {
+      actionId: f.actionId,
+      manual: false,
+    });
+    expect(JSON.parse(f.fetch.mock.calls[0][1]!.body as string).event).toBe(
+      "COMMENT",
+    );
+  });
+  it("dismisses an earlier Gitdog approval when a review has findings", async () => {
+    const f = await publicationFixture();
+    const calls = await github([]);
+    expect(
+      await f.t.action(internal.pullRequests.internalAction.publish, {
+        actionId: f.actionId,
+        manual: true,
+      }),
+    ).toEqual({ success: true });
+    expect(JSON.parse(f.fetch.mock.calls[0][1]!.body as string).event).toBe(
+      "COMMENT",
+    );
+    const dismissal = calls.mock.calls.find(([url]) =>
+      url.endsWith("/pulls/12/reviews/5/dismissals"),
+    );
+    expect(dismissal?.[3]).toMatchObject({ method: "PUT" });
+    // Every finding became a thread, so a later review may approve.
+    expect(
+      (await f.t.run((ctx) => ctx.db.get(f.actionId)))?.executionResult,
+    ).toMatchObject({ inlineFindings: true });
+  });
+  it.each([
+    [1, [false, false], undefined],
+    [0, [true, true], undefined],
+    // Findings of the first review that never became threads.
+    [0, [true, false], false],
+    [0, [true, true], true],
+  ])(
+    "carries coverage into a follow-up when the first review left %i files (inline findings: %s)",
+    async (uncovered, expected, inlineFindings) => {
+      const f = await fixture();
+      const first = (await f.observe())!;
+      await f.t.mutation(internal.pullRequests.internalMutation.propose, {
+        actionId: first,
+        source,
+        findings: [],
+        excludedPaths: uncovered ? ["binary.png"] : [],
+        filesRead: [],
+        coverage: { changedFiles: 2, uncoveredFiles: uncovered },
+      });
+      await f.t.run(async (ctx) => {
+        const proposal = (await ctx.db.get(first))!.proposedChanges;
+        await ctx.db.patch(first, {
+          status: "completed",
+          executionResult: {
+            published: true,
+            ...(inlineFindings === undefined ? {} : { inlineFindings }),
+          },
+          ...(inlineFindings === undefined
+            ? {}
+            : { proposedChanges: { ...proposal, findingCount: 2 } }),
+        });
+      });
+      const next = { ...source, headSha: "e".repeat(40) };
+      const second = (await f.observe(next))!;
+      await f.t.mutation(internal.pullRequests.internalMutation.propose, {
+        actionId: second,
+        source: next,
+        findings: [],
+        excludedPaths: [],
+        filesRead: [],
+        coverage: { changedFiles: 1, uncoveredFiles: 0, since: source.headSha },
+      });
+      const proposals = await f.t.run(async (ctx) => [
+        (await ctx.db.get(first))?.proposedChanges?.coverageComplete,
+        (await ctx.db.get(second))?.proposedChanges?.coverageComplete,
+      ]);
+      expect(proposals).toEqual(expected);
+    },
+  );
 });
 describe("batched publication", () => {
   async function batchedPublication() {
@@ -1007,6 +1627,10 @@ describe("batched publication", () => {
     expect(retry).not.toHaveProperty("comments");
     expect(retry.body).toContain("`src/main.ts:2`");
     expect(retry.body).toContain(`<!-- gitdog-pr-review:${f.actionId} -->`);
+    // Findings in one body have no threads to resolve.
+    expect(
+      (await f.t.run((ctx) => ctx.db.get(f.actionId)))?.executionResult,
+    ).toMatchObject({ inlineFindings: false });
   });
 });
 it("still posts on the reviewed commit after a newer push", async () => {
@@ -1614,7 +2238,7 @@ describe("batched PR reviews", () => {
     expect(JSON.stringify(request.comments)).toContain(
       "return cache.get(key);",
     );
-    expect(request.body).toContain("Gitdog found 2 potential defects");
+    expect(request.body).toContain("**2 potential issues**");
     expect(request.body).not.toContain("were not fully reviewed");
     expect(request.body).toContain(`<!-- gitdog-pr-review:${f.actionId} -->`);
     // Approvers still preview every finding.
@@ -1676,7 +2300,7 @@ describe("batched PR reviews", () => {
       "src/file-1.ts",
     ]);
     expect(request.body).toContain(
-      "1 of 3 changed files were not fully reviewed.",
+      "1 of 3 changed files was not fully reviewed.",
     );
   });
 
@@ -2035,7 +2659,7 @@ describe("batched PR reviews", () => {
     });
     const request = JSON.parse(f.fetch.mock.calls.at(-1)![1]!.body as string);
     expect(request.body).toContain(
-      `Reviewed the 1 file affected since \`${source.headSha.slice(0, 12)}\`.`,
+      `Reviewed the 1 file changed since ${source.headSha}.`,
     );
     expect(request.comments).toHaveLength(1);
   });
@@ -2067,13 +2691,16 @@ describe("batched PR reviews", () => {
     ).toMatchObject({ changedFiles: 1, reviewedSince: source.headSha });
   });
 
-  async function followUp(changed: Set<string> | null) {
+  async function followUp(
+    changed: Set<string> | null,
+    previous: Set<string> | null = null,
+  ) {
     const f = await batchFixture(undefined, 0, 10_000_000, [], 61);
     for (const page of [undefined, 2, 3, 4]) await f.generate(page);
     await drainScheduledFunctions(f.t);
     const github = await import("../../../convex/pullRequests/github");
     vi.spyOn(github, "changedSince").mockResolvedValue(
-      changed && { paths: changed, mergeBaseSha: source.baseSha },
+      changed && { paths: changed, mergeBaseSha: source.baseSha, previous },
     );
     const next = { ...source, headSha: "e".repeat(40) };
     f.live.head = { sha: next.headSha };
@@ -2088,6 +2715,20 @@ describe("batched PR reviews", () => {
   it("reviews the whole PR again after a force push", async () => {
     const f = await followUp(null);
     expect(f.batches).toEqual([`pr/${f.nextId}/${f.next.headSha}/batch/1/1`]);
+  });
+  it("does not approve again after a push deleted a file the PR added", async () => {
+    // src/added.ts was in the reviewed diff and is gone from the PR now.
+    const f = await followUp(
+      new Set(["src/added.ts"]),
+      new Set(["src/added.ts", "src/file-1.ts"]),
+    );
+    await drainScheduledFunctions(f.t);
+    expect(f.fetch).not.toHaveBeenCalled();
+    expect(await f.t.run((ctx) => ctx.db.get(f.nextId))).toMatchObject({
+      status: "completed",
+      executionResult: { published: false, reason: "no_new_changes" },
+      proposedChanges: { coverageComplete: false },
+    });
   });
   it("completes without posting when a push changed nothing in the PR diff", async () => {
     const f = await followUp(new Set(["README.md"]));

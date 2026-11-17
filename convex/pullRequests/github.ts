@@ -206,7 +206,12 @@ export async function changedSince(
   access: VerifiedRepositoryAccess,
   since: { headSha: string; mergeBaseSha: string },
   pr: PullRequest,
-): Promise<{ paths: Set<string>; mergeBaseSha: string } | null> {
+): Promise<{
+  paths: Set<string>;
+  mergeBaseSha: string;
+  // Files of the PR diff the earlier review saw, or null if unknown.
+  previous: Set<string> | null;
+} | null> {
   if (!sha(since.headSha) || !sha(since.mergeBaseSha)) return null;
   const compare = (from: string, to: string) =>
     readReviewJson<{
@@ -240,12 +245,19 @@ export async function changedSince(
     const mergeBase = (await compare(pr.base.sha, pr.head.sha))
       .merge_base_commit?.sha;
     if (!sha(mergeBase)) return null;
-    if (mergeBase === since.mergeBaseSha)
-      return { paths: new Set(head), mergeBaseSha: mergeBase };
-    const base = changedFiles(await compare(since.mergeBaseSha, mergeBase));
-    return base
-      ? { paths: new Set([...head, ...base]), mergeBaseSha: mergeBase }
-      : null;
+    const base =
+      mergeBase === since.mergeBaseSha
+        ? []
+        : changedFiles(await compare(since.mergeBaseSha, mergeBase));
+    if (!base) return null;
+    const earlier = await compare(since.mergeBaseSha, since.headSha)
+      .then(changedFiles)
+      .catch(() => null);
+    return {
+      paths: new Set([...head, ...base]),
+      mergeBaseSha: mergeBase,
+      previous: earlier ? new Set(earlier) : null,
+    };
   } catch {
     return null;
   }
@@ -387,4 +399,68 @@ export async function treePaths(
   return value.tree
     .filter((x) => x.type === "blob" && safePath(x.path))
     .map((x) => x.path);
+}
+
+type ReviewThreadPage = {
+  errors?: unknown[];
+  data?: {
+    repository?: {
+      pullRequest?: {
+        reviewThreads?: {
+          pageInfo?: { hasNextPage?: boolean };
+          nodes?: Array<{
+            isResolved?: boolean;
+            comments?: {
+              nodes?: Array<{ author?: { login?: string } | null }>;
+            };
+          }>;
+        };
+      };
+    };
+  };
+};
+
+/**
+ * Whether a review thread Gitdog started is still unresolved. An answer that
+ * cannot be read completely counts as unresolved, so it never approves.
+ */
+export async function hasUnresolvedOwnThreads(
+  access: VerifiedRepositoryAccess,
+  number: number,
+  botLogin: string,
+): Promise<boolean> {
+  const page = await runReviewRequest(
+    { operation: "Read review threads" },
+    () =>
+      fetchGitHubAppJsonWithRetry<ReviewThreadPage>(
+        "https://api.github.com/graphql",
+        access.token,
+        "Read review threads",
+        {
+          method: "POST",
+          maxAttempts: REVIEW_READ_ATTEMPTS,
+          jsonBody: {
+            query:
+              "query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){reviewThreads(first:100){pageInfo{hasNextPage} nodes{isResolved comments(first:1){nodes{author{login}}}}}}}}",
+            variables: { owner: access.owner, repo: access.repo, number },
+          },
+        },
+      ),
+  );
+  const threads = page.data?.repository?.pullRequest?.reviewThreads;
+  // GraphQL names an app by its slug, REST by `slug[bot]`.
+  const login = (value: string) => value.toLowerCase().replace(/\[bot\]$/, "");
+  const own = login(botLogin);
+  if (
+    !own ||
+    page.errors?.length ||
+    !threads?.nodes ||
+    threads.pageInfo?.hasNextPage !== false
+  )
+    return true;
+  return threads.nodes.some(
+    (thread) =>
+      thread.isResolved !== true &&
+      login(thread.comments?.nodes?.[0]?.author?.login ?? "") === own,
+  );
 }

@@ -63,11 +63,38 @@ describe("commit-grounded PR finding validation", () => {
   });
   it("summarizes a review without findings and its coverage", () => {
     const sha = "a".repeat(40);
+    const footer =
+      "<sub>Not a merge approval. Tests were not run. [Gitdog](https://gitdog.dev)</sub>";
+    // A bare hash lets GitHub link the commit.
     expect(reviewBody(0, sha, { changedFiles: 5, uncoveredFiles: 2 })).toBe(
-      "Gitdog found no supported defects in `aaaaaaaaaaaa`. 2 of 5 changed files were not fully reviewed. This is not a merge approval; tests were not run.\n\n[Gitdog](https://gitdog.dev)",
+      `**No issues found** in ${sha}\n\n2 of 5 changed files were not fully reviewed.\n\n${footer}`,
     );
     expect(reviewBody(1, sha, { changedFiles: 5, uncoveredFiles: 0 })).toBe(
-      "Gitdog found 1 potential defect in `aaaaaaaaaaaa`. Findings are limited to the reviewed changes; tests were not run.\n\n[Gitdog](https://gitdog.dev)",
+      `**1 potential issue** in ${sha}\n\n${footer}`,
+    );
+    expect(
+      reviewBody(0, sha, {
+        changedFiles: 1,
+        uncoveredFiles: 0,
+        since: "b".repeat(40),
+      }),
+    ).toBe(
+      `**No issues found** in ${sha}\n\nReviewed the 1 file changed since ${"b".repeat(40)}.\n\n${footer}`,
+    );
+    expect(reviewBody(0, sha, { changedFiles: 3, uncoveredFiles: 3 })).toBe(
+      `**Review not completed** for ${sha}\n\nGitdog could not review the 3 changed files.\n\n${footer}`,
+    );
+    expect(
+      reviewBody(0, sha, { changedFiles: 4, uncoveredFiles: 1 }),
+    ).toContain("1 of 4 changed files was not fully reviewed.");
+    expect(
+      reviewBody(0, sha, { changedFiles: 2, uncoveredFiles: 0 }, [], true),
+    ).toBe(
+      `**No issues found** in ${sha}\n\n<sub>Approved because no issues were found in fully reviewed changes. Tests were not run. [Gitdog](https://gitdog.dev)</sub>`,
+    );
+    // Anything that is not a full hash stays in a code span.
+    expect(reviewBody(0, "main")).toBe(
+      `**No issues found** in \`main\`\n\n${footer}`,
     );
   });
   it("normalizes a schema-required null suggestion without weakening evidence checks", () => {
@@ -1211,7 +1238,7 @@ describe("combined review body", () => {
     expect(html).toContain("<p><code>src/service.ts:2</code></p>");
     expect(html.trimEnd().endsWith("<!-- gitdog-pr-review:id -->")).toBe(true);
     expect(findingBody(finding)).toBe(
-      `[P2] ${finding.title}\n\n${finding.body}`,
+      `**[P2] ${finding.title}**\n\n${finding.body}`,
     );
   });
 });
