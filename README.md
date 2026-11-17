@@ -40,8 +40,8 @@
 ## Why Gitdog
 
 Maintainers answer the same questions, triage vague reports and review routine
-changes every day. Gitdog indexes your repository and drafts the work for you —
-with the actual code as evidence, not generic advice.
+changes every day. Gitdog indexes your repository and drafts the work for you,
+with the actual code as evidence instead of generic advice.
 
 |                          | What it does                                                                            |
 | ------------------------ | --------------------------------------------------------------------------------------- |
@@ -53,6 +53,20 @@ with the actual code as evidence, not generic advice.
 | **Approval first**       | With approval on (the default), drafts wait in your queue until you approve them        |
 | **Your own AI keys**     | Run generation on your Anthropic or OpenAI key, encrypted at rest and never shown again |
 | **Team workspace**       | Share projects with members and keep per-project settings and usage in one place        |
+
+## Get started
+
+**On the web**: sign in with GitHub at [gitdog.dev](https://gitdog.dev), install
+the GitHub App and connect a repository.
+
+**From the terminal**: the [`gitdog` CLI](packages/cli) manages projects,
+settings, approvals and pull request reviews.
+
+```sh
+npx gitdog@latest login
+npx gitdog@latest init owner/repo
+npx gitdog@latest tickets pending
+```
 
 ## How it works
 
@@ -67,21 +81,21 @@ flowchart LR
 ```
 
 1. **Connect** a repository through the Gitdog GitHub App.
-2. **Index** — Gitdog builds a searchable index of your code and keeps it in
-   sync with the default branch.
-3. **Draft** — new issues, discussions and pull requests get a reply or review
+2. **Index**: Gitdog builds a searchable index of your code and keeps it in sync
+   with the default branch.
+3. **Draft**: new issues, discussions and pull requests get a reply or review
    grounded in the indexed source.
-4. **Approve** — review the draft in Gitdog or the CLI, then publish it. A pull
-   request review with no findings needs no approval: it posts at once and, when
-   every changed file was reviewed and no Gitdog thread is open, approves the
-   reviewed commit. A later push, including updating the branch, withdraws that
-   approval until `@gitdogbot review` reviews the new commits.
+4. **Approve**: review the draft in Gitdog or the CLI, then publish it.
 
-## Commands
+A pull request review with no findings needs no approval. It posts at once and,
+when every changed file was reviewed and no Gitdog thread is open, approves the
+reviewed commit. A later push, including updating the branch, withdraws that
+approval until the new commits are reviewed.
+
+## Pull request commands
 
 Gitdog reviews a pull request once, when it is opened or marked ready for
-review. After that, the pull request author or a collaborator asks for more in
-a pull request comment, or from the CLI:
+review. After that, ask for more in a pull request comment or from the CLI:
 
 | Pull request comment     | CLI                                         | What it does                                     |
 | ------------------------ | ------------------------------------------- | ------------------------------------------------ |
@@ -90,90 +104,35 @@ a pull request comment, or from the CLI:
 | `@gitdogbot resolve`     | `gitdog reviews resolve <ticket-id>`        | Resolves every Gitdog review thread              |
 | `@gitdogbot help`        | `gitdog reviews --help`                     | Lists the commands                               |
 
-A command is a comment line that starts with the mention, or follows another
-review bot's command on the same line (`@coderabbitai review @gitdogbot
-review`), in the pull request conversation; replies inside a review thread are
-not read. `@gitdog` works as shorthand, but it also notifies the GitHub user
-of that name, so `@gitdogbot` is preferred. While a review runs, Gitdog keeps
-one status comment on the pull request up to date: reviewing, ready for
-approval, reviewed, or why it could not finish. Collaborators can run
-every command; the pull request author, who may work from a fork, can run all
-but a full review. A review that failed or ran out of tokens can be requested
-again, and pull requests opened by bots such as Dependabot are not reviewed.
+- **Where**: a comment line in the pull request conversation that starts with
+  the mention, or follows another review bot's command on the same line
+  (`@coderabbitai review @gitdogbot review`). Replies inside a review thread
+  are not read.
+- **Who**: collaborators can run every command. The pull request author, who
+  may work from a fork, can run all but `full review`.
+- **`@gitdog`** works as shorthand, but it also notifies the GitHub user of that
+  name, so `@gitdogbot` is preferred.
+- **Status**: while a review runs, one status comment on the pull request shows
+  whether it is reviewing, waiting for approval, reviewed, or why it could not
+  finish. A review that failed or ran out of tokens can be requested again. For
+  automatic reviews, Gitdog posts at most one failure comment a day per pull
+  request.
+- **Limits**: someone who sends more than 10 commands an hour or 40 a day to
+  one repository is paused there for 24 hours. Pull requests opened by bots
+  such as Dependabot are not reviewed.
 
 In an issue or discussion, mention `@gitdogbot` with a question to get a reply
-grounded in the repository. When a review cannot finish, for example because the account ran out of tokens, its status comment says why; for automatic reviews Gitdog posts at most one such comment a day per pull request. Someone who sends more than 10 commands
-an hour or 40 a day to one repository is paused there for 24 hours.
+grounded in the repository.
 
-## Get started
+## Plans
 
-**On the web** — sign in with GitHub at [gitdog.dev](https://gitdog.dev),
-install the GitHub App and connect a repository. Try Gitdog with 100K one-time
-trial tokens, then use your own Anthropic or OpenAI API key or Pro; no credit
-card required.
+Start with 100K one-time trial tokens, no credit card required. After that, use
+Pro (2.4M tokens a month), prepaid token packs, or your own Anthropic or OpenAI
+API key. Gitdog runs on Claude Opus 5.5, and each Opus token counts as 2 Gitdog
+tokens. Work on your own key never uses Gitdog tokens. See
+[AI models and pricing](docs/ai-models.md).
 
-**From the terminal** — the [`gitdog` CLI](packages/cli) manages projects,
-settings, approvals and pull request reviews:
-
-```sh
-npx gitdog@latest login
-npx gitdog@latest init owner/repo
-npx gitdog@latest tickets pending
-```
-
-## Repository layout
-
-This is a monorepo managed with bun workspaces.
-
-| Path                            | Description                                                                |
-| ------------------------------- | -------------------------------------------------------------------------- |
-| [`src/`](src)                   | Web app — React 19, TypeScript, Tailwind CSS                               |
-| [`convex/`](convex)             | Backend — Convex functions, GitHub App, AI workflows and billing           |
-| [`packages/cli/`](packages/cli) | The `gitdog` CLI, published to [npm](https://www.npmjs.com/package/gitdog) |
-| [`docs/`](docs)                 | Conventions, GitHub App setup and AI model notes                           |
-
-## Development
-
-Requires Node.js 26 (`nvm use`) and Bun 1.4.4.
-
-```sh
-bun install
-cp .env.example .env.local
-bun run dev
-```
-
-| Command             | Purpose                                         |
-| ------------------- | ----------------------------------------------- |
-| `bun run dev`       | Run the web app and Convex dev backend together |
-| `bun run typecheck` | Type-check the web app, backend and e2e runners |
-| `bun run lint`      | ESLint across the monorepo                      |
-| `bun run test`      | Web and backend test suites                     |
-| `bun run test:cli`  | CLI test suite                                  |
-| `bun run check:api` | Verify the CLI API catalog matches the backend  |
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
-
-## Tech stack
-
-| Layer    | Technology                                                           |
-| -------- | -------------------------------------------------------------------- |
-| Frontend | React 19, TypeScript, Vite, Tailwind CSS, react-i18next (en, ko, ja) |
-| Backend  | Convex                                                               |
-| AI       | Claude Sonnet 5.5 with GPT-6.1 Sol fallback; your own key optional   |
-| GitHub   | GitHub App (OAuth, webhooks, repository access)                      |
-| Payments | Lemon Squeezy                                                        |
-| Hosting  | Firebase Hosting                                                     |
-
-## Documentation
-
-- [AI models and pricing](docs/ai-models.md)
-- [GitHub App setup](docs/github-app-setup.md)
-- [Code conventions](docs/convention.md)
-- [CLI reference](packages/cli/docs/REFERENCE.md)
-
-## Security
-
-### Your Anthropic and OpenAI keys
+## Your Anthropic and OpenAI keys
 
 If you bring your own provider key, this is exactly how Gitdog handles it:
 
@@ -203,7 +162,18 @@ If you bring your own provider key, this is exactly how Gitdog handles it:
   not cap it. Anyone who can open issues or pull requests on a connected public
   repository can trigger generation, so set a spend limit with the provider.
 
-### Reporting
+## Documentation
+
+- [CLI reference](packages/cli/docs/REFERENCE.md)
+- [AI models and pricing](docs/ai-models.md)
+- [GitHub App setup](docs/github-app-setup.md)
+
+## Contributing
+
+Development setup, repository layout and checks are in
+[CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Security
 
 Please report security issues privately to [hyo@hyo.dev](mailto:hyo@hyo.dev)
 instead of opening a public issue.

@@ -22,20 +22,108 @@ export const CLAUDE_API_ENDS_AT = Date.parse("2027-01-17T15:00:00Z");
 
 export const GENERATION_MODELS = {
   anthropic: {
-    modelId: "claude-sonnet-5-5",
-    name: "Claude Sonnet 5.5",
-    effort: "high",
-    inputPer1M: 2,
-    outputPer1M: 10,
+    modelId: "claude-opus-5-5",
+    name: "Claude Opus 5.5",
+    effort: "medium",
   },
   openai: {
     modelId: "gpt-6.1-sol",
     name: "GPT-6.1 Sol",
-    effort: "xhigh",
-    inputPer1M: 2,
-    outputPer1M: 10,
+    effort: "high",
   },
 } as const;
+
+/**
+ * Prices (USD per 1M tokens) and quota weights for every chat model Gitdog
+ * has billed. Retired models stay so historical usage rows remain priceable.
+ *
+ * A quota weight is how many quota tokens one provider token costs on
+ * Gitdog's key: 1 for the $2/$10 tier, 2 for a model that costs twice as
+ * much. Usage on the owner's own key is billed by the provider and is never
+ * weighted.
+ */
+export const CHAT_MODELS: Record<
+  string,
+  {
+    provider: "anthropic" | "openai" | "google";
+    inputPer1M: number;
+    outputPer1M: number;
+    quotaWeight: number;
+    // Input above the threshold bills the whole request at the multipliers.
+    longContext?: {
+      inputTokens: number;
+      inputMultiplier: number;
+      outputMultiplier: number;
+    };
+  }
+> = {
+  "claude-opus-5-5": {
+    provider: "anthropic",
+    inputPer1M: 4,
+    outputPer1M: 20,
+    quotaWeight: 2,
+  },
+  // Refusal fallback targets for Opus 5.5, priced only for recorded cost.
+  "claude-opus-5": {
+    provider: "anthropic",
+    inputPer1M: 5,
+    outputPer1M: 25,
+    quotaWeight: 2.5,
+  },
+  "claude-opus-4-8": {
+    provider: "anthropic",
+    inputPer1M: 5,
+    outputPer1M: 25,
+    quotaWeight: 2.5,
+  },
+  "claude-sonnet-5-5": {
+    provider: "anthropic",
+    inputPer1M: 2,
+    outputPer1M: 10,
+    quotaWeight: 1,
+  },
+  "gpt-6.1-sol": {
+    provider: "openai",
+    inputPer1M: 2,
+    outputPer1M: 10,
+    quotaWeight: 1,
+    longContext: {
+      inputTokens: 272_000,
+      inputMultiplier: 2,
+      outputMultiplier: 1.5,
+    },
+  },
+  [LEGACY_GOOGLE_MODELS.chatModelId]: {
+    provider: LEGACY_GOOGLE_MODELS.provider,
+    inputPer1M: LEGACY_GOOGLE_MODELS.chatInputPer1M,
+    outputPer1M: LEGACY_GOOGLE_MODELS.chatOutputPer1M,
+    quotaWeight: 1,
+  },
+};
+
+export function getChatModel(model: string, provider: string) {
+  const entry = Object.hasOwn(CHAT_MODELS, model)
+    ? CHAT_MODELS[model]
+    : undefined;
+  if (!entry || entry.provider !== provider)
+    throw new Error(
+      `Unsupported chat pricing: ${provider}/${model}. Add explicit pricing before enabling it.`,
+    );
+  return entry;
+}
+
+/**
+ * Quota weight held by every chat reservation: the highest weight among the
+ * models a Gitdog request may be routed to, so a reservation stays valid
+ * whichever provider serves it.
+ */
+export const RESERVATION_QUOTA_WEIGHT = Math.max(
+  ...Object.values(GENERATION_MODELS).map((model) => {
+    const entry = CHAT_MODELS[model.modelId];
+    if (!entry) throw new Error(`${model.modelId} has no chat pricing`);
+    return entry.quotaWeight;
+  }),
+);
 
 // ============================================
 // TOKEN PRICING (per 1M tokens in USD)
@@ -52,10 +140,10 @@ export const TOKEN_PRICING = {
 
 export const TOKEN_LIMITS = {
   // One-time trial credit granted on sign-in (stored as prepaid tokens).
-  // Enough for several issue and discussion replies and small pull request
-  // reviews. Large PRs are reviewed in batches that each hold
-  // REVIEW_BATCH_TOKEN_ESTIMATE up front, so a trial alone may not start one;
-  // the owner's own key has no such limit.
+  // Enough for a few issue and discussion replies and small pull request
+  // reviews; Opus 5.5 counts twice. Large PRs are reviewed in batches that
+  // each hold REVIEW_BATCH_TOKEN_ESTIMATE (200K at Opus's weight) up front,
+  // so a trial alone cannot start one; the owner's own key has no such limit.
   TRIAL_TOKENS: 100_000,
 
   // Pro tier: monthly allowance plus prepaid token packs

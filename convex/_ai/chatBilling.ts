@@ -1,4 +1,5 @@
 import { internal } from "../_generated/api";
+import { RESERVATION_QUOTA_WEIGHT } from "./config";
 import { chatRequestBytes } from "./requestSize";
 import { ChatProviderRequestError } from "./providerErrors";
 import { CreditFallbackProvider } from "./providers";
@@ -189,6 +190,10 @@ function parseChatResultCheckpoint(
       (typeof value.providerRequestId !== "string" ||
         !value.providerRequestId ||
         value.providerRequestId.length > 512)) ||
+    (value.servedModelId !== undefined &&
+      (typeof value.servedModelId !== "string" ||
+        !value.servedModelId ||
+        value.servedModelId.length > 128)) ||
     (value.historyContent !== undefined &&
       !hasValidCheckpointHistory(value.historyContent)) ||
     (value.toolUse !== undefined && !hasValidCheckpointToolUse(value.toolUse))
@@ -199,7 +204,8 @@ function parseChatResultCheckpoint(
     expectedOutcome &&
     (value.usage.promptTokens !== expectedOutcome.inputTokens ||
       value.usage.completionTokens !== expectedOutcome.outputTokens ||
-      value.providerRequestId !== expectedOutcome.providerRequestId)
+      value.providerRequestId !== expectedOutcome.providerRequestId ||
+      value.servedModelId !== expectedOutcome.servedModel)
   ) {
     throw new Error("AI chat result checkpoint usage mismatch");
   }
@@ -295,6 +301,7 @@ type ChatSettlementOutcome =
       inputTokens: number;
       outputTokens: number;
       providerRequestId?: string;
+      servedModel?: string;
     }
   | { kind: "known_not_billed"; providerRequestId?: string };
 
@@ -304,6 +311,7 @@ const chatSettlementOutcomeValidator = v.union(
     inputTokens: v.number(),
     outputTokens: v.number(),
     providerRequestId: v.optional(v.string()),
+    servedModel: v.optional(v.string()),
   }),
   v.object({
     kind: v.literal("known_not_billed"),
@@ -321,7 +329,8 @@ function settlementOutcomesMatch(
     (left.kind === "known_not_billed" ||
       (right.kind === "known_billed" &&
         left.inputTokens === right.inputTokens &&
-        left.outputTokens === right.outputTokens))
+        left.outputTokens === right.outputTokens &&
+        left.servedModel === right.servedModel))
   );
 }
 
@@ -719,7 +728,7 @@ export const reserveChatUsage = internalMutation({
     ) {
       throw new Error("AI chat reservation scope is invalid");
     }
-    const reservedTokens = checkedReservationTokens(
+    const reservationLimit = checkedReservationTokens(
       args.inputTokenLimit,
       args.outputTokenLimit,
     );
@@ -737,6 +746,15 @@ export const reserveChatUsage = internalMutation({
         )
         .first(),
     ]);
+    // A reservation keeps the weight it was made with, so a retry after the
+    // weights change still matches it.
+    const quotaWeight = existing
+      ? (existing.quotaWeight ?? 1)
+      : RESERVATION_QUOTA_WEIGHT;
+    const reservedTokens = reservationLimit * quotaWeight;
+    if (!Number.isSafeInteger(reservedTokens)) {
+      throw new Error("AI chat reservation exceeds the supported range");
+    }
     if (existing) {
       const sameProvider =
         existing.model === args.model &&
@@ -944,6 +962,7 @@ export const reserveChatUsage = internalMutation({
       requirePendingTicketAction: args.requirePendingTicketAction,
       ticketActionProposalVersion: action.proposalVersion,
       ...quota.snapshot,
+      ...(quotaWeight !== 1 ? { quotaWeight } : {}),
       reservedTokens,
       status: "pending",
       expiresAt: now + CHAT_RESERVATION_TTL_MS,
@@ -1218,6 +1237,7 @@ export const settleStagedChatOutcome = internalMutation({
         inputTokens: outcome.inputTokens,
         outputTokens: outcome.outputTokens,
         model: reservation.model,
+        ...(outcome.servedModel ? { servedModel: outcome.servedModel } : {}),
         provider: reservation.provider ?? "google",
         reservationKey: reservation.reservationKey,
         reservationAttemptToken: reservation.attemptToken,
@@ -2791,6 +2811,9 @@ export function createMeteredProvider(
           inputTokens: result.usage.promptTokens,
           outputTokens: result.usage.completionTokens,
           providerRequestId,
+          ...(result.servedModelId
+            ? { servedModel: result.servedModelId }
+            : {}),
         };
         const resultCheckpointJson = serializeChatResultCheckpoint(
           result,

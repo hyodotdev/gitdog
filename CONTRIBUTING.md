@@ -14,13 +14,24 @@ organized, how to run it locally and what a pull request needs.
 | `e2e/`         | Opt-in end-to-end runners against a development backend |
 | `docs/`        | Conventions, GitHub App setup and AI model notes        |
 
+## Tech stack
+
+| Layer    | Technology                                                           |
+| -------- | -------------------------------------------------------------------- |
+| Frontend | React 19, TypeScript, Vite, Tailwind CSS, react-i18next (en, ko, ja) |
+| Backend  | Convex                                                               |
+| AI       | Claude Opus 5.5 with GPT-6.1 Sol fallback; users' own keys optional  |
+| GitHub   | GitHub App (OAuth, webhooks, repository access)                      |
+| Payments | Lemon Squeezy                                                        |
+| Hosting  | Firebase Hosting                                                     |
+
 ## How it works
 
 ```text
 GitHub webhook ─▶ Convex ─▶ repository index (keyword search)
                     │
                     ▼
-        Claude Sonnet 5.5 (GPT-6.1 Sol fallback)
+        Claude Opus 5.5 (GPT-6.1 Sol fallback)
                     │
                     ▼
      draft reply or review ─▶ approval ─▶ GitHub comment / PR review
@@ -42,6 +53,18 @@ bun run dev                  # web app and Convex together
 
 A development GitHub App is required for repository features; follow
 [docs/github-app-setup.md](docs/github-app-setup.md).
+
+## Commands
+
+| Command                | Purpose                                         |
+| ---------------------- | ----------------------------------------------- |
+| `bun run dev`          | Run the web app and Convex dev backend together |
+| `bun run typecheck`    | Type-check the web app, backend and e2e runners |
+| `bun run lint`         | ESLint across the monorepo                      |
+| `bun run format:check` | Prettier check                                  |
+| `bun run test`         | Web and backend test suites                     |
+| `bun run test:cli`     | CLI test suite                                  |
+| `bun run check:api`    | Verify the CLI API catalog matches the backend  |
 
 ## Checks
 
@@ -66,6 +89,14 @@ reports drift). For CLI changes, run `bun run typecheck:cli && bun run test:cli`
 - Keep each pull request focused, and add or update tests with behavior changes.
 - Follow [docs/convention.md](docs/convention.md) and [CLAUDE.md](CLAUDE.md) for
   code style.
+
+## Documentation
+
+- [AI models and pricing](docs/ai-models.md): routing, quota weights and usage
+  accounting
+- [GitHub App setup](docs/github-app-setup.md)
+- [Code conventions](docs/convention.md)
+- [CLI reference](packages/cli/docs/REFERENCE.md)
 
 ## Security
 

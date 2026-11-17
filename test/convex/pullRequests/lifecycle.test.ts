@@ -12,6 +12,7 @@ import {
   CURRENT_PRIVACY_POLICY_VERSION,
 } from "../../../convex/users/legal";
 import { drainScheduledFunctions } from "../scheduling";
+import { REVIEW_BATCH_TOKEN_ESTIMATE } from "../../../convex/pullRequests/github";
 import { PRICING, getFreeIncludedTokens } from "../../../convex/_ai/config";
 import { encryptProviderKey } from "../../../convex/providerApiKeys/crypto";
 const modules = import.meta.glob("../../../convex/**/*.ts");
@@ -2751,6 +2752,9 @@ describe("explicit verification of failed reviews", () => {
 });
 
 describe("batched PR reviews", () => {
+  // Holds are in quota tokens, so they scale with the model weight.
+  const BATCH = REVIEW_BATCH_TOKEN_ESTIMATE;
+  const tokens = (n: number) => n.toLocaleString("en-US");
   async function batchFixture(
     failedPage?: number | number[],
     largeFiles = 0,
@@ -3020,7 +3024,7 @@ describe("batched PR reviews", () => {
     expect(await f.getAction()).toMatchObject({
       status: "pending",
       reviewBatch: { page: 1, group: 1, claimed: false },
-      reviewQuotaHold: 200_000,
+      reviewQuotaHold: 2 * BATCH,
     });
     await f.generate(1, 1);
     await drainScheduledFunctions(f.t);
@@ -3075,7 +3079,7 @@ describe("batched PR reviews", () => {
       status: "pending",
       reviewBatch: { page: 1, group: 1, claimed: false },
       // Two groups left on this page plus three pages for the other 45 files.
-      reviewQuotaHold: 500_000,
+      reviewQuotaHold: 5 * BATCH,
     });
     expect(f.batches.map((key) => key.split("/batch/")[1])).toEqual(["1/1"]);
     await f.generate(1, 1);
@@ -3151,7 +3155,7 @@ describe("batched PR reviews", () => {
     });
     expect(action?.reviewFailureDetails).toContain("Stage · Token quota check");
     expect(action?.reviewFailureDetails).toContain(
-      "at least 4 more review batches, estimated at 400,000 tokens; 100,000 tokens remain.",
+      `at least 4 more review batches, estimated at ${tokens(4 * BATCH)} tokens; 100,000 tokens remain.`,
     );
     expect(f.batches).toEqual([]);
     expect(f.fetch).not.toHaveBeenCalled();
@@ -3206,11 +3210,11 @@ describe("batched PR reviews", () => {
     await f.generate();
     expect(await f.getAction()).toMatchObject({
       reviewQuotaUserId: f.userId,
-      reviewQuotaHold: 300_000,
+      reviewQuotaHold: 3 * BATCH,
       reviewBatch: { page: 2 },
     });
     await f.generate(2);
-    expect((await f.getAction())?.reviewQuotaHold).toBe(200_000);
+    expect((await f.getAction())?.reviewQuotaHold).toBe(2 * BATCH);
   });
 
   it.each([
@@ -3219,7 +3223,7 @@ describe("batched PR reviews", () => {
   ] as const)(
     "accounts for a %s batched review that holds tokens",
     async (status, refused) => {
-      const f = await batchFixture(undefined, 0, 400_000);
+      const f = await batchFixture(undefined, 0, 4 * BATCH);
       const ticketId = (await f.getAction())!.ticketId;
       const holderId = await f.t.run((ctx) =>
         ctx.db.insert("ticketActions", {
@@ -3232,7 +3236,7 @@ describe("batched PR reviews", () => {
           chatHistory: [],
           createdAt: 1,
           reviewQuotaUserId: f.userId,
-          reviewQuotaHold: 400_000,
+          reviewQuotaHold: 4 * BATCH,
         }),
       );
       await f.generate();
@@ -3240,7 +3244,7 @@ describe("batched PR reviews", () => {
       if (refused) {
         expect(action?.status).toBe("failed");
         expect(action?.reviewFailureDetails).toContain(
-          "100,000 tokens remain after 400,000 held by other reviews in progress.",
+          `100,000 tokens remain after ${tokens(4 * BATCH)} held by other reviews in progress.`,
         );
         expect(f.batches).toEqual([]);
       } else {
@@ -3257,18 +3261,23 @@ describe("batched PR reviews", () => {
   );
 
   it("reserves for the first page's real groups before any model call", async () => {
-    const f = await batchFixture(undefined, 2, 300_000);
+    const f = await batchFixture(undefined, 2, 3 * BATCH);
     await f.generate();
     const action = await f.getAction();
     expect(action?.status).toBe("failed");
     expect(action?.reviewFailureDetails).toContain(
-      "at least 6 more review batches, estimated at 600,000 tokens; 400,000 tokens remain.",
+      `at least 6 more review batches, estimated at ${tokens(6 * BATCH)} tokens; ${tokens(3 * BATCH + 100_000)} tokens remain.`,
     );
     expect(f.batches).toEqual([]);
   });
 
   it("stops before spending more when a later page needs more than the hold", async () => {
-    const f = await batchFixture(undefined, 0, 300_000, [32, 33, 34]);
+    const f = await batchFixture(
+      undefined,
+      0,
+      4 * BATCH - 100_000,
+      [32, 33, 34],
+    );
     await f.generate();
     const ticketId = (await f.getAction())!.ticketId;
     await f.t.run((ctx) =>
@@ -3281,7 +3290,7 @@ describe("batched PR reviews", () => {
         chatHistory: [],
         createdAt: 1,
         reviewQuotaUserId: f.userId,
-        reviewQuotaHold: 200_000,
+        reviewQuotaHold: 2 * BATCH,
       }),
     );
     await f.generate(2);

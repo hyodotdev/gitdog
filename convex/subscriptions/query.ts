@@ -2,7 +2,12 @@
 const MAX_WALLET_ROWS = 100;
 import { query } from "../_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
-import { PRICING, CLAUDE_API_ENDS_AT, GENERATION_MODELS } from "../_ai/config";
+import {
+  PRICING,
+  CHAT_MODELS,
+  CLAUDE_API_ENDS_AT,
+  GENERATION_MODELS,
+} from "../_ai/config";
 import {
   getSafeQuotaTokenLimit,
   hasValidPurchasedTokenDebitCoverage,
@@ -388,8 +393,9 @@ export const getPricingInfo = query({
         },
       },
       tokenPricing: {
-        inputPer1M: generation.inputPer1M,
-        outputPer1M: generation.outputPer1M,
+        inputPer1M: CHAT_MODELS[generation.modelId].inputPer1M,
+        outputPer1M: CHAT_MODELS[generation.modelId].outputPer1M,
+        quotaWeight: CHAT_MODELS[generation.modelId].quotaWeight,
         model: generation.name,
       },
     };

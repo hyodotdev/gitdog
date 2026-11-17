@@ -1,3 +1,4 @@
+import { RESERVATION_QUOTA_WEIGHT } from "../_ai/config";
 import { fetchGitHubAppJsonWithRetry } from "../github/helpers";
 import type { VerifiedRepositoryAccess } from "../github/repositoryIdentity";
 import type { ChangedFile } from "./review";
@@ -263,8 +264,9 @@ export async function changedSince(
   }
 }
 
-// Production reviews of up to 60 files used a median of about 90k tokens.
-export const REVIEW_BATCH_TOKEN_ESTIMATE = 100_000;
+// Production reviews of up to 60 files used a median of about 90k provider
+// tokens. The hold is in quota tokens, so it scales with the model's weight.
+export const REVIEW_BATCH_TOKEN_ESTIMATE = 100_000 * RESERVATION_QUOTA_WEIGHT;
 
 export function minimumReviewBatches(changedFiles: number): number {
   return Math.ceil(changedFiles / REVIEW_BATCH_FILES);

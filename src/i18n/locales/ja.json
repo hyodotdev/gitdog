@@ -767,7 +767,7 @@
       "purchase": "購入"
     },
     "tokenPricing": "トークン価格",
-    "tokenPricingDescription": "Freeは1回限りの100k体験トークンから始まり、Proには毎月2.4Mトークンが含まれます。どちらも利用可能な上限で停止し、プリペイドトークンパックで追加できます。自分のAPIキーで実行される処理はGitdogのトークンを使いません。",
+    "tokenPricingDescription": "Freeは1回限りの100k体験トークンから始まり、Proには毎月2.4Mトークンが含まれます。どちらも利用可能な上限で停止し、プリペイドトークンパックで追加できます。GitdogはClaude Opus 5.5で動作し、OpusのトークンはフォールバックのGPT-6.1 Solの2倍のコストがかかるため、1トークンをGitdogトークン2つとして数えます。自分のAPIキーで実行される処理はGitdogのトークンを使いません。",
     "freeTokensLabel": "体験トークン（1回限り）",
     "platformFeeLabel": "プリペイドトークンパック",
     "billingLabel": "課金",

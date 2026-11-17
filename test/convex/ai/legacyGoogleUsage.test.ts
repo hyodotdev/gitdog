@@ -5,7 +5,10 @@ import { internal } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import schema from "../../../convex/schema";
 import { hasOpenUsageReservation } from "../../../convex/_ai/chatBilling";
-import { LEGACY_GOOGLE_MODELS } from "../../../convex/_ai/config";
+import {
+  LEGACY_GOOGLE_MODELS,
+  RESERVATION_QUOTA_WEIGHT,
+} from "../../../convex/_ai/config";
 import { getDefaultAiModel } from "../../../convex/_ai/model";
 import {
   CURRENT_PRIVACY_POLICY_VERSION,
@@ -193,7 +196,10 @@ describe("legacy Google usage", () => {
           q.eq("reservationKey", old.reservationKey),
         )
         .unique();
-      expect(row).toMatchObject({ status: "ambiguous", reservedTokens: 2000 });
+      expect(row).toMatchObject({
+        status: "ambiguous",
+        reservedTokens: 2000 * RESERVATION_QUOTA_WEIGHT,
+      });
       expect(row?.usageId).toBeUndefined();
       expect(row?.reconciliation).toBeUndefined();
       expect(await hasOpenUsageReservation(ctx, f.userId)).toBe(true);
@@ -202,7 +208,10 @@ describe("legacy Google usage", () => {
   it("keeps the full retired Google ceiling reserved against future quota", async () => {
     const t = convexTest(schema, modules);
     const f = await insertFixture(t);
-    await seedHold(t, argsFor(f, "large-old-hold", "google", 49950));
+    await seedHold(
+      t,
+      argsFor(f, "large-old-hold", "google", 49950 / RESERVATION_QUOTA_WEIGHT),
+    );
     expect(
       await t.mutation(
         internal._ai.chatBilling.reserveChatUsage,

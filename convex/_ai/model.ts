@@ -96,6 +96,9 @@ export type ChatCompletionResult = {
   };
   provider?: string;
   modelId?: string;
+  // The model that actually served the request when a refusal fallback
+  // replaced modelId. Billing stays bound to modelId; cost uses this one.
+  servedModelId?: string;
   providerId?: string;
   providerRequestId?: string;
   /** Provider-native parts needed to replay stateless tool conversations. */
