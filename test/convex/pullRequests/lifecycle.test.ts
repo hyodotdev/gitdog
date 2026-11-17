@@ -333,6 +333,21 @@ describe("review commands", () => {
     );
     expect(await f.observe(next)).toBeTruthy();
   });
+  it("counts the post window from when publication was scheduled", async () => {
+    const f = await fixture();
+    const first = (await f.observe())!;
+    vi.advanceTimersByTime(20 * 60_000);
+    // A long review is proposed now and its publication just scheduled.
+    await f.t.mutation(internal.pullRequests.internalMutation.propose, {
+      actionId: first,
+      source,
+      findings: [],
+      excludedPaths: [],
+      filesRead: [],
+      coverage: { changedFiles: 1, uncoveredFiles: 0 },
+    });
+    expect((await requestStatus(f, source, true)).status).toBe("running");
+  });
   it("lets a request pass a review whose post never started", async () => {
     const f = await fixture();
     const first = (await f.observe())!;
@@ -1802,6 +1817,18 @@ describe("approval", () => {
       (await f.t.run((ctx) => ctx.db.get(ticketId)))?.pullRequestApprovedSha,
     ).toBe(source.headSha);
   });
+  it("records a review GitHub refused as not published, so it can be retried", async () => {
+    const f = await publicationFixture();
+    await github([]);
+    f.fetch.mockResolvedValue(new Response(null, { status: 403 }));
+    await f.t.action(internal.pullRequests.internalAction.publish, {
+      actionId: f.actionId,
+      manual: true,
+    });
+    expect((await f.t.run((ctx) => ctx.db.get(f.actionId)))?.errorMessage).toBe(
+      "GitHub did not accept the review; no review was published",
+    );
+  });
   it("records an earlier approval GitHub refused to dismiss", async () => {
     const f = await publicationFixture();
     await github([], { dismissFails: true });
@@ -3154,7 +3181,12 @@ describe("batched PR reviews", () => {
       new Set(["src/added.ts", "src/file-1.ts"]),
     );
     await drainScheduledFunctions(f.t);
-    expect(f.fetch).not.toHaveBeenCalled();
+    // No review is posted; the requested review says it found nothing new.
+    const urls = f.fetch.mock.calls.map(([url]) => String(url));
+    expect(urls.some((url) => url.includes("/reviews"))).toBe(false);
+    expect(
+      urls.filter((url) => url.endsWith("/issues/12/comments")),
+    ).toHaveLength(1);
     expect(await f.t.run((ctx) => ctx.db.get(f.nextId))).toMatchObject({
       status: "completed",
       executionResult: { published: false, reason: "no_new_changes" },
@@ -3165,7 +3197,11 @@ describe("batched PR reviews", () => {
     const f = await followUp(new Set(["README.md"]));
     await drainScheduledFunctions(f.t);
     expect(f.batches).toEqual([]);
-    expect(f.fetch).not.toHaveBeenCalled();
+    const urls = f.fetch.mock.calls.map(([url]) => String(url));
+    expect(urls.some((url) => url.includes("/reviews"))).toBe(false);
+    expect(
+      JSON.parse(f.fetch.mock.calls.at(-1)![1]!.body as string).body,
+    ).toContain("**No new changes to review**");
     expect(await f.t.run((ctx) => ctx.db.get(f.nextId))).toMatchObject({
       status: "completed",
       executionResult: { published: false, reason: "no_new_changes" },

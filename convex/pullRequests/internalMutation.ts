@@ -511,7 +511,7 @@ async function observePullRequest(
           // expiry window is stuck and no longer holds the commit.
           (action.status === "approved" &&
             action.executionClaimedAt === undefined &&
-            action.createdAt > now - 15 * 60_000),
+            (action.approvedAt ?? action.createdAt) > now - 15 * 60_000),
       )
     )
       return RUNNING;
@@ -1011,6 +1011,10 @@ export const propose = internalMutation({
         : approval && !noFindings
           ? "pending_approval"
           : "approved",
+      // When publication was scheduled, for the post's expiry window.
+      ...(!unpublished && !(approval && !noFindings)
+        ? { approvedAt: Date.now() }
+        : {}),
       completedAt: unpublished ? Date.now() : undefined,
       executionResult: unpublished
         ? {
@@ -1028,7 +1032,16 @@ export const propose = internalMutation({
     // A review that ended unpublished is done, so a dropped push can be
     // reviewed now. One waiting for approval keeps it: reviewing the newer
     // head would supersede the review before the owner sees it.
-    else if (unpublished) await observeDroppedPush(ctx, action.ticketId);
+    else if (unpublished) {
+      // A requested review answered "started", so it says it found nothing.
+      if (nothingNew && action.reviewRequested === true)
+        await ctx.scheduler.runAfter(
+          0,
+          internal.pullRequests.internalAction.noticeNoChanges,
+          { actionId: action._id },
+        );
+      await observeDroppedPush(ctx, action.ticketId);
+    }
     return true;
   },
 });
@@ -1264,6 +1277,12 @@ export const completeUnposted = internalMutation({
       completedAt: Date.now(),
       executionResult: { published: false, reason: "no_new_changes" },
     });
+    if (action.reviewRequested === true)
+      await ctx.scheduler.runAfter(
+        0,
+        internal.pullRequests.internalAction.noticeNoChanges,
+        { actionId: action._id },
+      );
     await observeDroppedPush(ctx, action.ticketId);
   },
 });

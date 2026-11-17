@@ -734,6 +734,9 @@ export const publish = internalAction({
     args,
   ): Promise<{ success: boolean; reason?: string }> => {
     let claimed: number | false = false;
+    // Set once a review POST may have reached GitHub. Before that, or when
+    // GitHub answered with an error, nothing was posted for certain.
+    let mayHavePosted = false;
     try {
       const initial = await ctx.runQuery(
         internal.pullRequests.internalQuery.get,
@@ -1021,6 +1024,7 @@ export const publish = internalAction({
               }),
               signal: AbortSignal.timeout(30_000),
             });
+          mayHavePosted = true;
           let response = await post({
             body: `${body(approve)}\n\n${marker}`,
             ...(findings.length
@@ -1056,6 +1060,8 @@ export const publish = internalAction({
           }
           if (!response.ok) {
             await response.body?.cancel().catch(() => undefined);
+            // GitHub answered, so it created no review.
+            mayHavePosted = false;
             throw new Error(
               `Publish GitHub review failed (HTTP ${response.status})`,
             );
@@ -1105,9 +1111,11 @@ export const publish = internalAction({
         actionId: args.actionId,
         stage: claimed ? "publication" : "preflight",
         claimedAt: claimed || undefined,
-        error: claimed
-          ? "GitHub publication outcome requires inspection; no automatic retry was performed"
-          : "Review is stale or GitHub access is unavailable; no review was published",
+        error: !claimed
+          ? "Review is stale or GitHub access is unavailable; no review was published"
+          : mayHavePosted
+            ? "GitHub publication outcome requires inspection; no automatic retry was performed"
+            : "GitHub did not accept the review; no review was published",
         reviewFailureDetails: reviewFailureDetails(
           error,
           claimed ? "Review publication" : "Publication preflight",
@@ -1149,7 +1157,7 @@ export const dismissStaleApproval = internalAction({
       access,
       args.number,
       stale,
-      "New commits were pushed after the commit Gitdog approved. Comment @gitdogbot review to review them.",
+      `New commits were pushed after the commit Gitdog approved. Comment @${getConfiguredGitHubAppSlug() ?? "gitdogbot"} review to review them.`,
     );
     // Remembered until GitHub accepts every dismissal, including any past
     // the per-run cap, so a later push retries.
@@ -1258,7 +1266,7 @@ export function commandReply(
     case "awaiting_approval":
       return "**A review of this commit is waiting for approval.** The repository owner can post it from Gitdog.";
     case "stale":
-      return `**Review not started**\n\nA newer push is being processed. Comment \`${mention} review\` again in a moment.`;
+      return `**Review not started**\n\nGitdog is processing a newer update to this pull request. Comment \`${mention} review\` again in a moment.`;
     case "not_allowed":
       return (
         "**Full review not started**\n\nOnly repository collaborators can request a full review. The pull request author can comment `" +
@@ -1350,6 +1358,32 @@ export const noticeLimit = internalAction({
       access,
       target.number,
       `**Review limit reached**\n\nGitdog could not review${target.headSha ? ` ${target.headSha}` : " this pull request"} because the token limit of the account that connected this repository has been reached. Once more tokens are available, comment \`@${slug} review\` to try again.`,
+    );
+  },
+});
+
+/** Answer a requested review that found no pull request changes to review. */
+export const noticeNoChanges = internalAction({
+  args: { actionId: v.id("ticketActions") },
+  handler: async (ctx, args): Promise<void> => {
+    const state = await ctx.runQuery(
+      internal.pullRequests.internalQuery.get,
+      args,
+    );
+    const slug = getConfiguredGitHubAppSlug();
+    if (!state || !slug) return;
+    const source = sourceOf(state.action.proposedChanges?.source);
+    const since = state.action.proposedChanges?.reviewedSince;
+    const access = await resolveVerifiedRepositoryAccess(
+      ctx,
+      state.repository._id,
+    );
+    await reply(
+      access,
+      state.ticket.githubNumber,
+      `**No new changes to review** in ${source.headSha}${
+        typeof since === "string" ? ` since ${since}` : ""
+      }\n\nNothing in the pull request diff changed, so no review was posted. Comment \`@${slug} full review\` to review the whole pull request again.`,
     );
   },
 });
