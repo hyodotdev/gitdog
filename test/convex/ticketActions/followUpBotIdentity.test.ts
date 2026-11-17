@@ -17,6 +17,10 @@ describe("follow-up bot identity", () => {
     expect(isGitdogBot("GitDogBot[bot]", "gitdogbot")).toBe(true);
     expect(isGitdogBot("gitdogbot-dev[bot]", "gitdogbot")).toBe(false);
     expect(isGitdogBot("gitdogbot-dev[bot]", "gitdogbot-dev")).toBe(true);
+    // Only the configured slug is Gitdog's own account. The former name
+    // could be registered by another app after the rename.
+    expect(isGitdogBot("gitdogai[bot]", "gitdogai")).toBe(true);
+    expect(isGitdogBot("gitdogbot[bot]", "gitdogai")).toBe(false);
     expect(isGitdogBot("gitdogbot[bot]", "gitdogbot-dev")).toBe(false);
     expect(isGitdogBot("dependabot[bot]", "gitdogbot")).toBe(false);
     expect(isGitdogBot("github-actions[bot]", "gitdogbot")).toBe(false);
@@ -120,6 +124,18 @@ describe("follow-up bot identity", () => {
       "@gitdog use A",
     );
     expect(hasGitdogMentionBody("@gitdog use A", "gitdogbot")).toBe(false);
+    // Both production names reach the app, before and after the rename.
+    expect(hasGitdogMentionBody("@gitdogai use A", "gitdogbot")).toBe(true);
+    expect(hasGitdogMentionBody("@gitdogbot use A", "gitdogai")).toBe(true);
+    expect(normalizeGitdogMentionBody("@gitdogbot: use A", "gitdogai")).toBe(
+      "use A",
+    );
+    expect(hasGitdogMentionBody("@gitdogai use A", "gitdogbot-dev")).toBe(
+      false,
+    );
+    expect(hasGitdogMentionBody("@gitdogbot-dev use A", "gitdogai")).toBe(
+      false,
+    );
     expect(hasGitdogMentionBody("@gitdogbot use A", "gitdogbot")).toBe(true);
     expect(hasGitdogMentionBody("@gitdogbot-dev use A", "gitdogbot")).toBe(
       false,

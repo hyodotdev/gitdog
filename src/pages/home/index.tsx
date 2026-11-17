@@ -51,7 +51,7 @@ export function HomePage() {
     {
       question: "How does Gitdog work?",
       answer:
-        "Connect your GitHub repository, and when users mention @gitdogbot in issues or discussions, the AI analyzes your codebase and provides intelligent, context-aware responses.",
+        "Connect your GitHub repository, and when users mention @gitdogai in issues or discussions, the AI analyzes your codebase and provides intelligent, context-aware responses.",
     },
     {
       question: "Is Gitdog free to use?",

@@ -57,7 +57,7 @@ export async function handlePullRequestEvent(
 }
 
 /**
- * A "@gitdogbot <command>" comment on a pull request. Only the PR author and
+ * A "@gitdogai <command>" comment on a pull request. Only the PR author and
  * repository collaborators can run commands, and a redelivered comment runs
  * once.
  */

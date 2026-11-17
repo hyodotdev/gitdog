@@ -1,5 +1,9 @@
 import { SignJWT, importPKCS8 } from "jose";
-import { getConfiguredGitHubAppSlug, isGitdogBot } from "./botIdentity";
+import {
+  getConfiguredGitHubAppSlug,
+  getGitdogMentionNames,
+  isGitdogBot,
+} from "./botIdentity";
 
 const GITHUB_APP_REQUEST_TIMEOUT_MS = 15_000;
 const GITHUB_API_REQUEST_TIMEOUT_MS = 30_000;
@@ -226,8 +230,10 @@ export async function fetchGitHubAppJsonWithRetry<T>(
 }
 
 function getGitdogMentionPattern(configuredSlug?: string): RegExp | null {
-  const slug = getConfiguredGitHubAppSlug(configuredSlug);
-  return slug ? new RegExp(`@${slug}(?=\\s|[:,]|$)`, "i") : null;
+  const names = getGitdogMentionNames(configuredSlug);
+  return names.length
+    ? new RegExp(`@(?:${names.join("|")})(?=\\s|[:,]|$)`, "i")
+    : null;
 }
 
 export function normalizeGitdogMentionBody(

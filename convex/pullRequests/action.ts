@@ -59,7 +59,7 @@ export const recheck = action({
 });
 
 /**
- * The CLI and web counterpart of the "@gitdogbot review", "full review" and
+ * The CLI and web counterpart of the "@gitdogai review", "full review" and
  * "resolve" pull request comments. The command reply is returned instead of
  * posted. The review itself, a limit notice if it runs out of tokens, and a
  * note when there is nothing new to review are posted as for comments.

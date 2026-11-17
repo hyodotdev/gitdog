@@ -3,7 +3,7 @@ import { Workflow, createChatStep } from "../workflow";
 import { parseJsonResponse } from "../utils";
 import type { IssueAnalysisResult, IssueInput } from "./types";
 import {
-  ISSUE_ANALYSIS_SYSTEM_PROMPT,
+  issueAnalysisSystemPrompt,
   createIssueAnalysisUserPrompt,
 } from "./prompts";
 
@@ -23,7 +23,7 @@ export async function analyzeIssue(
     .addStep(
       "analyze_issue",
       createChatStep(
-        ISSUE_ANALYSIS_SYSTEM_PROMPT,
+        issueAnalysisSystemPrompt(),
         (input: unknown) => {
           const { title, body, codebaseContext } = input as IssueInput;
           return createIssueAnalysisUserPrompt(title, body, codebaseContext);

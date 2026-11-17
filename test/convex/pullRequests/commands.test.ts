@@ -42,11 +42,24 @@ describe("pull request commands", () => {
     ["> @gitdogbot review\n\nquoted only", null],
     ["```\n@gitdogbot review\n```", null],
   ])("reads %j as %s", (body, expected) => {
+    // The production app answers to its former name after the rename.
+    expect(parseReviewCommand(body, "gitdogai")).toBe(expected);
+    expect(parseReviewCommand(body, "gitdogbot")).toBe(expected);
+  });
+  it.each([
+    ["@gitdogai review", "review"],
+    ["@gitdogai: full review", "full_review"],
+    ["@coderabbitai review @gitdogai review", "review"],
+    ["@gitdogaix review", null],
+  ])("reads the new app name in %j as %s", (body, expected) => {
+    expect(parseReviewCommand(body, "gitdogai")).toBe(expected);
     expect(parseReviewCommand(body, "gitdogbot")).toBe(expected);
   });
   it("uses the configured app slug", () => {
     // The shorthand belongs to the production app only.
     expect(parseReviewCommand("@gitdog review", "gitdogbot-dev")).toBeNull();
+    expect(parseReviewCommand("@gitdogai review", "gitdogbot-dev")).toBeNull();
+    expect(parseReviewCommand("@gitdogbot review", "gitdogbot-dev")).toBeNull();
     expect(parseReviewCommand("@gitdogbot-dev review", "gitdogbot-dev")).toBe(
       "review",
     );
@@ -62,8 +75,10 @@ describe("pull request commands", () => {
     expect(commandAccess(undefined, 1, undefined)).toBeNull();
   });
   it("lists every command with the app mention", () => {
-    const help = helpText("gitdogbot");
+    const help = helpText("gitdogai");
     for (const command of ["review", "full review", "resolve", "help"])
-      expect(help).toContain(`\`@gitdogbot ${command}\``);
+      expect(help).toContain(`\`@gitdogai ${command}\``);
+    expect(help).toContain("`@gitdogbot` and `@gitdog` work too.");
+    expect(helpText("gitdogbot-dev")).not.toContain("work too");
   });
 });

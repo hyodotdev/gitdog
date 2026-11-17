@@ -48,7 +48,7 @@ with the actual code as evidence instead of generic advice.
 | **Issue assistant**      | Turns rough reports into clear, structured issues and answers questions                 |
 | **Discussion assistant** | Replies to GitHub Discussions with context from your codebase                           |
 | **Pull request reviews** | Reviews changed code against the repository, suggests fixes and approves clean code     |
-| **Review commands**      | `@gitdogbot review`, `full review`, `resolve` and `help` in a pull request, or the CLI  |
+| **Review commands**      | `@gitdogai review`, `full review`, `resolve` and `help` in a pull request, or the CLI   |
 | **Maintainer tagging**   | Notifies the right people when a request needs a code change                            |
 | **Approval first**       | With approval on (the default), drafts wait in your queue until you approve them        |
 | **Your own AI keys**     | Run generation on your Anthropic or OpenAI key, encrypted at rest and never shown again |
@@ -97,21 +97,22 @@ approval until the new commits are reviewed.
 Gitdog reviews a pull request once, when it is opened or marked ready for
 review. After that, ask for more in a pull request comment or from the CLI:
 
-| Pull request comment     | CLI                                         | What it does                                     |
-| ------------------------ | ------------------------------------------- | ------------------------------------------------ |
-| `@gitdogbot review`      | `gitdog reviews request <ticket-id>`        | Reviews the commits pushed since the last review |
-| `@gitdogbot full review` | `gitdog reviews request <ticket-id> --full` | Reviews the whole pull request again             |
-| `@gitdogbot resolve`     | `gitdog reviews resolve <ticket-id>`        | Resolves every Gitdog review thread              |
-| `@gitdogbot help`        | `gitdog reviews --help`                     | Lists the commands                               |
+| Pull request comment    | CLI                                         | What it does                                     |
+| ----------------------- | ------------------------------------------- | ------------------------------------------------ |
+| `@gitdogai review`      | `gitdog reviews request <ticket-id>`        | Reviews the commits pushed since the last review |
+| `@gitdogai full review` | `gitdog reviews request <ticket-id> --full` | Reviews the whole pull request again             |
+| `@gitdogai resolve`     | `gitdog reviews resolve <ticket-id>`        | Resolves every Gitdog review thread              |
+| `@gitdogai help`        | `gitdog reviews --help`                     | Lists the commands                               |
 
 - **Where**: a comment line in the pull request conversation that starts with
   the mention, or follows another review bot's command on the same line
-  (`@coderabbitai review @gitdogbot review`). Replies inside a review thread
+  (`@coderabbitai review @gitdogai review`). Replies inside a review thread
   are not read.
 - **Who**: collaborators can run every command. The pull request author, who
   may work from a fork, can run all but `full review`.
-- **`@gitdog`** works as shorthand, but it also notifies the GitHub user of that
-  name, so `@gitdogbot` is preferred.
+- **Other names**: `@gitdogbot`, the app's former name, still works. `@gitdog`
+  works as shorthand, but it also notifies the GitHub user of that name, so
+  `@gitdogai` is preferred.
 - **Status**: while a review runs, one status comment on the pull request shows
   whether it is reviewing, waiting for approval, reviewed, or why it could not
   finish. A review that failed or ran out of tokens can be requested again. For
@@ -121,7 +122,7 @@ review. After that, ask for more in a pull request comment or from the CLI:
   one repository is paused there for 24 hours. Pull requests opened by bots
   such as Dependabot are not reviewed.
 
-In an issue or discussion, mention `@gitdogbot` with a question to get a reply
+In an issue or discussion, mention `@gitdogai` with a question to get a reply
 grounded in the repository.
 
 ## Plans

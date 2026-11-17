@@ -984,7 +984,7 @@ export const propose = internalMutation({
           (baseFindings === 0 ||
             base.executionResult?.inlineFindings === true)));
     // A requested follow-up with nothing new still posts when it can
-    // approve, so "@gitdogbot review" restores an approval a push such as a
+    // approve, so "@gitdogai review" restores an approval a push such as a
     // base merge withdrew.
     const unpublished = verificationOnly || (nothingNew && !coverageComplete);
     await ctx.db.patch(action._id, {

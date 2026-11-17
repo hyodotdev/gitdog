@@ -4,7 +4,7 @@
 
 ## About Gitdog
 
-Gitdog is an AI automation platform for GitHub that helps developers automate repetitive tasks. When users mention @gitdogbot in issues or discussions, the AI assistant analyzes the codebase context and provides intelligent, relevant responses. It also reviews pull requests and runs review commands from pull request comments and the gitdog CLI.
+Gitdog is an AI automation platform for GitHub that helps developers automate repetitive tasks. When users mention @gitdogai in issues or discussions, the AI assistant analyzes the codebase context and provides intelligent, relevant responses. It also reviews pull requests and runs review commands from pull request comments and the gitdog CLI.
 
 ## Core Features
 
@@ -20,16 +20,16 @@ Gitdog reviews a pull request once, when it is opened or marked ready for review
 
 | Pull request comment | CLI | What it does |
 | --- | --- | --- |
-| `@gitdogbot review` | `gitdog reviews request <ticket-id>` | Reviews the commits pushed since the last review |
-| `@gitdogbot full review` | `gitdog reviews request <ticket-id> --full` | Reviews the whole pull request again |
-| `@gitdogbot resolve` | `gitdog reviews resolve <ticket-id>` | Resolves every Gitdog review thread |
-| `@gitdogbot help` | `gitdog reviews --help` | Lists the commands |
+| `@gitdogai review` | `gitdog reviews request <ticket-id>` | Reviews the commits pushed since the last review |
+| `@gitdogai full review` | `gitdog reviews request <ticket-id> --full` | Reviews the whole pull request again |
+| `@gitdogai resolve` | `gitdog reviews resolve <ticket-id>` | Resolves every Gitdog review thread |
+| `@gitdogai help` | `gitdog reviews --help` | Lists the commands |
 
-A command is a comment line that starts with the mention, or follows another review bot's command on the same line. `@gitdog` works as shorthand. While a review runs, Gitdog keeps one status comment on the pull request up to date. Commands go in the pull request conversation; replies inside a review thread are not read, and pull requests opened by bots such as Dependabot are not reviewed. Collaborators can run every command; the pull request author, who may work from a fork, can run all but a full review. A review that failed or ran out of tokens can be requested again.
+A command is a comment line that starts with the mention, or follows another review bot's command on the same line. `@gitdogbot`, the app's former name, and the `@gitdog` shorthand also work. While a review runs, Gitdog keeps one status comment on the pull request up to date. Commands go in the pull request conversation; replies inside a review thread are not read, and pull requests opened by bots such as Dependabot are not reviewed. Collaborators can run every command; the pull request author, who may work from a fork, can run all but a full review. A review that failed or ran out of tokens can be requested again.
 
-In issues and discussions, mention `@gitdogbot` with a question to get a reply grounded in the repository.
+In issues and discussions, mention `@gitdogai` with a question to get a reply grounded in the repository.
 
-- A review that finds no issues in fully reviewed changes approves the pull request; a later push, including updating the branch, withdraws the approval until `@gitdogbot review` reviews the new commits.
+- A review that finds no issues in fully reviewed changes approves the pull request; a later push, including updating the branch, withdraws the approval until `@gitdogai review` reviews the new commits.
 - When a review cannot finish, for example because the account ran out of tokens, its status comment says why; for automatic reviews Gitdog posts at most one such comment a day per pull request.
 - Someone who sends more than 10 commands an hour or 40 a day to one repository is paused there for 24 hours.
 
