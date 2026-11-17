@@ -849,8 +849,8 @@ const applicationTables = {
     pullRequestDroppedAt: v.optional(v.number()),
     // The commit Gitdog last approved; a push past it withdraws the approval.
     pullRequestApprovedSha: v.optional(v.string()),
-    // When Gitdog last told this PR its review limit was reached, so the
-    // notice is posted at most once a day.
+    // When Gitdog last posted a status comment for a failed automatic
+    // review, so a pull request that keeps failing hears it once a day.
     pullRequestLimitNoticeAt: v.optional(v.number()),
 
     // GitHub reference
@@ -961,6 +961,10 @@ const applicationTables = {
     reviewVerificationOnly: v.optional(v.boolean()),
     // Started by a "@gitdogbot review" comment or the CLI.
     reviewRequested: v.optional(v.boolean()),
+    // The pull request comment that shows this review's progress and outcome.
+    statusCommentId: v.optional(v.number()),
+    // The pull request moved on mid-review, so the review was cancelled.
+    reviewCancelled: v.optional(v.boolean()),
     reviewRecheckOfActionId: v.optional(v.id("ticketActions")),
     // The last finished review of this PR: a later push reviews only the
     // files changed since its head.

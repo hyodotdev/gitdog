@@ -1424,6 +1424,13 @@ export const rejectPendingApproval = internalMutation({
     }
 
     await ctx.db.patch(args.actionId, { status: "rejected" });
+    // A rejected pull request review says so in its status comment.
+    if (action.actionType === "review" && action.statusCommentId !== undefined)
+      await ctx.scheduler.runAfter(
+        0,
+        internal.pullRequests.internalAction.settleStatusComment,
+        { actionId: args.actionId },
+      );
   },
 });
 

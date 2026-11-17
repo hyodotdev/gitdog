@@ -90,15 +90,19 @@ a pull request comment, or from the CLI:
 | `@gitdogbot resolve`     | `gitdog reviews resolve <ticket-id>`        | Resolves every Gitdog review thread              |
 | `@gitdogbot help`        | `gitdog reviews --help`                     | Lists the commands                               |
 
-A command is a comment line that starts with the mention, in the pull request
-conversation; replies inside a review thread are not read. Collaborators can run
+A command is a comment line that starts with the mention, or follows another
+review bot's command on the same line (`@coderabbitai review @gitdogbot
+review`), in the pull request conversation; replies inside a review thread are
+not read. `@gitdog` works as shorthand, but it also notifies the GitHub user
+of that name, so `@gitdogbot` is preferred. While a review runs, Gitdog keeps
+one status comment on the pull request up to date: reviewing, ready for
+approval, reviewed, or why it could not finish. Collaborators can run
 every command; the pull request author, who may work from a fork, can run all
 but a full review. A review that failed or ran out of tokens can be requested
 again, and pull requests opened by bots such as Dependabot are not reviewed.
 
 In an issue or discussion, mention `@gitdogbot` with a question to get a reply
-grounded in the repository. When the account runs out of tokens, Gitdog says so
-on the pull request at most once a day. Someone who sends more than 10 commands
+grounded in the repository. When a review cannot finish, for example because the account ran out of tokens, its status comment says why; for automatic reviews Gitdog posts at most one such comment a day per pull request. Someone who sends more than 10 commands
 an hour or 40 a day to one repository is paused there for 24 hours.
 
 ## Get started

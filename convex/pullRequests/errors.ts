@@ -33,6 +33,22 @@ export function reviewFailureCause(error: unknown): unknown {
   return error instanceof ReviewRequestError ? error.cause : error;
 }
 
+// Thrown when the pull request or its review moved on mid-run: the review
+// was cancelled, not failed.
+const LIFECYCLE_CHANGES = new Set([
+  "Review source, settings or lifecycle changed",
+  "Pull request changed before review",
+  "Pull request changed while reading its diff",
+  "Pull request changed during review",
+  "Pull request changed after the review was generated",
+  "Pull request changed before publication",
+]);
+
+export function isLifecycleChange(error: unknown): boolean {
+  const cause = reviewFailureCause(error);
+  return cause instanceof Error && LIFECYCLE_CHANGES.has(cause.message);
+}
+
 export class ReviewResponseFormatError extends Error {
   constructor() {
     super("Review response did not match the required JSON format");
