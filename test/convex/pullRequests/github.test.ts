@@ -245,11 +245,20 @@ describe("authoritative PR snapshots", () => {
           status: "ahead",
           files: [{ filename: "src/b.ts", previous_filename: "src/a.ts" }],
         })
-        .mockResolvedValueOnce(mergeBase(since.mergeBaseSha));
+        .mockResolvedValueOnce(mergeBase(since.mergeBaseSha))
+        .mockResolvedValueOnce({
+          status: "ahead",
+          files: [{ filename: "src/a.ts" }],
+        });
       expect(await changedSince(access, since, pr)).toEqual({
         paths: new Set(["src/b.ts", "src/a.ts"]),
         mergeBaseSha: since.mergeBaseSha,
+        // The diff the earlier review saw.
+        previous: new Set(["src/a.ts"]),
       });
+      expect(get.mock.calls[2][0]).toContain(
+        `/compare/${since.mergeBaseSha}...${since.headSha}`,
+      );
       expect(get.mock.calls[0][0]).toContain(
         `/compare/${since.headSha}...${pr.head.sha}?per_page=1`,
       );
@@ -266,10 +275,13 @@ describe("authoritative PR snapshots", () => {
         .mockResolvedValueOnce({
           status: "ahead",
           files: [{ filename: "src/fixed-on-main.ts" }],
-        });
+        })
+        .mockRejectedValueOnce(new Error("compare unavailable"));
       expect(await changedSince(access, since, pr)).toEqual({
         paths: new Set(["src/fixed-on-main.ts"]),
         mergeBaseSha: moved,
+        // An unreadable earlier diff is unknown, not empty.
+        previous: null,
       });
       expect(get.mock.calls[2][0]).toContain(
         `/compare/${since.mergeBaseSha}...${moved}`,

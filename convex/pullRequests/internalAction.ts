@@ -248,6 +248,9 @@ export const generate = internalAction({
       // long as they fit one review; otherwise the whole PR is reviewed.
       const since = initial.action.reviewSince;
       let scoped: Awaited<ReturnType<typeof snapshot>> | undefined;
+      // Files that left the PR diff since the earlier review: a file the PR
+      // added and then deleted, or one reverted to base.
+      let leftDiff = 0;
       if (since && !batched && !verificationOnly) {
         const scope = await changedSince(access, since, pr);
         if (scope) {
@@ -261,6 +264,13 @@ export const generate = internalAction({
             JSON.stringify(candidate.files).length <= REVIEW_DIFF_BUDGET
           ) {
             scoped = candidate;
+            const now = new Set(candidate.files.map((f) => f.filename));
+            leftDiff = scope.previous
+              ? [...scope.paths].filter(
+                  (path) => scope.previous!.has(path) && !now.has(path),
+                ).length
+              : // Unknown earlier diff: treat it as changed.
+                1;
           }
         }
       }
@@ -309,7 +319,7 @@ export const generate = internalAction({
             uncoveredFiles: unreviewable.length,
             since: since?.headSha,
             // A deletion has no added line a finding could point at.
-            removedFiles: data.files.length - unreviewable.length,
+            removedFiles: data.files.length - unreviewable.length + leftDiff,
           },
         });
         return;
@@ -1108,15 +1118,19 @@ export const dismissStaleApproval = internalAction({
     );
     const pr = await getPullRequest(access, args.number);
     const { approvals } = await ownReviews(access, args.number, null, "");
+    // An approval of the current head is a newer review's; keep it.
+    const stale = approvals.filter(
+      (approval) => approval.commit_id !== pr.head.sha,
+    );
     const kept = await dismissApprovals(
       access,
       args.number,
-      // An approval of the current head is a newer review's; keep it.
-      approvals.filter((approval) => approval.commit_id !== pr.head.sha),
+      stale,
       "New commits were pushed after the commit Gitdog approved.",
     );
-    // Remembered until GitHub accepts the dismissal, so a push retries it.
-    if (kept.length) return;
+    // Remembered until GitHub accepts every dismissal, including any past
+    // the per-run cap, so a later push retries.
+    if (kept.length || stale.length > 5) return;
     await ctx.runMutation(
       internal.pullRequests.internalMutation.forgetApproval,
       { ticketId: args.ticketId, staleSha: args.staleSha },

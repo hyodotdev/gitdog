@@ -206,7 +206,12 @@ export async function changedSince(
   access: VerifiedRepositoryAccess,
   since: { headSha: string; mergeBaseSha: string },
   pr: PullRequest,
-): Promise<{ paths: Set<string>; mergeBaseSha: string } | null> {
+): Promise<{
+  paths: Set<string>;
+  mergeBaseSha: string;
+  // Files of the PR diff the earlier review saw, or null if unknown.
+  previous: Set<string> | null;
+} | null> {
   if (!sha(since.headSha) || !sha(since.mergeBaseSha)) return null;
   const compare = (from: string, to: string) =>
     readReviewJson<{
@@ -240,12 +245,19 @@ export async function changedSince(
     const mergeBase = (await compare(pr.base.sha, pr.head.sha))
       .merge_base_commit?.sha;
     if (!sha(mergeBase)) return null;
-    if (mergeBase === since.mergeBaseSha)
-      return { paths: new Set(head), mergeBaseSha: mergeBase };
-    const base = changedFiles(await compare(since.mergeBaseSha, mergeBase));
-    return base
-      ? { paths: new Set([...head, ...base]), mergeBaseSha: mergeBase }
-      : null;
+    const base =
+      mergeBase === since.mergeBaseSha
+        ? []
+        : changedFiles(await compare(since.mergeBaseSha, mergeBase));
+    if (!base) return null;
+    const earlier = await compare(since.mergeBaseSha, since.headSha)
+      .then(changedFiles)
+      .catch(() => null);
+    return {
+      paths: new Set([...head, ...base]),
+      mergeBaseSha: mergeBase,
+      previous: earlier ? new Set(earlier) : null,
+    };
   } catch {
     return null;
   }

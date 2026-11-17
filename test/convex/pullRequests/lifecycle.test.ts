@@ -2655,13 +2655,16 @@ describe("batched PR reviews", () => {
     ).toMatchObject({ changedFiles: 1, reviewedSince: source.headSha });
   });
 
-  async function followUp(changed: Set<string> | null) {
+  async function followUp(
+    changed: Set<string> | null,
+    previous: Set<string> | null = null,
+  ) {
     const f = await batchFixture(undefined, 0, 10_000_000, [], 61);
     for (const page of [undefined, 2, 3, 4]) await f.generate(page);
     await drainScheduledFunctions(f.t);
     const github = await import("../../../convex/pullRequests/github");
     vi.spyOn(github, "changedSince").mockResolvedValue(
-      changed && { paths: changed, mergeBaseSha: source.baseSha },
+      changed && { paths: changed, mergeBaseSha: source.baseSha, previous },
     );
     const next = { ...source, headSha: "e".repeat(40) };
     f.live.head = { sha: next.headSha };
@@ -2676,6 +2679,20 @@ describe("batched PR reviews", () => {
   it("reviews the whole PR again after a force push", async () => {
     const f = await followUp(null);
     expect(f.batches).toEqual([`pr/${f.nextId}/${f.next.headSha}/batch/1/1`]);
+  });
+  it("does not approve again after a push deleted a file the PR added", async () => {
+    // src/added.ts was in the reviewed diff and is gone from the PR now.
+    const f = await followUp(
+      new Set(["src/added.ts"]),
+      new Set(["src/added.ts", "src/file-1.ts"]),
+    );
+    await drainScheduledFunctions(f.t);
+    expect(f.fetch).not.toHaveBeenCalled();
+    expect(await f.t.run((ctx) => ctx.db.get(f.nextId))).toMatchObject({
+      status: "completed",
+      executionResult: { published: false, reason: "no_new_changes" },
+      proposedChanges: { coverageComplete: false },
+    });
   });
   it("completes without posting when a push changed nothing in the PR diff", async () => {
     const f = await followUp(new Set(["README.md"]));

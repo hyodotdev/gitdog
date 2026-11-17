@@ -827,18 +827,18 @@ export const propose = internalMutation({
     const baseFindings =
       base?.proposedChanges?.findingCount ??
       base?.proposedChanges?.findings?.length;
+    // A deletion is never reviewed: nothing added remains to point at.
     const coverageComplete =
       coverage !== undefined &&
       coverage.uncoveredFiles === 0 &&
+      !args.coverage?.removedFiles &&
       (!since ||
         (base?.proposedChanges?.coverageComplete === true &&
           (baseFindings === 0 ||
             base.executionResult?.inlineFindings === true)));
     // A follow-up with nothing new still posts when it can approve, so the
     // approval a push withdrew (such as a base merge) comes back.
-    const unpublished =
-      verificationOnly ||
-      (nothingNew && !(coverageComplete && !args.coverage?.removedFiles));
+    const unpublished = verificationOnly || (nothingNew && !coverageComplete);
     await ctx.db.patch(action._id, {
       ...ENDED_BATCH,
       proposedChanges: {
@@ -1115,7 +1115,11 @@ export const forgetApproval = internalMutation({
     // dropped is observed again once it ends, which retries the dismissal.
     if (
       ticket?.pullRequestApprovedSha === args.staleSha &&
-      !(await listTicketActions(ctx, ticket._id)).some(isRunningReview)
+      !(await listTicketActions(ctx, ticket._id)).some(
+        (action) =>
+          action.status === "approved" &&
+          action.executionClaimedAt !== undefined,
+      )
     )
       await ctx.db.patch(ticket._id, { pullRequestApprovedSha: undefined });
   },
