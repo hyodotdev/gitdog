@@ -5,7 +5,8 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import { v } from "convex/values";
 import {
-  GENERATION_MODELS,
+  CHAT_MODELS,
+  getChatModel,
   LEGACY_GOOGLE_MODELS,
   PRICING,
 } from "../_ai/config";
@@ -210,6 +211,7 @@ type ChatUsageWriteArgs = {
   inputTokens: number;
   outputTokens: number;
   model: string;
+  servedModel?: string;
   provider: "google" | "anthropic" | "openai";
   reservationKey?: string;
   reservationAttemptToken?: string;
@@ -262,36 +264,6 @@ function assertFiniteNonNegativeCosts(
   }
 }
 
-/**
- * Get per-1M-token pricing based on model
- */
-export function getModelPricing(
-  model: string,
-  provider: string,
-): {
-  inputPer1M: number;
-  outputPer1M: number;
-} {
-  if (provider === "anthropic" || provider === "openai") {
-    const pricing = GENERATION_MODELS[provider];
-    if (model !== pricing.modelId)
-      throw new Error(`Unsupported ${provider} model pricing: ${model}`);
-    return { inputPer1M: pricing.inputPer1M, outputPer1M: pricing.outputPer1M };
-  }
-  if (
-    provider !== LEGACY_GOOGLE_MODELS.provider ||
-    model !== LEGACY_GOOGLE_MODELS.chatModelId
-  ) {
-    throw new Error(
-      `Unsupported chat pricing: ${provider}/${model}. Add explicit pricing before enabling it.`,
-    );
-  }
-  return {
-    inputPer1M: LEGACY_GOOGLE_MODELS.chatInputPer1M,
-    outputPer1M: LEGACY_GOOGLE_MODELS.chatOutputPer1M,
-  };
-}
-
 /** Calculate uncached generation costs in cents, including context tiers. */
 export function calculateChatCost(
   inputTokens: number,
@@ -306,20 +278,23 @@ export function calculateChatCost(
   serviceFeeCents: number;
   totalCostCents: number;
 } {
-  const pricing = getModelPricing(model, provider);
-  const longContext = provider === "openai" && inputTokens > 272_000;
+  const pricing = getChatModel(model, provider);
+  const longContext =
+    pricing.longContext && inputTokens > pricing.longContext.inputTokens
+      ? pricing.longContext
+      : undefined;
 
   // Preserve fractional cents per request. Rounding each small request to whole
   // cents makes repeated low-token calls disappear from cost accounting.
   const inputCostCents =
     (inputTokens / 1_000_000) *
     pricing.inputPer1M *
-    (longContext ? 2 : 1) *
+    (longContext?.inputMultiplier ?? 1) *
     100;
   const outputCostCents =
     (outputTokens / 1_000_000) *
     pricing.outputPer1M *
-    (longContext ? 1.5 : 1) *
+    (longContext?.outputMultiplier ?? 1) *
     100;
   const baseCostCents = inputCostCents + outputCostCents;
   const serviceFeeCents = baseCostCents * serviceFeeRate;
@@ -471,6 +446,18 @@ export async function recordChatUsageInTransaction(
     }
   }
   const userKey = reservation?.keySource === "user";
+  // A reservation made before quota weights holds a weight of 1, so its
+  // usage is never charged more than it reserved.
+  const quotaWeight = userKey
+    ? 1
+    : Math.min(
+        getChatModel(args.model, args.provider).quotaWeight,
+        reservation ? (reservation.quotaWeight ?? 1) : Infinity,
+      );
+  const quotaTokens = Math.ceil(totalTokens * quotaWeight);
+  if (!Number.isSafeInteger(quotaTokens)) {
+    throw new Error("Total token count exceeds the supported range");
+  }
 
   const requestedAction = args.ticketActionId
     ? await ctx.db.get(args.ticketActionId)
@@ -502,7 +489,7 @@ export async function recordChatUsageInTransaction(
         subscription: reservation?.subscriptionId
           ? await ctx.db.get(reservation.subscriptionId)
           : await getSubscriptionForEntitlement(ctx, args.userId, now),
-        totalTokens,
+        totalTokens: quotaTokens,
         now,
         ...(reservation
           ? {
@@ -512,11 +499,19 @@ export async function recordChatUsageInTransaction(
           : {}),
       });
   const serviceFeeRate = accounting.entitlement.serviceFeeRate;
+  // A refusal fallback bills at the serving model's rates. An unknown served
+  // model is still recorded, priced at the requested model.
+  const pricedModel =
+    args.servedModel &&
+    Object.hasOwn(CHAT_MODELS, args.servedModel) &&
+    CHAT_MODELS[args.servedModel].provider === args.provider
+      ? args.servedModel
+      : args.model;
   const costs = calculateChatCost(
     args.inputTokens,
     args.outputTokens,
     serviceFeeRate,
-    args.model,
+    pricedModel,
     args.provider,
   );
   assertFiniteNonNegativeCosts(costs);
@@ -536,9 +531,13 @@ export async function recordChatUsageInTransaction(
     usageType: "chat",
     inputTokens: args.inputTokens,
     outputTokens: args.outputTokens,
-    totalTokens,
+    totalTokens: quotaTokens,
+    ...(quotaWeight !== 1 ? { quotaWeight } : {}),
     ...costs,
     model: args.model,
+    ...(args.servedModel && args.servedModel !== args.model
+      ? { servedModel: args.servedModel }
+      : {}),
     provider: args.provider,
     serviceFeeRate,
     chatReservationKey: reservationKey,

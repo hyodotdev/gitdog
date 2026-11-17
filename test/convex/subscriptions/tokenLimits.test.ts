@@ -1,9 +1,11 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import {
-  GENERATION_MODELS,
+  CHAT_MODELS,
   PRICING,
   LEGACY_FREE_MONTHLY_TOKENS,
 } from "../../../convex/_ai/config";
+
+const SONNET = CHAT_MODELS["claude-sonnet-5-5"];
 
 /**
  * Token Limit Tests
@@ -489,8 +491,8 @@ describe("Cost Calculation", () => {
     const inputTokens = 10_000;
     const outputTokens = 2_000;
     const totalCost =
-      (inputTokens / 1_000_000) * GENERATION_MODELS.anthropic.inputPer1M +
-      (outputTokens / 1_000_000) * GENERATION_MODELS.anthropic.outputPer1M;
+      (inputTokens / 1_000_000) * SONNET.inputPer1M +
+      (outputTokens / 1_000_000) * SONNET.outputPer1M;
     const platformFee = totalCost * PRICING.PLATFORM_FEE_FREE;
     const totalWithFee = totalCost + platformFee;
 
@@ -503,8 +505,8 @@ describe("Cost Calculation", () => {
     const inputTokens = 80_000;
     const outputTokens = 20_000;
     const totalCost =
-      (inputTokens / 1_000_000) * GENERATION_MODELS.anthropic.inputPer1M +
-      (outputTokens / 1_000_000) * GENERATION_MODELS.anthropic.outputPer1M;
+      (inputTokens / 1_000_000) * SONNET.inputPer1M +
+      (outputTokens / 1_000_000) * SONNET.outputPer1M;
     const platformFee = totalCost * PRICING.PLATFORM_FEE_PRO;
     const totalWithFee = totalCost + platformFee;
 
@@ -518,8 +520,8 @@ describe("Cost Calculation", () => {
     const inputTokens = 800_000;
     const outputTokens = 200_000;
     const totalCost =
-      (inputTokens / 1_000_000) * GENERATION_MODELS.anthropic.inputPer1M +
-      (outputTokens / 1_000_000) * GENERATION_MODELS.anthropic.outputPer1M;
+      (inputTokens / 1_000_000) * SONNET.inputPer1M +
+      (outputTokens / 1_000_000) * SONNET.outputPer1M;
     const platformFee = totalCost * PRICING.PLATFORM_FEE_TOKEN_PACK_SMALL;
     const totalWithFee = totalCost + platformFee;
 

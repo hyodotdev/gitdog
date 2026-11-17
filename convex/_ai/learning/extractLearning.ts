@@ -41,7 +41,8 @@ async function summarizeLinkContent(
 
   await beforeProviderCall?.();
   const result = await provider.chat([{ role: "user", content: prompt }], {
-    maxTokens: 500,
+    // Thinking is always on and counts toward the limit.
+    maxTokens: 2000,
     temperature: 0.3,
     billingLabel,
   });
@@ -122,7 +123,8 @@ export async function extractLearning(
 
   await options.beforeProviderCall?.();
   const result = await provider.chat([{ role: "user", content: prompt }], {
-    maxTokens: 500,
+    // Thinking is always on and counts toward the limit.
+    maxTokens: 2000,
     temperature: 0.3,
     billingLabel: "learning-extract",
   });

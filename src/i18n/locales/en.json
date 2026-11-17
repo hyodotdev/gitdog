@@ -768,7 +768,7 @@
       "purchase": "Purchase"
     },
     "tokenPricing": "Token Pricing",
-    "tokenPricingDescription": "Free starts with 100k one-time trial tokens and Pro includes 2.4M each month. Both stop at the available limit, which prepaid token packs can extend. Work that runs on your own API key never uses Gitdog tokens.",
+    "tokenPricingDescription": "Free starts with 100k one-time trial tokens and Pro includes 2.4M each month. Both stop at the available limit, which prepaid token packs can extend. Gitdog runs on Claude Opus 5.5, and each Opus token counts as 2 Gitdog tokens because it costs twice as much as the GPT-6.1 Sol fallback. Work that runs on your own API key never uses Gitdog tokens.",
     "freeTokensLabel": "Trial tokens (one-time)",
     "platformFeeLabel": "Prepaid token packs",
     "billingLabel": "Billing",

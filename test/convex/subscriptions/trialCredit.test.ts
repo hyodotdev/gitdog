@@ -330,7 +330,7 @@ describe("trial grant rules", () => {
       ctx.db.query("tokenUsage").collect(),
     );
     expect(usage).toEqual([
-      expect.objectContaining({ totalTokens: 15, purchasedTokensDebited: 0 }),
+      expect.objectContaining({ totalTokens: 30, purchasedTokensDebited: 0 }),
     ]);
   });
 });

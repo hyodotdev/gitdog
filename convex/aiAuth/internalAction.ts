@@ -55,9 +55,8 @@ export const checkClaudeGeneration = internalAction({
     );
     const result = await provider.chat(
       [{ role: "user", content: "Reply OK." }],
-      {
-        maxTokens: 512,
-      },
+      // Thinking is always on and counts toward the limit.
+      { maxTokens: 2048 },
     );
     if (!result.usage)
       throw new Error("Claude generation QA did not return usage");

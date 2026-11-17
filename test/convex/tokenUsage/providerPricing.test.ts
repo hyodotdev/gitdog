@@ -1,9 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  calculateChatCost,
-  getModelPricing,
-} from "../../../convex/tokenUsage/internalMutation";
+  getChatModel,
+  RESERVATION_QUOTA_WEIGHT,
+} from "../../../convex/_ai/config";
+import { calculateChatCost } from "../../../convex/tokenUsage/internalMutation";
+
+function getModelPricing(model: string, provider: string) {
+  const { inputPer1M, outputPer1M } = getChatModel(model, provider);
+  return { inputPer1M, outputPer1M };
+}
 
 describe("provider-aware chat pricing", () => {
   it("uses the configured paid AI 2.5 Flash pricing", () => {
@@ -47,6 +53,10 @@ describe("provider-aware chat pricing", () => {
 
 describe("Claude and OpenAI generation pricing", () => {
   it("prices both current providers and rejects cross-provider model attribution", () => {
+    expect(getModelPricing("claude-opus-5-5", "anthropic")).toEqual({
+      inputPer1M: 4,
+      outputPer1M: 20,
+    });
     expect(getModelPricing("claude-sonnet-5-5", "anthropic")).toEqual({
       inputPer1M: 2,
       outputPer1M: 10,
@@ -56,6 +66,20 @@ describe("Claude and OpenAI generation pricing", () => {
       outputPer1M: 10,
     });
     expect(() => getModelPricing("claude-sonnet-5-5", "openai")).toThrow();
+    expect(() => getModelPricing("toString", "anthropic")).toThrow(
+      "Unsupported chat pricing",
+    );
+  });
+  it("weighs Opus twice and reserves at the highest routed weight", () => {
+    expect(getChatModel("claude-opus-5-5", "anthropic").quotaWeight).toBe(2);
+    expect(getChatModel("gpt-6.1-sol", "openai").quotaWeight).toBe(1);
+    expect(RESERVATION_QUOTA_WEIGHT).toBe(2);
+  });
+  it("does not apply long-context pricing to Claude", () => {
+    expect(
+      calculateChatCost(500_000, 0, 0, "claude-opus-5-5", "anthropic")
+        .baseCostCents,
+    ).toBeCloseTo(200);
   });
   it("uses Sol long-context pricing only above 272K input tokens", () => {
     expect(

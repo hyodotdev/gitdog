@@ -9,7 +9,7 @@
 **Gitdog** is an AI-powered GitHub issue and discussion assistant.
 
 - Repository-aware issue and discussion formatting, answers, and maintainer tagging
-- Claude Sonnet 5.5 generation with GPT-6.1 Sol fallback (see [docs/ai-models.md](docs/ai-models.md))
+- Claude Opus 5.5 generation with GPT-6.1 Sol fallback (see [docs/ai-models.md](docs/ai-models.md))
 - Keyword repository index plus AI repository tools (search, read file) for code search
 - Private workspace per user
 - Free and Pro token quotas with optional prepaid token packs

@@ -246,7 +246,11 @@ const applicationTables = {
     // Token counts
     inputTokens: v.number(),
     outputTokens: v.number(),
+    // Quota tokens: provider tokens times quotaWeight for chat, or the
+    // cost-equivalent amount for embeddings.
     totalTokens: v.number(),
+    // Set on chat rows whose model counts more than once per provider token.
+    quotaWeight: v.optional(v.number()),
     embeddingTokens: v.optional(v.number()),
     embeddingBillingTier: v.optional(
       v.union(v.literal("free"), v.literal("paid")),
@@ -273,6 +277,9 @@ const applicationTables = {
 
     // Metadata
     model: v.string(), // Chat or embedding model identifier
+    // Set when a refusal fallback served the request instead of model. Cost
+    // is priced at this model when Gitdog knows its price.
+    servedModel: v.optional(v.string()),
     provider: v.union(
       v.literal("google"),
       v.literal("anthropic"),
@@ -491,6 +498,9 @@ const applicationTables = {
     keySource: v.optional(v.literal("user")),
     inputTokenLimit: v.number(),
     outputTokenLimit: v.number(),
+    // reservedTokens is (inputTokenLimit + outputTokenLimit) * quotaWeight.
+    // Missing on reservations made before weights, which hold a weight of 1.
+    quotaWeight: v.optional(v.number()),
     reservedTokens: v.number(),
     subscriptionId: v.optional(v.id("subscriptions")),
     entitlementPlan: v.union(v.literal("free"), v.literal("pro")),
@@ -516,6 +526,7 @@ const applicationTables = {
           inputTokens: v.number(),
           outputTokens: v.number(),
           providerRequestId: v.optional(v.string()),
+          servedModel: v.optional(v.string()),
         }),
         v.object({
           kind: v.literal("known_not_billed"),

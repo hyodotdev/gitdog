@@ -340,6 +340,16 @@ export class ClaudeProvider implements AiProvider {
               : "provider_error";
       if (finishReason === "tool_use" && toolUse.length === 0)
         throw new Error("Missing tool call");
+      // After a fallback, later turns of the conversation are served by the
+      // fallback model directly, with no fallback block, so read the model
+      // that answered rather than only the block.
+      const servedModelId =
+        typeof data.model === "string" &&
+        data.model &&
+        data.model !== this.modelId &&
+        data.model.length <= 128
+          ? data.model
+          : undefined;
       return {
         content: history
           .flatMap((p) => (p.type === "text" ? [p.text] : []))
@@ -350,6 +360,7 @@ export class ClaudeProvider implements AiProvider {
         usage: billed,
         provider: this.name,
         modelId: this.modelId,
+        ...(servedModelId ? { servedModelId } : {}),
         providerId: this.providerId,
         providerRequestId: requestId,
       };

@@ -392,7 +392,7 @@ describe("deployment-admin authentication diagnostic", () => {
     expect(result).toEqual({ ok: true, inputTokens: 9, outputTokens: 2 });
     const request = JSON.parse(fetch.mock.calls[1][1]!.body as string);
     expect(request).toMatchObject({
-      max_tokens: 512,
+      max_tokens: 2048,
       messages: [
         { role: "user", content: [{ type: "text", text: "Reply OK." }] },
       ],

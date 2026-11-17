@@ -240,7 +240,10 @@ Approval executes the approved action on GitHub. Project deletion disconnects
 the Gitdog project and removes cached Gitdog data; the GitHub repository is
 preserved. Team features and ownership restrictions follow the web app's plan
 and access rules. Checkout returns a secure link; purchasing requires completing
-the provider's checkout. Account eligibility and policy consent are completed in
+the provider's checkout. In `usage summary`, `totalTokens` is the quota used:
+Claude Opus 5.5 counts each provider token twice, so it is larger than
+`totalInputTokens` plus `totalOutputTokens`, which are raw provider counts.
+Account eligibility and policy consent are completed in
 the browser using `account consent`, or through an explicitly selected public
 API operation. Consent is never inferred from login.
 

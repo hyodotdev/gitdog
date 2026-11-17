@@ -2582,10 +2582,11 @@ describe("authoritative subscription and invoice settlement", () => {
       requirePendingTicketAction: true,
       generationKey: "renewal-chat-generation-4203",
       operation: "renewal billing hold regression",
-      model: "claude-sonnet-5-5",
+      // Opus 5.5 holds and charges two quota tokens per provider token.
+      model: "claude-opus-5-5",
       provider: "anthropic" as const,
       requestFingerprint: "1".repeat(64),
-      inputTokenLimit: PRO_INCLUDED_TOKENS + 40,
+      inputTokenLimit: PRO_INCLUDED_TOKENS / 2 + 10,
       outputTokenLimit: 20,
     };
     const safeChatReservation = {
@@ -2593,7 +2594,7 @@ describe("authoritative subscription and invoice settlement", () => {
       reservationKey: "renewal-safe-chat-hold-4203",
       attemptToken: "renewal-safe-chat-hold-4203-attempt-1",
       generationKey: "renewal-safe-chat-generation-4203",
-      inputTokenLimit: 100,
+      inputTokenLimit: 30,
     };
     await expect(
       t.mutation(
@@ -2680,7 +2681,7 @@ describe("authoritative subscription and invoice settlement", () => {
       userId,
       repositoryId,
       ticketActionId,
-      inputTokens: PRO_INCLUDED_TOKENS + 40,
+      inputTokens: PRO_INCLUDED_TOKENS / 2 + 10,
       outputTokens: 20,
       model: chatReservation.model,
       provider: "anthropic",

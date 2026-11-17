@@ -7,8 +7,10 @@ and CLI never store provider keys.
 
 ## Generation routing
 
-- Primary: **Claude Sonnet 5.5** (`claude-sonnet-5-5`).
-- Fallback: **GPT-6.1 Sol** (`gpt-6.1-sol`) through the OpenAI Responses API.
+- Primary: **Claude Opus 5.5** (`claude-opus-5-5`) at `medium` effort, with
+  Anthropic's server-side refusal fallback.
+- Fallback: **GPT-6.1 Sol** (`gpt-6.1-sol`) at `high` reasoning effort through
+  the OpenAI Responses API.
 - Claude is used strictly before **2027-01-18 00:00 Asia/Seoul**
   (`2027-01-17T15:00:00Z`); after that, new requests go to OpenAI.
 - Only confirmed credit exhaustion or a provider spending limit selects OpenAI.
@@ -79,10 +81,27 @@ indexing costs no AI tokens.
 
 ## Token pricing
 
-| Model             | Input per 1M tokens | Output per 1M tokens |
-| ----------------- | ------------------- | -------------------- |
-| Claude Sonnet 5.5 | $2.00               | $10.00               |
-| GPT-6.1 Sol       | $2.00               | $10.00               |
+| Model             | Input per 1M tokens | Output per 1M tokens | Quota weight |
+| ----------------- | ------------------- | -------------------- | ------------ |
+| Claude Opus 5.5   | $4.00               | $20.00               | 2            |
+| GPT-6.1 Sol       | $2.00               | $10.00               | 1            |
+| Claude Sonnet 5.5 | $2.00               | $10.00               | 1 (retired)  |
+
+On Gitdog's keys, each provider token counts as its model's quota weight in
+Gitdog tokens: an Opus 5.5 call with 30K input and 5K output tokens uses 70K.
+Every reservation holds the highest weight a request could be routed to, so a
+call that falls back to Sol holds 2x but is charged 1x. A call is charged the
+lower of its model's weight and its reservation's, so a reservation made before
+weights existed is charged at most 1x. Usage on your own key is billed by the
+provider and is never weighted.
+
+A request Opus 5.5 declines may be served inside the same call by Anthropic's
+refusal fallback model (Claude Opus 5 or Opus 4.8, $5/$25), and later turns
+of that conversation go to the fallback model directly for a while. Whenever
+the response names another serving model, the usage row keeps
+`claude-opus-5-5` and its weight, since the reservation is bound to it, stores
+the serving model as `servedModel`, and records its cost at that model's
+price.
 
 Sol prompts above 272K input tokens use 2x input and 1.5x output pricing.
 Prompt caching is disabled, so recorded token counts map directly to the listed
@@ -121,6 +140,9 @@ Token usage is recorded per request from the provider's own usage report:
 - Input includes the reported prompt and tool-use prompt tokens.
 - Output is the remaining provider-reported total.
 - The actual provider and model are stored with every usage record.
+- `totalTokens` is the quota amount: provider tokens times the weight charged,
+  which is stored as `quotaWeight` when it is not 1. Input and output stay
+  raw provider counts, so on Opus rows they add up to half of `totalTokens`.
 - Usage consumes included tokens first, then the prepaid balance.
 
 ## Configuration

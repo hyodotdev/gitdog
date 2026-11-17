@@ -160,6 +160,8 @@ try {
     inputTokens: number;
     outputTokens: number;
     totalTokens: number;
+    quotaWeight?: number;
+    servedModel?: string;
     baseCostCents: number;
     serviceFeeCents: number;
     totalCostCents: number;
@@ -169,13 +171,26 @@ try {
     assert(["anthropic", "openai"].includes(row.provider));
     assert.equal(
       row.model,
-      row.provider === "anthropic" ? "claude-sonnet-5-5" : "gpt-6.1-sol",
+      row.provider === "anthropic" ? "claude-opus-5-5" : "gpt-6.1-sol",
     );
-    assert.equal(row.totalTokens, row.inputTokens + row.outputTokens);
+    // Opus 5.5 counts twice against quota on Gitdog's key.
+    assert.equal(
+      row.totalTokens,
+      (row.inputTokens + row.outputTokens) * (row.quotaWeight ?? 1),
+    );
+    // Per-1M prices; a refusal fallback is priced at the model that served it.
+    const prices: Record<string, [number, number]> = {
+      "claude-opus-5-5": [4, 20],
+      "claude-opus-5": [5, 25],
+      "claude-opus-4-8": [5, 25],
+      "gpt-6.1-sol": [2, 10],
+    };
+    const [inputPer1M, outputPer1M] =
+      prices[row.servedModel ?? row.model] ?? prices[row.model];
     const long = row.provider === "openai" && row.inputTokens > 272000;
     const expected =
-      (row.inputTokens / 1000000) * 2 * (long ? 2 : 1) * 100 +
-      (row.outputTokens / 1000000) * 10 * (long ? 1.5 : 1) * 100;
+      (row.inputTokens / 1000000) * inputPer1M * (long ? 2 : 1) * 100 +
+      (row.outputTokens / 1000000) * outputPer1M * (long ? 1.5 : 1) * 100;
     assert(
       Math.abs(row.baseCostCents - expected) < 1e-8,
       "Provider usage price mismatch",

@@ -588,9 +588,10 @@ describe("AI chat usage reservations", () => {
       });
     });
 
+    // Each reserved token holds RESERVATION_QUOTA_WEIGHT quota tokens.
     const chat = reservationArgs(fixture, "pro-prepaid-chat", 1, {
-      inputTokenLimit: 40,
-      outputTokenLimit: 20,
+      inputTokenLimit: 20,
+      outputTokenLimit: 10,
     });
     await expect(reserve(t, chat)).resolves.toEqual({
       allowed: true,
@@ -604,8 +605,8 @@ describe("AI chat usage reservations", () => {
       reservedTokens: 40,
     });
     const fill = reservationArgs(fixture, "pro-prepaid-chat-fill", 1, {
-      inputTokenLimit: 20,
-      outputTokenLimit: 20,
+      inputTokenLimit: 10,
+      outputTokenLimit: 10,
     });
     await expect(reserve(t, fill)).resolves.toMatchObject({ allowed: true });
 
@@ -836,12 +837,12 @@ describe("AI chat usage reservations", () => {
     const fixture = await insertFixture(t);
     const attempts = [
       reservationArgs(fixture, "concurrent-a", 1, {
-        inputTokenLimit: 30_000,
-        outputTokenLimit: 30_000,
+        inputTokenLimit: 15_000,
+        outputTokenLimit: 15_000,
       }),
       reservationArgs(fixture, "concurrent-b", 1, {
-        inputTokenLimit: 30_000,
-        outputTokenLimit: 30_000,
+        inputTokenLimit: 15_000,
+        outputTokenLimit: 15_000,
       }),
     ];
     const results = await Promise.all(attempts.map((args) => reserve(t, args)));
@@ -849,6 +850,138 @@ describe("AI chat usage reservations", () => {
     expect(results.filter((result) => !result.allowed)).toEqual([
       { allowed: false, reason: "limit_reached" },
     ]);
+  });
+
+  it("holds and charges Opus usage at its quota weight", async () => {
+    const t = convexTest(schema, modules);
+    const args = reservationArgs(await insertFixture(t), "weighted");
+    await expect(reserve(t, args)).resolves.toMatchObject({ allowed: true });
+    await expect(markStarted(t, args)).resolves.toBe(true);
+    const usageId = await finalize(t, args, 100, 20);
+    const state = await t.run(async (ctx) => ({
+      usage: await ctx.db.get(usageId),
+      reservation: await ctx.db
+        .query("chatUsageReservations")
+        .withIndex("by_reservation_key", (q) =>
+          q.eq("reservationKey", args.reservationKey),
+        )
+        .unique(),
+    }));
+    expect(state.reservation).toMatchObject({
+      quotaWeight: 2,
+      reservedTokens: 8_000,
+    });
+    expect(state.usage).toMatchObject({
+      inputTokens: 100,
+      outputTokens: 20,
+      totalTokens: 240,
+      quotaWeight: 2,
+    });
+  });
+
+  it.each([
+    ["claude-opus-4-8", 0.15],
+    ["claude-future-model", 0.12],
+  ] as const)(
+    "prices a refusal fallback served by %s at its own rates",
+    async (servedModel, baseCostCents) => {
+      const t = convexTest(schema, modules);
+      const args = reservationArgs(await insertFixture(t), "served");
+      await reserve(t, args);
+      await markStarted(t, args);
+      await t.mutation(internal._ai.chatBilling.stageChatProviderOutcome, {
+        reservationKey: args.reservationKey,
+        attemptToken: args.attemptToken,
+        userId: args.userId,
+        repositoryId: args.repositoryId,
+        ticketActionId: args.ticketActionId,
+        outcome: {
+          kind: "known_billed",
+          inputTokens: 100,
+          outputTokens: 40,
+          providerRequestId: "served-request",
+          servedModel,
+        },
+      });
+      await t.mutation(internal._ai.chatBilling.settleStagedChatOutcome, {
+        reservationKey: args.reservationKey,
+        attemptToken: args.attemptToken,
+      });
+      const usage = await t.run((ctx) => ctx.db.query("tokenUsage").first());
+      // Quota stays bound to the requested model's weight.
+      expect(usage).toMatchObject({
+        model: "claude-opus-5-5",
+        totalTokens: 280,
+        quotaWeight: 2,
+        servedModel,
+      });
+      // Opus 4.8 at $5/$25; an unknown model falls back to Opus 5.5's $4/$20.
+      expect(usage?.baseCostCents).toBeCloseTo(baseCostCents);
+    },
+  );
+
+  it("charges a weighted reservation served by Sol at Sol's weight", async () => {
+    const t = convexTest(schema, modules);
+    const args = {
+      ...reservationArgs(await insertFixture(t), "sol-served"),
+      model: "gpt-6.1-sol",
+      provider: "openai" as const,
+    };
+    await reserve(t, args);
+    await markStarted(t, args);
+    const usageId = await t.mutation(
+      internal.tokenUsage.internalMutation.recordUsage,
+      {
+        userId: args.userId,
+        repositoryId: args.repositoryId,
+        ticketActionId: args.ticketActionId,
+        inputTokens: 100,
+        outputTokens: 20,
+        model: args.model,
+        provider: "openai",
+        reservationKey: args.reservationKey,
+        reservationAttemptToken: args.attemptToken,
+        providerRequestId: "sol-request",
+      },
+    );
+    const state = await t.run(async (ctx) => ({
+      usage: await ctx.db.get(usageId),
+      reservation: await ctx.db
+        .query("chatUsageReservations")
+        .withIndex("by_reservation_key", (q) =>
+          q.eq("reservationKey", args.reservationKey),
+        )
+        .unique(),
+    }));
+    expect(state.reservation).toMatchObject({ quotaWeight: 2 });
+    expect(state.usage).toMatchObject({ totalTokens: 120 });
+    expect(state.usage).not.toHaveProperty("quotaWeight");
+  });
+
+  it("keeps a reservation made before weights at its original weight", async () => {
+    const t = convexTest(schema, modules);
+    const args = reservationArgs(await insertFixture(t), "pre-weight");
+    await expect(reserve(t, args)).resolves.toMatchObject({ allowed: true });
+    // A reservation written by the previous deployment has no weight.
+    await t.run(async (ctx) => {
+      const row = await ctx.db
+        .query("chatUsageReservations")
+        .withIndex("by_reservation_key", (q) =>
+          q.eq("reservationKey", args.reservationKey),
+        )
+        .unique();
+      await ctx.db.patch(row!._id, {
+        quotaWeight: undefined,
+        reservedTokens: 4_000,
+      });
+    });
+    // A retry after the deploy still matches the stored reservation.
+    await expect(reserve(t, args)).resolves.toMatchObject({ allowed: true });
+    await expect(markStarted(t, args)).resolves.toBe(true);
+    const usageId = await finalize(t, args, 100, 20);
+    const usage = await t.run((ctx) => ctx.db.get(usageId));
+    expect(usage).toMatchObject({ totalTokens: 120 });
+    expect(usage).not.toHaveProperty("quotaWeight");
   });
 
   it("finalizes one usage row idempotently and rejects payload changes", async () => {
@@ -2277,7 +2410,8 @@ describe("AI chat usage reservations", () => {
     }));
     expect(recovered.reservation).toMatchObject({ status: "finalized" });
     expect(recovered.reservation?.settlementState).toBeUndefined();
-    expect(recovered.usage).toMatchObject({ totalTokens: 15 });
+    // Opus 5.5 counts twice against quota.
+    expect(recovered.usage).toMatchObject({ totalTokens: 30, quotaWeight: 2 });
   });
 
   it("periodically reschedules an exact outcome without letting expiry overwrite it", async () => {
@@ -3089,7 +3223,10 @@ describe("metered multi-provider replay", () => {
         inputTokens: 10,
         outputTokens: 5,
       });
-      expect(state.usage[0].baseCostCents).toBeCloseTo(0.007);
+      // Sol: 10 * $2 + 5 * $10 per 1M; Opus 5.5: twice that.
+      expect(state.usage[0].baseCostCents).toBeCloseTo(
+        scenario === "fallback-replenished" ? 0.007 : 0.014,
+      );
     },
   );
 });

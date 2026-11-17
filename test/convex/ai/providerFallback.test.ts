@@ -76,7 +76,7 @@ describe("credit fallback and exclusive Claude deadline", () => {
     expect(claudeBody.messages[0].content[1].text.endsWith(source)).toBe(true);
     expect(openaiBody.input[1].content.endsWith(source)).toBe(true);
   });
-  it("requests schema-constrained JSON for both providers without lowering review effort", async () => {
+  it("requests schema-constrained JSON for both providers at the configured review effort", async () => {
     const responseFormat = {
       name: "review_result",
       schema: {
@@ -95,12 +95,12 @@ describe("credit fallback and exclusive Claude deadline", () => {
     expect(JSON.parse(fetch.mock.calls[0][1]!.body as string)).toMatchObject({
       thinking: { type: "adaptive" },
       output_config: {
-        effort: "high",
+        effort: "medium",
         format: { type: "json_schema", schema: responseFormat.schema },
       },
     });
     expect(JSON.parse(fetch.mock.calls[1][1]!.body as string)).toMatchObject({
-      reasoning: { effort: "xhigh" },
+      reasoning: { effort: "high" },
       text: {
         format: {
           type: "json_schema",
@@ -124,9 +124,9 @@ describe("credit fallback and exclusive Claude deadline", () => {
     );
     expect(provider.providerId).toBe("anthropic");
     expect(JSON.parse(fetch.mock.calls[0][1]!.body as string)).toMatchObject({
-      model: "claude-sonnet-5-5",
+      model: "claude-opus-5-5",
       thinking: { type: "adaptive" },
-      output_config: { effort: "high" },
+      output_config: { effort: "medium" },
     });
   });
 
@@ -185,7 +185,7 @@ describe("credit fallback and exclusive Claude deadline", () => {
       expect(body).toMatchObject({
         model: "gpt-6.1-sol",
         store: false,
-        reasoning: { effort: "xhigh" },
+        reasoning: { effort: "high" },
         include: ["reasoning.encrypted_content"],
         instructions: "Be precise",
         prompt_cache_options: { mode: "explicit", ttl: "30m" },
@@ -556,7 +556,7 @@ it.each([
   },
 );
 
-it("counts high-effort reasoning inside output usage exactly once", async () => {
+it("counts reasoning-effort reasoning inside output usage exactly once", async () => {
   const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(
     openai({
       usage: {
@@ -576,7 +576,7 @@ it("counts high-effort reasoning inside output usage exactly once", async () => 
     totalTokens: 3100,
   });
   expect(JSON.parse(fetch.mock.calls[0][1]!.body as string)).toMatchObject({
-    reasoning: { effort: "xhigh" },
+    reasoning: { effort: "high" },
     max_output_tokens: 16384,
   });
 });
@@ -594,12 +594,12 @@ describe("Claude safety refusals", () => {
   it("reads the fallback model's answer and bills the attempt that produced it", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
       claude({
-        model: "claude-sonnet-5",
+        model: "claude-opus-4-8",
         content: [
           {
             type: "fallback",
-            from: { model: "claude-sonnet-5-5" },
-            to: { model: "claude-sonnet-5" },
+            from: { model: "claude-opus-5-5" },
+            to: { model: "claude-opus-4-8" },
           },
           { type: "text", text: "Fallback answer" },
         ],
@@ -615,6 +615,10 @@ describe("Claude safety refusals", () => {
     );
     const result = await new ClaudeProvider("fixture-key").chat(messages);
     expect(result.content).toBe("Fallback answer");
+    expect(result).toMatchObject({
+      modelId: "claude-opus-5-5",
+      servedModelId: "claude-opus-4-8",
+    });
     expect(result.historyContent).toEqual([
       { type: "text", text: "Fallback answer" },
     ]);
@@ -623,6 +627,27 @@ describe("Claude safety refusals", () => {
       completionTokens: 4,
       totalTokens: 14,
     });
+  });
+  it("reports the serving model of a sticky fallback turn", async () => {
+    const fetch = vi.spyOn(globalThis, "fetch");
+    fetch.mockResolvedValueOnce(
+      claude({
+        model: "claude-opus-4-8",
+        content: [{ type: "text", text: "Sticky answer" }],
+      }),
+    );
+    expect(
+      await new ClaudeProvider("fixture-key").chat(messages),
+    ).toMatchObject({ servedModelId: "claude-opus-4-8" });
+    fetch.mockResolvedValueOnce(
+      claude({
+        model: "claude-opus-5-5",
+        content: [{ type: "text", text: "Primary answer" }],
+      }),
+    );
+    expect(
+      await new ClaudeProvider("fixture-key").chat(messages),
+    ).not.toHaveProperty("servedModelId");
   });
   it("reports a decline with its category instead of a processing failure", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
@@ -676,8 +701,8 @@ describe("Claude safety refusals", () => {
           { type: "text", text: "partial" },
           {
             type: "fallback",
-            from: { model: "claude-sonnet-5-5" },
-            to: { model: "claude-sonnet-5" },
+            from: { model: "claude-opus-5-5" },
+            to: { model: "claude-opus-4-8" },
           },
           { type: "text", text: "Served" },
         ],
