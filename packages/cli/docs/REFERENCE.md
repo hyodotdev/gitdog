@@ -145,10 +145,20 @@ gitdog provider-keys remove openai --yes
 `ai-keys` is an alias. Keys are never accepted as arguments, so they stay out
 of shell history; in scripts pipe them with `--stdin`. `list` shows only the
 provider, the last four characters, status (`active`, `invalid`,
-`out_of_credit` or `unreadable`) and when the key was last checked. `check`
+`out_of_credit`, `unreadable` or `checks_unavailable`) and when the key was last checked. `check`
 asks the provider again, for example after adding credit. Key checks are
 limited to five per account every ten minutes. Advanced `api call` refuses
 `providerApiKeys/action:save` for the same reason.
+
+The CLI never writes a provider key to `~/.config/gitdog` or anywhere else,
+never reads your local Claude Code or Codex credentials (`~/.claude`,
+`~/.codex`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`), and redacts anything shaped
+like a provider key from its output. The key goes over HTTPS (plain HTTP only
+to a localhost backend) to the backend chosen by `--api-url`, `GITDOG_API_URL`
+or your login; `set` names that backend
+first when it is not Gitdog's default. Gitdog stores the key encrypted and
+never returns it. Usage on your key is not capped by Gitdog, so set a spend
+limit with your provider.
 
 ## Configure every automation setting
 

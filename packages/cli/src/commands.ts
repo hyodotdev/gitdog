@@ -555,12 +555,18 @@ export function createProgram(
     providerKeys,
     "set <provider> [unexpected...]",
     "Save or replace a provider key (prompted without echo, or piped with --stdin)",
-    async ({ api, ui }, args, opts) => {
+    async ({ api, ui, apiUrl }, args, opts) => {
       const provider = keyProvider(args[0]);
       // Declared so Commander does not echo a pasted key in its usage error.
       if ((args[1] as unknown as string[] | undefined)?.length)
         throw new Error(
           "Never pass an API key as an argument. Run provider-keys set without it to be prompted, or pipe it with --stdin.",
+        );
+      // A custom backend (--api-url, GITDOG_API_URL or an earlier login) is
+      // named before the key is read, so it is never sent somewhere unseen.
+      if (new URL(apiUrl).origin !== new URL(DEFAULT_API_URL).origin)
+        ui.warn(
+          `This key will be sent to ${new URL(apiUrl).host}, not Gitdog's default backend.`,
         );
       // The key never comes from argv, so it stays out of shell history and
       // process listings.

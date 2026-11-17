@@ -1015,7 +1015,7 @@
       "description": "Privacy Policy for Gitdog - AI-powered GitHub assistant",
       "heading": "Privacy Policy",
       "companyInfo": "Hyo Dev",
-      "lastUpdated": "Last updated: November 13, 2026",
+      "lastUpdated": "Last updated: November 18, 2026",
       "intro": "Hyo Dev (\"we\", \"our\", \"us\") provides Gitdog, an AI-powered GitHub assistant platform. We are committed to protecting your privacy and handling your information responsibly. This Privacy Policy explains what information we collect, how we use it, and your rights.",
       "section1": {
         "title": "1. Information We Collect",
@@ -1114,7 +1114,7 @@
         "note": "We share data with the providers listed above only as needed to operate Gitdog, subject to their applicable terms and privacy practices, or when required by law.",
         "aiGeneration": {
           "title": "Anthropic Claude and OpenAI",
-          "description": "We use Anthropic’s Claude Messages API and the OpenAI Responses API to generate issue and discussion assistance. Requests may switch between these providers when a provider’s credit or spending limit is reached or its configured availability ends. OpenAI input and output sharing is enabled for the project used by Gitdog. Content sent to OpenAI, including repository excerpts, prompts, and generated responses, may be used to improve and train OpenAI models. Do not connect repositories or submit content you are not authorized to share for this purpose. Repository indexing, code search, and repository learnings run on Gitdog’s own keyword index and do not send content to an embeddings provider. If you add your own Anthropic or OpenAI API key, requests for repositories you own are sent with that key under your provider account and its data settings instead of Gitdog’s. Your keys are stored encrypted, used only for your requests, and never shown again after saving.",
+          "description": "We use Anthropic’s Claude Messages API and the OpenAI Responses API to generate issue and discussion assistance. Requests may switch between these providers when a provider’s credit or spending limit is reached or its configured availability ends. OpenAI input and output sharing is enabled for the project used by Gitdog. Content sent to OpenAI, including repository excerpts, prompts, and generated responses, may be used to improve and train OpenAI models. Do not connect repositories or submit content you are not authorized to share for this purpose. Repository indexing, code search, and repository learnings run on Gitdog’s own keyword index and do not send content to an embeddings provider. If you add your own Anthropic or OpenAI API key, requests for repositories you own are sent with that key under your provider account and its data settings instead of Gitdog’s. Your keys are stored encrypted, used only for your requests, and never shown again after saving. The key is sent over HTTPS to Gitdog and forwarded to the provider only to check it and to generate responses. It is stored encrypted with AES-256-GCM, bound to your account and provider; Gitdog’s operators hold the encryption key. It is deleted when you remove it, subject to our hosting provider’s backup retention. Gitdog never logs the key or returns it, and does not cap usage on it, so set a spending limit with your provider.",
           "items": [
             "Relevant repository code excerpts and context",
             "Issue and discussion content, follow-up messages, and tool results",

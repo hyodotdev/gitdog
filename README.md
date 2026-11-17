@@ -43,14 +43,16 @@ Maintainers answer the same questions, triage vague reports and review routine
 changes every day. Gitdog indexes your repository and drafts the work for you —
 with the actual code as evidence, not generic advice.
 
-|                          | What it does                                                                                                                                                                                                                                                                                                                                 |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Issue assistant**      | Turns rough reports into clear, structured issues and answers questions                                                                                                                                                                                                                                                                      |
-| **Discussion assistant** | Replies to GitHub Discussions with context from your codebase                                                                                                                                                                                                                                                                                |
-| **Pull request reviews** | Reviews changed code against the repository and suggests concrete fixes                                                                                                                                                                                                                                                                      |
-| **Maintainer tagging**   | Notifies the right people when a request needs a code change                                                                                                                                                                                                                                                                                 |
-| **Approval first**       | With approval on (the default), drafts wait in your queue until you approve them; a clean pull request review posts at once and approves the commit when every changed file was reviewed and no Gitdog thread is open; a later push, including updating the branch, withdraws the approval until `@gitdogbot review` reviews the new commits |
-| **Team workspace**       | Share projects with members and keep per-project settings and usage in one place                                                                                                                                                                                                                                                             |
+|                          | What it does                                                                            |
+| ------------------------ | --------------------------------------------------------------------------------------- |
+| **Issue assistant**      | Turns rough reports into clear, structured issues and answers questions                 |
+| **Discussion assistant** | Replies to GitHub Discussions with context from your codebase                           |
+| **Pull request reviews** | Reviews changed code against the repository, suggests fixes and approves clean code     |
+| **Review commands**      | `@gitdogbot review`, `full review`, `resolve` and `help` in a pull request, or the CLI  |
+| **Maintainer tagging**   | Notifies the right people when a request needs a code change                            |
+| **Approval first**       | With approval on (the default), drafts wait in your queue until you approve them        |
+| **Your own AI keys**     | Run generation on your Anthropic or OpenAI key, encrypted at rest and never shown again |
+| **Team workspace**       | Share projects with members and keep per-project settings and usage in one place        |
 
 ## How it works
 
@@ -69,7 +71,11 @@ flowchart LR
    sync with the default branch.
 3. **Draft** — new issues, discussions and pull requests get a reply or review
    grounded in the indexed source.
-4. **Approve** — review the draft in Gitdog or the CLI, then publish it.
+4. **Approve** — review the draft in Gitdog or the CLI, then publish it. A pull
+   request review with no findings needs no approval: it posts at once and, when
+   every changed file was reviewed and no Gitdog thread is open, approves the
+   reviewed commit. A later push, including updating the branch, withdraws that
+   approval until `@gitdogbot review` reviews the new commits.
 
 ## Commands
 
@@ -84,15 +90,16 @@ a pull request comment, or from the CLI:
 | `@gitdogbot resolve`     | `gitdog reviews resolve <ticket-id>`        | Resolves every Gitdog review thread              |
 | `@gitdogbot help`        | `gitdog reviews --help`                     | Lists the commands                               |
 
-A command is a comment line that starts with the mention. Commands go in the pull request conversation; replies inside a review thread are not read, and pull requests opened by bots such as Dependabot are not reviewed. Collaborators can
-run every command; the pull request author, who may work from a fork, can run
-all but a full review. A review that failed or ran out of tokens can be
-requested again.
+A command is a comment line that starts with the mention, in the pull request
+conversation; replies inside a review thread are not read. Collaborators can run
+every command; the pull request author, who may work from a fork, can run all
+but a full review. A review that failed or ran out of tokens can be requested
+again, and pull requests opened by bots such as Dependabot are not reviewed.
 
-In an issue or discussion, mention `@gitdogbot` with a question to get a
-reply grounded in the repository. When the account runs out of tokens, Gitdog
-says so on the pull request at most once a day. Someone who sends more than 10
-commands an hour or 40 a day to one repository is paused there for 24 hours.
+In an issue or discussion, mention `@gitdogbot` with a question to get a reply
+grounded in the repository. When the account runs out of tokens, Gitdog says so
+on the pull request at most once a day. Someone who sends more than 10 commands
+an hour or 40 a day to one repository is paused there for 24 hours.
 
 ## Get started
 
@@ -102,7 +109,7 @@ trial tokens, then use your own Anthropic or OpenAI API key or Pro; no credit
 card required.
 
 **From the terminal** — the [`gitdog` CLI](packages/cli) manages projects,
-settings and approvals:
+settings, approvals and pull request reviews:
 
 ```sh
 npx gitdog@latest login
@@ -161,6 +168,38 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
 - [CLI reference](packages/cli/docs/REFERENCE.md)
 
 ## Security
+
+### Your Anthropic and OpenAI keys
+
+If you bring your own provider key, this is exactly how Gitdog handles it:
+
+- **Entry**: only through a hidden prompt or `--stdin` in the CLI, or a
+  password field on the web. The CLI refuses a key passed as an argument, so it
+  never lands in shell history or process listings.
+- **Local copies**: none. The CLI and the browser never write the key to disk
+  or browser storage, and the CLI never reads your local Claude Code or Codex
+  credentials (`~/.claude`, `~/.codex`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`).
+- **Transport**: HTTPS, with redirects refused, to the Gitdog backend you use
+  (plain HTTP only to a localhost backend you chose yourself). The CLI names
+  any non-default backend before it reads the key.
+- **Validation**: one request to the provider's own model endpoint; the
+  response body is discarded.
+- **Storage**: encrypted with AES-256-GCM, a fresh IV per save, and bound to
+  your account and provider so a stored key cannot be moved to another
+  account. Gitdog's server operators hold the encryption key, so this protects
+  against database leaks, not against the operator.
+- **Visibility**: after saving, only the provider, the last four characters,
+  the key's status and when it was checked are ever shown, to you alone.
+  Project API keys and team members cannot reach it, and Gitdog never logs the
+  key or the provider's response to the key check.
+- **Use**: only for projects you connected to Gitdog. A request that starts on
+  your key never falls back to Gitdog's key, and removing the key stops new
+  requests on it.
+- **Spending**: usage on your key is billed by the provider, and Gitdog does
+  not cap it. Anyone who can open issues or pull requests on a connected public
+  repository can trigger generation, so set a spend limit with the provider.
+
+### Reporting
 
 Please report security issues privately to [hyo@hyo.dev](mailto:hyo@hyo.dev)
 instead of opening a public issue.

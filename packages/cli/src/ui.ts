@@ -1,7 +1,7 @@
 import { createInterface } from "node:readline/promises";
 import { stripVTControlCharacters } from "node:util";
 
-export const VERSION = "0.3.0";
+export const VERSION = "0.4.0";
 export const DOG = String.raw`
   ▗██▄▄                      ▄▄██▖
   ██▀▜██▙▄  ▙▄            ▄▟██▛▀██
@@ -29,9 +29,17 @@ export const DOG = String.raw`
 `;
 
 export function redactSecrets(value: string): string {
-  return value
-    .replace(/\beyJ[\w-]+\.[\w-]+\.[\w-]+\b/g, "[redacted token]")
-    .replace(/\bgdk_[a-f0-9]{64}\b/g, "[redacted API key]");
+  return (
+    value
+      .replace(/\beyJ[\w-]+\.[\w-]+\.[\w-]+\b/g, "[redacted token]")
+      .replace(/\bgdk_[a-f0-9]{64}\b/g, "[redacted API key]")
+      // Anthropic and OpenAI keys, should any error ever echo one. Only real
+      // key shapes, so names such as sk-react-native-components survive.
+      .replace(
+        /\bsk-(?:(?:ant|proj|svcacct|admin)-[A-Za-z0-9_-]{20,}|[A-Za-z0-9]{40,})/g,
+        "[redacted provider key]",
+      )
+  );
 }
 // C1 controls and bidirectional overrides can drive or spoof terminals.
 const UNSAFE_UNICODE = /[\u0080-\u009f\u202a-\u202e\u2066-\u2069]/g;
@@ -74,6 +82,11 @@ export class Ui {
 
   info(message: string): void {
     if (!this.json) process.stderr.write(`${clean(message)}\n`);
+  }
+
+  /** A notice that must reach the user even when stdout is JSON. */
+  warn(message: string): void {
+    process.stderr.write(`${clean(message)}\n`);
   }
 
   output(value: unknown): void {

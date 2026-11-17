@@ -253,7 +253,7 @@ function ProviderKeyCard({
           <input
             id={`provider-key-${provider}`}
             type="password"
-            autoComplete="off"
+            autoComplete="new-password"
             spellCheck={false}
             value={draft}
             onChange={(event) => {

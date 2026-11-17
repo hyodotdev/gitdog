@@ -3,7 +3,7 @@
 Gitdog uses Claude for issue, discussion and pull request generation and
 OpenAI as the credit fallback. Repository search is keyword-based; Gitdog does
 not create embeddings. All model calls run on the server (Convex); the web app
-and CLI never hold provider keys.
+and CLI never store provider keys.
 
 ## Generation routing
 
