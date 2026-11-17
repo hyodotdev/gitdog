@@ -375,6 +375,7 @@
         "approval": "Approve before posting",
         "approvalDescription": "Review proposals in Tickets before Gitdog posts inline comments on GitHub. A review with no findings posts right away and approves the pull request when every changed file was reviewed and no Gitdog review thread is open; a later push withdraws that approval.",
         "limitations": "Gitdog approves a pull request only when a review finds no issues in fully reviewed changes. It never blocks merging, runs code, or claims tests passed. Reviews cover up to 300 changed files within bounded context. Pull requests with more than 60 files or a large diff are reviewed in batches and get one combined comment; incomplete coverage is shown on the ticket.",
+        "commands": "After the first review, comment on the pull request: {{mention}} review (changes since the last review), {{mention}} full review (the whole pull request), {{mention}} resolve (resolve Gitdog's threads) or {{mention}} help. The CLI runs the same with gitdog reviews request, request --full and resolve. Only the author and collaborators can run them, and someone who sends more than 10 an hour or 40 a day is paused for a day.",
         "permissions": "Check GitHub App permissions",
         "suggestions": "Include commit suggestions",
         "suggestionsDescription": "Offer small, verified replacements that authors or reviewers with write access can apply on GitHub. Gitdog never commits automatically."

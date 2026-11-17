@@ -235,6 +235,11 @@
     "args": "{}"
   },
   {
+    "path": "pullRequests/action:command",
+    "kind": "action",
+    "args": "{\n    ticketId: v.id(\"tickets\"),\n    command: v.union(\n      v.literal(\"review\"),\n      v.literal(\"full_review\"),\n      v.literal(\"resolve\"),\n    ),\n  }"
+  },
+  {
     "path": "pullRequests/action:recheck",
     "kind": "action",
     "args": "{ actionId: v.id(\"ticketActions\") }"

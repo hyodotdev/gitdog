@@ -292,6 +292,31 @@ describe("review commands", () => {
     expect(r.posted()).toContain("**Review limit reached**");
     expect(r.posted()).toContain("`@gitdogbot review`");
   });
+  it("runs the same review commands from the CLI without posting a reply", async () => {
+    const f = await reviewed();
+    const r = await replies(f);
+    const ticketId = (await f.t.run((ctx) => ctx.db.get(f.first)))!.ticketId;
+    const run = (command: "review" | "full_review") =>
+      f.t
+        .withIdentity({ subject: f.userId })
+        .action(api.pullRequests.action.command, { ticketId, command });
+    expect(await run("review")).toEqual({
+      command: "review",
+      status: "started",
+      headSha: next.headSha,
+    });
+    expect((await run("full_review")).status).toBe("running");
+    expect(r.comment).not.toHaveBeenCalled();
+    const stranger = await f.t.run((ctx) => ctx.db.insert("users", {}));
+    await expect(
+      f.t
+        .withIdentity({ subject: stranger })
+        .action(api.pullRequests.action.command, {
+          ticketId,
+          command: "review",
+        }),
+    ).rejects.toThrow("not authorized");
+  });
   it("tells a pull request about its limit at most once a day", async () => {
     const f = await fixture();
     const actionId = (await f.observe())!;

@@ -164,6 +164,30 @@ const scenarios = [
     { actionId: "action-id" },
   ],
   [
+    "reviews request ticket-id",
+    "action",
+    "pullRequests/action:command",
+    { ticketId: "ticket-id", command: "review" },
+  ],
+  [
+    "reviews request ticket-id --full",
+    "action",
+    "pullRequests/action:command",
+    { ticketId: "ticket-id", command: "full_review" },
+  ],
+  [
+    "reviews resolve ticket-id --yes",
+    "action",
+    "pullRequests/action:command",
+    { ticketId: "ticket-id", command: "resolve" },
+  ],
+  [
+    "reviews recheck action-id",
+    "action",
+    "pullRequests/action:recheck",
+    { actionId: "action-id" },
+  ],
+  [
     "notifications list --unread",
     "query",
     "notifications/query:listUnread",
@@ -394,7 +418,7 @@ test("all catalog paths are unique public functions and version matches the npm 
     new Set(API_CATALOG.map((entry) => entry.path)).size,
     API_CATALOG.length,
   );
-  assert.equal(API_CATALOG.length, 92);
+  assert.equal(API_CATALOG.length, 93);
   assert.equal(
     API_CATALOG.every(
       (entry) =>

@@ -1,17 +1,35 @@
 # Gitdog - AI GitHub Assistant
 
-> AI-powered assistant for GitHub repositories. Automates issue responses and discussion replies with intelligent codebase-aware answers.
+> AI-powered assistant for GitHub repositories. Answers issues and discussions and reviews pull requests with codebase-aware evidence.
 
 ## About Gitdog
 
-Gitdog is an AI automation platform for GitHub that helps developers automate repetitive tasks. When users mention @gitdogbot in issues or discussions, the AI assistant analyzes the codebase context and provides intelligent, relevant responses.
+Gitdog is an AI automation platform for GitHub that helps developers automate repetitive tasks. When users mention @gitdogbot in issues or discussions, the AI assistant analyzes the codebase context and provides intelligent, relevant responses. It also reviews pull requests and runs review commands from pull request comments and the gitdog CLI.
 
 ## Core Features
 
 - **Issue Automation**: AI responds to issues with codebase-aware answers
 - **Discussion Assistant**: Intelligent replies in GitHub Discussions
+- **Pull Request Reviews**: Inline findings with source evidence, and approval when nothing is found
 - **Context-Aware Answers**: Repository-specific guidance grounded in indexed code
 - **Codebase Indexing**: Full repository understanding for accurate responses
+
+## Commands
+
+Gitdog reviews a pull request once, when it is opened or marked ready for review. After that, the pull request author or a repository collaborator asks for more:
+
+| Pull request comment | CLI | What it does |
+| --- | --- | --- |
+| `@gitdogbot review` | `gitdog reviews request <ticket-id>` | Reviews the commits pushed since the last review |
+| `@gitdogbot full review` | `gitdog reviews request <ticket-id> --full` | Reviews the whole pull request again |
+| `@gitdogbot resolve` | `gitdog reviews resolve <ticket-id>` | Resolves every Gitdog review thread |
+| `@gitdogbot help` | `gitdog reviews --help` | Lists the commands |
+
+In issues and discussions, mention `@gitdogbot` with a question to get a reply grounded in the repository.
+
+- A review that finds no issues in fully reviewed changes approves the pull request; a later push withdraws the approval.
+- When the account runs out of tokens, Gitdog says so on the pull request at most once a day.
+- Someone who sends more than 10 commands an hour or 40 a day to one repository is paused there for 24 hours.
 
 ## Pricing
 

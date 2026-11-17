@@ -71,6 +71,24 @@ flowchart LR
    grounded in the indexed source.
 4. **Approve** — review the draft in Gitdog or the CLI, then publish it.
 
+## Commands
+
+Gitdog reviews a pull request once, when it is opened or marked ready for
+review. After that, the pull request author or a collaborator asks for more in
+a pull request comment, or from the CLI:
+
+| Pull request comment     | CLI                                         | What it does                                     |
+| ------------------------ | ------------------------------------------- | ------------------------------------------------ |
+| `@gitdogbot review`      | `gitdog reviews request <ticket-id>`        | Reviews the commits pushed since the last review |
+| `@gitdogbot full review` | `gitdog reviews request <ticket-id> --full` | Reviews the whole pull request again             |
+| `@gitdogbot resolve`     | `gitdog reviews resolve <ticket-id>`        | Resolves every Gitdog review thread              |
+| `@gitdogbot help`        | `gitdog reviews --help`                     | Lists the commands                               |
+
+In an issue or discussion, mention `@gitdogbot` with a question to get a
+reply grounded in the repository. When the account runs out of tokens, Gitdog
+says so on the pull request at most once a day. Someone who sends more than 10
+commands an hour or 40 a day to one repository is paused there for 24 hours.
+
 ## Get started
 
 **On the web** — sign in with GitHub at [gitdog.dev](https://gitdog.dev),

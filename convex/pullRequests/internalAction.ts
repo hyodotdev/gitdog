@@ -1168,6 +1168,85 @@ async function reply(
   await addIssueComment(access.owner, access.repo, number, body, access.token);
 }
 
+export type PullRequestCommandResult =
+  | {
+      command: "review" | "full_review";
+      status:
+        | "started"
+        | "running"
+        | "up_to_date"
+        | "unavailable"
+        | "closed"
+        | "bot_author";
+      headSha?: string;
+    }
+  | { command: "resolve"; resolved: number };
+
+/**
+ * Run a review, full review or resolve command on a pull request. Comment
+ * commands and the CLI share this, so both behave the same.
+ */
+export async function runPullRequestCommand(
+  ctx: ActionCtx,
+  access: VerifiedRepositoryAccess,
+  repositoryId: Id<"repositories">,
+  number: number,
+  command: "review" | "full_review" | "resolve",
+): Promise<PullRequestCommandResult> {
+  if (command === "resolve")
+    return {
+      command,
+      resolved: await resolveOwnThreads(access, number, botLogin()),
+    };
+  const pr = await getPullRequest(access, number);
+  if (isBotPullRequestAuthor(pr.user))
+    return { command, status: "bot_author", headSha: pr.head.sha };
+  if (pr.state !== "open" || pr.draft)
+    return { command, status: "closed", headSha: pr.head.sha };
+  const result = await ctx.runMutation(
+    internal.pullRequests.internalMutation.requestReview,
+    {
+      repositoryId,
+      number,
+      observedAt: Date.now(),
+      author: pr.user.login,
+      open: true,
+      snapshot: {
+        headSha: pr.head.sha,
+        baseSha: pr.base.sha,
+        title: pr.title,
+        body: pr.body ?? "",
+      },
+      full: command === "full_review",
+    },
+  );
+  return { command, status: result.status, headSha: pr.head.sha };
+}
+
+/** The reply a command comment gets on the pull request. */
+export function commandReply(
+  result: PullRequestCommandResult,
+  slug: string,
+): string {
+  const mention = `@${slug}`;
+  if (result.command === "resolve")
+    return result.resolved
+      ? `**Resolved ${result.resolved} Gitdog review ${result.resolved === 1 ? "thread" : "threads"}.**`
+      : "**No open Gitdog review threads to resolve.**";
+  switch (result.status) {
+    case "started":
+      return `**${result.command === "full_review" ? "Full review" : "Review"} started** for ${result.headSha}`;
+    case "running":
+      return `**A review is already running.** Comment \`${mention} review\` again once it is posted.`;
+    case "up_to_date":
+      return `**Already reviewed** ${result.headSha}\n\nComment \`${mention} full review\` to review the whole pull request again.`;
+    case "closed":
+      return "**Review not started**\n\nGitdog reviews open pull requests that are ready for review.";
+    default:
+      return "**Review not started**\n\nPull request reviews are not available for this repository right now.";
+  }
+}
+
 /** Run one "@gitdogbot <command>" comment on a pull request and answer it. */
 export const runCommand = internalAction({
   args: {
@@ -1189,7 +1268,6 @@ export const runCommand = internalAction({
       ctx,
       args.repositoryId,
     );
-    const mention = `@${slug}`;
     switch (args.command) {
       case "pause_now":
         return reply(
@@ -1199,73 +1277,18 @@ export const runCommand = internalAction({
         );
       case "help":
         return reply(access, args.number, helpText(slug));
-      case "resolve": {
-        const resolved = await resolveOwnThreads(
+      default: {
+        const result = await runPullRequestCommand(
+          ctx,
           access,
+          args.repositoryId,
           args.number,
-          botLogin(),
+          args.command,
         );
-        return reply(
-          access,
-          args.number,
-          resolved
-            ? `**Resolved ${resolved} Gitdog review ${resolved === 1 ? "thread" : "threads"}.**`
-            : "**No open Gitdog review threads to resolve.**",
-        );
-      }
-      case "review":
-      case "full_review": {
-        const pr = await getPullRequest(access, args.number);
-        if (isBotPullRequestAuthor(pr.user)) return;
-        if (pr.state !== "open" || pr.draft)
-          return reply(
-            access,
-            args.number,
-            "**Review not started**\n\nGitdog reviews open pull requests that are ready for review.",
-          );
-        const result = await ctx.runMutation(
-          internal.pullRequests.internalMutation.requestReview,
-          {
-            repositoryId: args.repositoryId,
-            number: args.number,
-            observedAt: Date.now(),
-            author: pr.user.login,
-            open: true,
-            snapshot: {
-              headSha: pr.head.sha,
-              baseSha: pr.base.sha,
-              title: pr.title,
-              body: pr.body ?? "",
-            },
-            full: args.command === "full_review",
-          },
-        );
-        switch (result.status) {
-          case "started":
-            return reply(
-              access,
-              args.number,
-              `**${args.command === "full_review" ? "Full review" : "Review"} started** for ${pr.head.sha}`,
-            );
-          case "running":
-            return reply(
-              access,
-              args.number,
-              `**A review is already running.** Comment \`${mention} review\` again once it is posted.`,
-            );
-          case "up_to_date":
-            return reply(
-              access,
-              args.number,
-              `**Already reviewed** ${pr.head.sha}\n\nComment \`${mention} full review\` to review the whole pull request again.`,
-            );
-          default:
-            return reply(
-              access,
-              args.number,
-              "**Review not started**\n\nPull request reviews are not available for this repository right now.",
-            );
-        }
+        // A bot-authored pull request gets no reply.
+        if (result.command !== "resolve" && result.status === "bot_author")
+          return;
+        return reply(access, args.number, commandReply(result, slug));
       }
     }
   },
