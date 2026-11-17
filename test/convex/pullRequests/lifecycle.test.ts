@@ -202,15 +202,140 @@ describe("review commands", () => {
     expect((await requestStatus(f, source, true)).status).toBe("running");
     expect((await requestStatus(f, next)).status).toBe("running");
   });
+  const claim = (f: Awaited<ReturnType<typeof fixture>>, actionId: string) =>
+    f.t.mutation(internal.pullRequests.internalMutation.claimGeneration, {
+      actionId: actionId as never,
+    });
+  it("lets a full review of a reviewed commit actually run", async () => {
+    const f = await reviewed();
+    const result = await requestStatus(f, source, true);
+    expect(result.status).toBe("started");
+    expect(await claim(f, result.actionId!)).toBeTypeOf("string");
+    // A second request while it is queued or running starts nothing.
+    expect((await requestStatus(f, source, true)).status).toBe("running");
+  });
+  it("retries a review that failed on the same commit", async () => {
+    const f = await fixture();
+    const first = (await f.observe())!;
+    await claim(f, first);
+    await f.t.run((ctx) =>
+      ctx.db.patch(first, {
+        status: "failed",
+        errorMessage: "Token limit reached before review could complete.",
+      }),
+    );
+    const retry = await requestStatus(f);
+    expect(retry.status).toBe("started");
+    expect(await claim(f, retry.actionId!)).toBeTypeOf("string");
+  });
+  it("answers a request while a review waits for the owner's approval", async () => {
+    const f = await fixture();
+    const first = (await f.observe())!;
+    await f.t.run((ctx) => ctx.db.patch(first, { status: "pending_approval" }));
+    expect((await requestStatus(f)).status).toBe("awaiting_approval");
+  });
+  it("answers a request that read an older head than the last observation", async () => {
+    const f = await reviewed();
+    await f.t.run(async (ctx) => {
+      const ticket = (await ctx.db.query("tickets").first())!;
+      await ctx.db.patch(ticket._id, {
+        pullRequestObservedAt: Date.now() + 60_000,
+      });
+    });
+    expect(
+      (
+        await f.t.mutation(
+          internal.pullRequests.internalMutation.requestReview,
+          {
+            repositoryId: f.repositoryId,
+            number: 12,
+            author: "author",
+            open: true,
+            observedAt: Date.now(),
+            snapshot: next,
+            full: false,
+          },
+        )
+      ).status,
+    ).toBe("stale");
+  });
+  describe("comment webhook", () => {
+    async function deliver(
+      f: Awaited<ReturnType<typeof fixture>>,
+      comment: Record<string, unknown>,
+      issueAuthor = 2,
+    ) {
+      const { handlePullRequestCommentEvent } =
+        await import("../../../convex/pullRequests/webhook");
+      await handlePullRequestCommentEvent(
+        {
+          runQuery: (ref: never, args: never) => f.t.query(ref, args),
+          runMutation: (ref: never, args: never) => f.t.mutation(ref, args),
+        } as never,
+        {
+          action: "created",
+          repository: { id: 123 },
+          installation: { id: 42 },
+          issue: { number: 12, user: { id: issueAuthor }, pull_request: {} },
+          comment: {
+            id: 500,
+            body: "@gitdogbot review",
+            author_association: "COLLABORATOR",
+            user: { id: 1, login: "octo", type: "User" },
+            ...comment,
+          },
+        },
+      );
+      return f.t.run((ctx) => ctx.db.query("pullRequestCommands").collect());
+    }
+    it("records a collaborator's command and schedules it", async () => {
+      const f = await fixture();
+      expect(await deliver(f, {})).toMatchObject([
+        { command: "review", outcome: "accepted", githubUserId: 1 },
+      ]);
+    });
+    it("ignores bots, strangers and comments without a command", async () => {
+      const f = await fixture();
+      expect(
+        await deliver(f, { user: { id: 1, login: "x[bot]", type: "Bot" } }),
+      ).toHaveLength(0);
+      expect(
+        await deliver(f, { id: 501, author_association: "NONE" }),
+      ).toHaveLength(0);
+      expect(
+        await deliver(f, { id: 502, body: "Looks good, thanks @gitdogbot" }),
+      ).toHaveLength(0);
+    });
+    it("turns a fork author's full review into a refusal", async () => {
+      const f = await fixture();
+      const r = await replies(f);
+      await deliver(
+        f,
+        { body: "@gitdogbot full review", author_association: "NONE" },
+        1,
+      );
+      await drainScheduledFunctions(f.t);
+      expect(r.posted()).toContain("Only repository collaborators");
+    });
+    it("answers an unknown command with the list of commands", async () => {
+      const f = await fixture();
+      expect(await deliver(f, { body: "@gitdogbot summarize" })).toMatchObject([
+        { command: "help" },
+      ]);
+    });
+  });
   it("pauses a commenter who sends too many commands", async () => {
     const f = await fixture();
+    const r = await replies(f);
     const send = (commentId: number) =>
       f.t.mutation(internal.pullRequests.internalMutation.recordCommand, {
         repositoryId: f.repositoryId,
         githubNumber: 12,
         commentId,
         githubUserId: 7,
-        command: "review",
+        login: "octo",
+        command: "help",
+        allowed: true,
       });
     for (let id = 1; id <= 10; id++) expect(await send(id)).toBe("accepted");
     expect(await send(1)).toBe("duplicate");
@@ -223,9 +348,19 @@ describe("review commands", () => {
         githubNumber: 12,
         commentId: 100,
         githubUserId: 8,
+        login: "other",
         command: "help",
+        allowed: true,
       }),
     ).toBe("accepted");
+    await drainScheduledFunctions(f.t);
+    // Ten help replies, one pause notice and the other commenter's reply;
+    // the redelivery and the paused command post nothing.
+    const bodies = r.comment.mock.calls.map((call) => call[3]);
+    expect(bodies).toHaveLength(12);
+    expect(
+      bodies.filter((body) => body.includes("sent too many Gitdog commands")),
+    ).toHaveLength(1);
     vi.advanceTimersByTime(24 * 60 * 60_000 + 1);
     expect(await send(13)).toBe("accepted");
   });
@@ -300,10 +435,11 @@ describe("review commands", () => {
       f.t
         .withIdentity({ subject: f.userId })
         .action(api.pullRequests.action.command, { ticketId, command });
-    expect(await run("review")).toEqual({
+    expect(await run("review")).toMatchObject({
       command: "review",
       status: "started",
       headSha: next.headSha,
+      actionId: expect.any(String),
     });
     expect((await run("full_review")).status).toBe("running");
     expect(r.comment).not.toHaveBeenCalled();
@@ -699,10 +835,9 @@ describe("PR review durable lifecycle", () => {
       "approved",
     );
     // Nothing is in flight until publication claims it, so a push still
-    // supersedes it, and a command can start a review.
-    expect(await f.observe({ ...source, headSha: "c".repeat(40) })).toBeNull();
+    // supersedes it; that review never posted, so the push reviews again.
     expect(
-      await f.request({ ...source, headSha: "c".repeat(40) }),
+      await f.observe({ ...source, headSha: "c".repeat(40) }),
     ).toBeTruthy();
     expect((await f.t.run((ctx) => ctx.db.get(actionId)))?.status).toBe(
       "failed",
@@ -2604,6 +2739,13 @@ describe("batched PR reviews", () => {
     );
     expect(f.batches).toEqual([]);
     expect(f.fetch).not.toHaveBeenCalled();
+    // The pull request is told that the review limit was reached.
+    const scheduled = await f.t.run((ctx) =>
+      ctx.db.system.query("_scheduled_functions").collect(),
+    );
+    expect(
+      scheduled.filter((job) => job.name.includes("noticeLimit")),
+    ).toHaveLength(1);
   });
 
   it("reports an interrupted quota check without blaming review evidence", async () => {

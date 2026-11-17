@@ -10,16 +10,18 @@ export const COMMAND_PAUSE_MS = 24 * 60 * 60_000;
 // Only people who can already change the PR may spend the owner's tokens.
 const TRUSTED_ASSOCIATIONS = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
 
-export function canRunCommands(
+/**
+ * Who may run commands: collaborators run all of them; the pull request
+ * author, who may be a fork contributor, cannot ask for a full review.
+ */
+export function commandAccess(
   association: unknown,
   commenterId: number,
   authorId: number | undefined,
-): boolean {
-  return (
-    (typeof association === "string" &&
-      TRUSTED_ASSOCIATIONS.has(association)) ||
-    commenterId === authorId
-  );
+): "collaborator" | "author" | null {
+  if (typeof association === "string" && TRUSTED_ASSOCIATIONS.has(association))
+    return "collaborator";
+  return commenterId === authorId ? "author" : null;
 }
 
 /**
@@ -33,13 +35,18 @@ export function parseReviewCommand(
   const slug = getConfiguredGitHubAppSlug(configuredSlug);
   if (!slug) return null;
   const text = body
-    .replace(/```[\s\S]*?(```|$)/g, "")
+    .replace(/<!--[\s\S]*?(-->|$)/g, "")
+    .replace(/(```|~~~)[\s\S]*?(\1|$)/g, "")
     .split(/\r?\n/)
-    .filter((line) => !line.trimStart().startsWith(">"))
+    .filter(
+      (line) => !line.trimStart().startsWith(">") && !/^( {4}|\t)/.test(line),
+    )
     .join("\n");
+  // Only a mention that starts a line is a command, so "@gitdogbot review"
+  // quoted in a sentence does not run one.
   const match = new RegExp(
-    `(?:^|\\s)@${slug}(?=\\s|[:,]|$)[:,]?[ \\t]*([^\\n]*)`,
-    "i",
+    `^[ \\t]*@${slug}(?=\\s|[:,]|$)[:,]?[ \\t]*([^\\n]*)`,
+    "im",
   ).exec(text);
   if (!match) return null;
   const words = match[1]
@@ -71,6 +78,6 @@ export function helpText(slug: string): string {
     `- \`${mention} full review\`: review the whole pull request again`,
     `- \`${mention} resolve\`: resolve every Gitdog review thread`,
     `- \`${mention} help\`: show this list`,
-    "Commands are open to the pull request author and repository collaborators.",
+    "Collaborators can run every command; the pull request author can run all but a full review.",
   ].join("\n");
 }

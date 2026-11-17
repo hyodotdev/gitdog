@@ -1,6 +1,6 @@
 import type { ActionCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
-import { canRunCommands, parseReviewCommand } from "./commands";
+import { commandAccess, parseReviewCommand } from "./commands";
 
 function record(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -86,14 +86,12 @@ export async function handlePullRequestCommentEvent(
   const command = parseReviewCommand(comment.body);
   if (!command) return;
   const author = record(issue.user) ? issue.user.id : undefined;
-  if (
-    !canRunCommands(
-      comment.author_association,
-      comment.user.id as number,
-      typeof author === "number" ? author : undefined,
-    )
-  )
-    return;
+  const access = commandAccess(
+    comment.author_association,
+    comment.user.id as number,
+    typeof author === "number" ? author : undefined,
+  );
+  if (!access) return;
   const repo = await ctx.runQuery(
     internal.repositories.internalQuery.getByInstallationAndGitHubRepositoryId,
     {
@@ -108,25 +106,15 @@ export async function handlePullRequestCommentEvent(
   )
     return;
   const run = command === "unknown" ? "help" : command;
-  const decision = await ctx.runMutation(
-    internal.pullRequests.internalMutation.recordCommand,
-    {
-      repositoryId: repo._id,
-      githubNumber: issue.number as number,
-      commentId: comment.id as number,
-      githubUserId: comment.user.id as number,
-      command: run,
-    },
-  );
-  if (decision === "duplicate" || decision === "paused") return;
-  await ctx.scheduler.runAfter(
-    0,
-    internal.pullRequests.internalAction.runCommand,
-    {
-      repositoryId: repo._id,
-      number: issue.number as number,
-      command: decision === "pause_now" ? "pause_now" : run,
-      login: comment.user.login,
-    },
-  );
+  // Recorded and scheduled in one transaction, so a redelivery never runs a
+  // command twice and a recorded command always runs.
+  await ctx.runMutation(internal.pullRequests.internalMutation.recordCommand, {
+    repositoryId: repo._id,
+    githubNumber: issue.number as number,
+    commentId: comment.id as number,
+    githubUserId: comment.user.id as number,
+    login: comment.user.login,
+    command: run,
+    allowed: run !== "full_review" || access === "collaborator",
+  });
 }

@@ -475,6 +475,7 @@ export async function resolveOwnThreads(
   botLogin: string,
 ): Promise<number> {
   const page = await fetchGitHubAppJsonWithRetry<{
+    errors?: unknown[];
     data?: {
       repository?: {
         pullRequest?: {
@@ -499,6 +500,8 @@ export async function resolveOwnThreads(
       variables: { owner: access.owner, repo: access.repo, number },
     },
   });
+  if (page.errors?.length || !page.data?.repository?.pullRequest)
+    throw new Error("Review threads could not be read");
   const login = (value: string) => value.toLowerCase().replace(/\[bot\]$/, "");
   const own = login(botLogin);
   if (!own) return 0;
@@ -510,8 +513,12 @@ export async function resolveOwnThreads(
         login(thread.comments?.nodes?.[0]?.author?.login ?? "") === own,
     )
     .map((thread) => thread.id as string);
-  for (const id of open)
-    await fetchGitHubAppJsonWithRetry(
+  // GraphQL reports a refused mutation in the body, so count confirmed ones.
+  let resolved = 0;
+  for (const id of open) {
+    const result = await fetchGitHubAppJsonWithRetry<{
+      data?: { resolveReviewThread?: { thread?: { isResolved?: boolean } } };
+    }>(
       "https://api.github.com/graphql",
       access.token,
       "Resolve review thread",
@@ -519,10 +526,13 @@ export async function resolveOwnThreads(
         method: "POST",
         jsonBody: {
           query:
-            "mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{id}}}",
+            "mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{isResolved}}}",
           variables: { id },
         },
       },
     );
-  return open.length;
+    if (result.data?.resolveReviewThread?.thread?.isResolved === true)
+      resolved++;
+  }
+  return resolved;
 }

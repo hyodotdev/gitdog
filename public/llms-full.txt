@@ -49,6 +49,8 @@ Gitdog reviews a pull request once, when it is opened or marked ready for review
 | `@gitdogbot resolve` | `gitdog reviews resolve <ticket-id>` | Resolves every Gitdog review thread |
 | `@gitdogbot help` | `gitdog reviews --help` | Lists the commands |
 
+A command is a comment line that starts with the mention. Collaborators can run every command; the pull request author, who may work from a fork, can run all but a full review. A review that failed or ran out of tokens can be requested again.
+
 In issues and discussions, mention `@gitdogbot` with a question to get a reply grounded in the repository.
 
 - A review that finds no issues in fully reviewed changes approves the pull request; a later push withdraws the approval.

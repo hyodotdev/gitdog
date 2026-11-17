@@ -164,13 +164,13 @@ const scenarios = [
     { actionId: "action-id" },
   ],
   [
-    "reviews request ticket-id",
+    "reviews request ticket-id --yes",
     "action",
     "pullRequests/action:command",
     { ticketId: "ticket-id", command: "review" },
   ],
   [
-    "reviews request ticket-id --full",
+    "reviews request ticket-id --full --yes",
     "action",
     "pullRequests/action:command",
     { ticketId: "ticket-id", command: "full_review" },

@@ -326,6 +326,12 @@ type ObserveArgs = {
 const UNAVAILABLE = { status: "unavailable" as const, actionId: null };
 const RUNNING = { status: "running" as const, actionId: null };
 const UP_TO_DATE = { status: "up_to_date" as const, actionId: null };
+const AWAITING_APPROVAL = {
+  status: "awaiting_approval" as const,
+  actionId: null,
+};
+// A newer observation of the PR already won; the request read an old head.
+const STALE = { status: "stale" as const, actionId: null };
 
 /**
  * Record the PR's current state and queue a review when one is due: the
@@ -385,7 +391,7 @@ async function observePullRequest(
     ticket.deletedAt !== undefined ||
     (ticket.pullRequestObservedAt ?? 0) > observedAt
   )
-    return UNAVAILABLE;
+    return ticket.deletedAt === undefined && request ? STALE : UNAVAILABLE;
   const actions = await listTicketActions(ctx, ticket._id);
   const source = args.snapshot;
   const commitChanged = !sameCommit(
@@ -434,18 +440,20 @@ async function observePullRequest(
   const sameHeadReviews = actions.filter((action) =>
     isAutomaticReviewForHead(action, source.headSha),
   );
-  const attempted =
-    sameHeadReviews.some(hasAttemptedReview) && request !== "full";
+  const attempted = sameHeadReviews.some(hasAttemptedReview);
   const queued =
     args.open && !sameHeadReviews.some(hasAttemptedReview)
       ? sameHeadReviews.find((action) => action.status === "pending")
       : undefined;
-  // Without a command, only a pull request's first review runs.
+  // Without a command, only a pull request's first review runs. A first
+  // review that failed does not count, so the next push tries again.
   const reviewedBefore = actions.some(
     (action) =>
       action.actionType === "review" &&
       action.reviewVerificationOnly !== true &&
-      hasAttemptedReview(action),
+      action.status === "completed" &&
+      (action.executionResult?.published === true ||
+        action.executionResult?.reason === "no_new_changes"),
   );
   for (const action of actions) {
     if (action._id === queued?._id) {
@@ -485,9 +493,42 @@ async function observePullRequest(
     aiInputVersion: changed ? ticket.aiInputVersion + 1 : ticket.aiInputVersion,
   });
   if (!args.open) return UNAVAILABLE;
-  if (queued || (request && actions.some(isRunningReview))) return RUNNING;
-  if (attempted) return UP_TO_DATE;
-  if (!request && reviewedBefore) return UP_TO_DATE;
+  if (request) {
+    // One review at a time: a queued or running review answers the request.
+    if (
+      actions.some(isRunningReview) ||
+      sameHeadReviews.some(
+        (action) =>
+          action.status === "pending" &&
+          action.reviewGenerationToken === undefined,
+      )
+    )
+      return RUNNING;
+    if (
+      sameHeadReviews.some(
+        (action) =>
+          action.status === "pending_approval" ||
+          (action.status === "approved" &&
+            action.executionClaimedAt === undefined),
+      )
+    )
+      return AWAITING_APPROVAL;
+    // Only a finished review of this commit makes it up to date; a failed
+    // or limit-stopped one can be retried.
+    if (
+      request === "review" &&
+      sameHeadReviews.some(
+        (action) =>
+          action.status === "completed" &&
+          (action.executionResult?.published === true ||
+            action.executionResult?.reason === "no_new_changes"),
+      )
+    )
+      return UP_TO_DATE;
+  } else {
+    if (queued) return RUNNING;
+    if (attempted || reviewedBefore) return UP_TO_DATE;
+  }
   const user = await ctx.db.get(repo.userId);
   const profiles = await ctx.db
     .query("userProfiles")
@@ -510,6 +551,8 @@ async function observePullRequest(
     chatHistory: [],
     createdAt: now,
     ...(since ? { reviewSince: since } : {}),
+    // A requested review may follow an earlier attempt on the same commit.
+    ...(request ? { reviewRequested: true } : {}),
   });
   await ctx.scheduler.runAfter(
     0,
@@ -602,6 +645,7 @@ export const claimGeneration = internalMutation({
       }
       const actions = await listTicketActions(ctx, action.ticketId);
       if (
+        action.reviewRequested !== true &&
         actions.some(
           (other) =>
             other._id !== action._id &&
@@ -1226,14 +1270,17 @@ export const recordCommand = internalMutation({
     githubNumber: v.number(),
     commentId: v.number(),
     githubUserId: v.number(),
+    login: v.string(),
     command: v.union(
       v.literal("review"),
       v.literal("full_review"),
       v.literal("resolve"),
       v.literal("help"),
     ),
+    // False when the commenter may not run this command.
+    allowed: v.boolean(),
   },
-  handler: async (ctx, args) => {
+  handler: async (ctx, { login, allowed, ...args }) => {
     const seen = await ctx.db
       .query("pullRequestCommands")
       .withIndex("by_comment", (q) =>
@@ -1261,6 +1308,16 @@ export const recordCommand = internalMutation({
       outcome: pause ? "paused" : "accepted",
       createdAt: now,
     });
+    await ctx.scheduler.runAfter(
+      0,
+      internal.pullRequests.internalAction.runCommand,
+      {
+        repositoryId: args.repositoryId,
+        number: args.githubNumber,
+        command: pause ? "pause_now" : allowed ? args.command : "not_allowed",
+        login,
+      },
+    );
     return pause ? ("pause_now" as const) : ("accepted" as const);
   },
 });
@@ -1271,7 +1328,18 @@ export const claimLimitNotice = internalMutation({
   handler: async (ctx, args) => {
     const action = await ctx.db.get(args.actionId);
     const ticket = action ? await ctx.db.get(action.ticketId) : null;
-    if (!ticket?.repositoryId || ticket.ticketType !== "pull_request")
+    const repo = ticket?.repositoryId
+      ? await ctx.db.get(ticket.repositoryId)
+      : null;
+    if (
+      !ticket?.repositoryId ||
+      ticket.ticketType !== "pull_request" ||
+      ticket.status !== "open" ||
+      ticket.deletedAt !== undefined ||
+      action?.reviewVerificationOnly === true ||
+      !repo?.isActive ||
+      repo.settings.pullRequestReviewsEnabled !== true
+    )
       return null;
     const now = Date.now();
     if (

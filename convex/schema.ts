@@ -756,6 +756,7 @@ const applicationTables = {
         v.literal("members"),
         v.literal("invitations"),
         v.literal("api_keys"),
+        v.literal("commands"),
         v.literal("tickets"),
         v.literal("history"),
         v.literal("notifications"),
@@ -958,6 +959,8 @@ const applicationTables = {
       }),
     ),
     reviewVerificationOnly: v.optional(v.boolean()),
+    // Started by a "@gitdogbot review" comment or the CLI.
+    reviewRequested: v.optional(v.boolean()),
     reviewRecheckOfActionId: v.optional(v.id("ticketActions")),
     // The last finished review of this PR: a later push reviews only the
     // files changed since its head.
@@ -1700,6 +1703,7 @@ const applicationTables = {
     outcome: v.union(v.literal("accepted"), v.literal("paused")),
     createdAt: v.number(),
   })
+    .index("by_repository", ["repositoryId"])
     .index("by_comment", ["repositoryId", "commentId"])
     .index("by_repository_user", ["repositoryId", "githubUserId", "createdAt"]),
 

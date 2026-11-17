@@ -84,6 +84,11 @@ a pull request comment, or from the CLI:
 | `@gitdogbot resolve`     | `gitdog reviews resolve <ticket-id>`        | Resolves every Gitdog review thread              |
 | `@gitdogbot help`        | `gitdog reviews --help`                     | Lists the commands                               |
 
+A command is a comment line that starts with the mention. Collaborators can
+run every command; the pull request author, who may work from a fork, can run
+all but a full review. A review that failed or ran out of tokens can be
+requested again.
+
 In an issue or discussion, mention `@gitdogbot` with a question to get a
 reply grounded in the repository. When the account runs out of tokens, Gitdog
 says so on the pull request at most once a day. Someone who sends more than 10

@@ -84,6 +84,8 @@ review. Later reviews run when the author or a collaborator comments
 `@<app-slug> review` (changes since the last review) or `@<app-slug> full
 review`; `@<app-slug> resolve` resolves Gitdog's threads and `@<app-slug> help`
 lists the commands; `gitdog reviews request|resolve` runs the same from the CLI.
+A command is a comment line that starts with the mention. The pull request
+author can run every command except a full review, which needs a collaborator.
 These arrive through the **Issue comments** event. A
 commenter who sends more than 10 commands an hour or 40 a day to one
 repository is paused there for 24 hours. When the account runs out of tokens,

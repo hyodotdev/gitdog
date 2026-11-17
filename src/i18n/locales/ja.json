@@ -375,7 +375,7 @@
         "approval": "投稿前に承認する",
         "approvalDescription": "GitdogがGitHubにインラインレビューを投稿する前にチケットで確認します。問題のないレビューはすぐに投稿され、変更ファイルをすべて確認し、未解決のGitdogレビュースレッドがない場合はPRを承認します。その後に新しいコミットがプッシュされると承認は取り消されます。",
         "limitations": "すべて検証した変更で問題が見つからなかった場合にのみPRを承認し、マージのブロックやコードの実行は行いません。変更ファイル300件までを制限付きコンテキストで検証します。60件を超えるPRは分割して検証し、1件のコメントにまとめて投稿します。未確認の範囲はチケットに表示します。",
-        "commands": "最初のレビュー以降は、PRにコメントで依頼します: {{mention}} review (前回のレビュー以降の変更)、{{mention}} full review (PR全体)、{{mention}} resolve (Gitdogのスレッドを解決)、{{mention}} help。CLIでは gitdog reviews request、request --full、resolve で同じ操作ができます。PRの作成者とコラボレーターのみが使え、1時間に10回または1日に40回を超えると1日停止します。",
+        "commands": "最初のレビュー以降は、PRにコメントで依頼します: {{mention}} review (前回のレビュー以降の変更)、{{mention}} full review (PR全体)、{{mention}} resolve (Gitdogのスレッドを解決)、{{mention}} help。CLIでは gitdog reviews request、request --full、resolve で同じ操作ができます。コラボレーターはすべて、PRの作成者はfull review以外を使え、1時間に10回または1日に40回を超えると1日停止します。",
         "permissions": "GitHub Appの権限を確認",
         "suggestions": "適用可能な修正案を含める",
         "suggestionsDescription": "元のコードと一致する小さな修正案を提示します。作成者または書き込み権限のあるレビュアーがGitHubで適用し、自動コミットは行いません。"

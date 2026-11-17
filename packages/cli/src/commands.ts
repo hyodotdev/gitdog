@@ -1042,13 +1042,18 @@ export function createProgram(
     reviews,
     "request <ticket-id>",
     "Review the commits pushed since the last review (@gitdogbot review)",
-    async ({ api, ui }, [ticketId], opts) =>
+    async ({ api, ui }, [ticketId], opts) => {
+      await ui.confirm(
+        "Start a pull request review? It uses tokens.",
+        flag(opts.yes),
+      );
       ui.output(
         await api.call("action", "pullRequests/action:command", {
           ticketId,
           command: flag(opts.full) ? "full_review" : "review",
         }),
-      ),
+      );
+    },
   ).option(
     "--full",
     "Review the whole pull request again (@gitdogbot full review)",

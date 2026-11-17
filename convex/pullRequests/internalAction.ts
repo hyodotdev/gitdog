@@ -641,6 +641,7 @@ export const generate = internalAction({
         ),
       });
       // Out of tokens: tell the pull request instead of failing silently.
+      // The notice skips rechecks, which promise not to post.
       if (
         (cause instanceof ReviewQuotaError &&
           cause.reason === "insufficient") ||
@@ -1177,8 +1178,13 @@ export type PullRequestCommandResult =
         | "up_to_date"
         | "unavailable"
         | "closed"
-        | "bot_author";
+        | "bot_author"
+        | "awaiting_approval"
+        | "stale"
+        | "not_allowed";
       headSha?: string;
+      // The review a "started" request queued.
+      actionId?: Id<"ticketActions"> | null;
     }
   | { command: "resolve"; resolved: number };
 
@@ -1198,6 +1204,8 @@ export async function runPullRequestCommand(
       command,
       resolved: await resolveOwnThreads(access, number, botLogin()),
     };
+  // Stamped before the read, so a push observed meanwhile wins.
+  const observedAt = Date.now();
   const pr = await getPullRequest(access, number);
   if (isBotPullRequestAuthor(pr.user))
     return { command, status: "bot_author", headSha: pr.head.sha };
@@ -1208,7 +1216,7 @@ export async function runPullRequestCommand(
     {
       repositoryId,
       number,
-      observedAt: Date.now(),
+      observedAt,
       author: pr.user.login,
       open: true,
       snapshot: {
@@ -1220,7 +1228,12 @@ export async function runPullRequestCommand(
       full: command === "full_review",
     },
   );
-  return { command, status: result.status, headSha: pr.head.sha };
+  return {
+    command,
+    status: result.status,
+    headSha: pr.head.sha,
+    actionId: result.actionId,
+  };
 }
 
 /** The reply a command comment gets on the pull request. */
@@ -1242,6 +1255,16 @@ export function commandReply(
       return `**Already reviewed** ${result.headSha}\n\nComment \`${mention} full review\` to review the whole pull request again.`;
     case "closed":
       return "**Review not started**\n\nGitdog reviews open pull requests that are ready for review.";
+    case "awaiting_approval":
+      return "**A review of this commit is waiting for approval.** The repository owner can post it from Gitdog.";
+    case "stale":
+      return `**Review not started**\n\nA newer push is being processed. Comment \`${mention} review\` again in a moment.`;
+    case "not_allowed":
+      return (
+        "**Full review not started**\n\nOnly repository collaborators can request a full review. The pull request author can comment `" +
+        mention +
+        " review`."
+      );
     default:
       return "**Review not started**\n\nPull request reviews are not available for this repository right now.";
   }
@@ -1258,6 +1281,7 @@ export const runCommand = internalAction({
       v.literal("resolve"),
       v.literal("help"),
       v.literal("pause_now"),
+      v.literal("not_allowed"),
     ),
     login: v.string(),
   },
@@ -1277,6 +1301,12 @@ export const runCommand = internalAction({
         );
       case "help":
         return reply(access, args.number, helpText(slug));
+      case "not_allowed":
+        return reply(
+          access,
+          args.number,
+          commandReply({ command: "full_review", status: "not_allowed" }, slug),
+        );
       default: {
         const result = await runPullRequestCommand(
           ctx,
