@@ -88,8 +88,12 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      # GHSA-fc5q-39xc-vjpf (picomatch ReDoS) has no patched release yet. It
+      # only reaches dev tooling (vite, vitest, eslint, lint-staged), which
+      # matches globs from this repository's own config. Remove the ignore
+      # once picomatch ships a fix.
       - name: Run security audit
-        run: bun audit
+        run: bun audit --ignore=GHSA-fc5q-39xc-vjpf
 
   # Runs the production Convex push without deploying (bundling, typecheck and
   # schema validation against production data), so a merge cannot fail there.
