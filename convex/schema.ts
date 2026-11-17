@@ -848,6 +848,9 @@ const applicationTables = {
     pullRequestDroppedAt: v.optional(v.number()),
     // The commit Gitdog last approved; a push past it withdraws the approval.
     pullRequestApprovedSha: v.optional(v.string()),
+    // When Gitdog last told this PR its review limit was reached, so the
+    // notice is posted at most once a day.
+    pullRequestLimitNoticeAt: v.optional(v.number()),
 
     // GitHub reference
     githubNumber: v.number(), // Issue or discussion number
@@ -1676,6 +1679,29 @@ const applicationTables = {
     .index("by_repository", ["repositoryId"])
     .index("by_user", ["userId"])
     .index("by_repository_and_user", ["repositoryId", "userId"]),
+
+  // ============================================
+  // PULL REQUEST COMMANDS (@gitdogbot review, ...)
+  // ============================================
+  // One row per command comment, kept to drop redeliveries and to pause a
+  // commenter who sends too many.
+  pullRequestCommands: defineTable({
+    repositoryId: v.id("repositories"),
+    githubNumber: v.number(),
+    commentId: v.number(),
+    githubUserId: v.number(),
+    command: v.union(
+      v.literal("review"),
+      v.literal("full_review"),
+      v.literal("resolve"),
+      v.literal("help"),
+    ),
+    // "paused" marks the command that paused this commenter.
+    outcome: v.union(v.literal("accepted"), v.literal("paused")),
+    createdAt: v.number(),
+  })
+    .index("by_comment", ["repositoryId", "commentId"])
+    .index("by_repository_user", ["repositoryId", "githubUserId", "createdAt"]),
 
   // ============================================
   // INVITATIONS (Team invitations)

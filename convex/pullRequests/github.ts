@@ -464,3 +464,65 @@ export async function hasUnresolvedOwnThreads(
       login(thread.comments?.nodes?.[0]?.author?.login ?? "") === own,
   );
 }
+
+/**
+ * Resolve every unresolved review thread Gitdog started on a PR, up to one
+ * page, and return how many were resolved. Resolving twice is harmless.
+ */
+export async function resolveOwnThreads(
+  access: VerifiedRepositoryAccess,
+  number: number,
+  botLogin: string,
+): Promise<number> {
+  const page = await fetchGitHubAppJsonWithRetry<{
+    data?: {
+      repository?: {
+        pullRequest?: {
+          reviewThreads?: {
+            nodes?: Array<{
+              id?: string;
+              isResolved?: boolean;
+              comments?: {
+                nodes?: Array<{ author?: { login?: string } | null }>;
+              };
+            }>;
+          };
+        };
+      };
+    };
+  }>("https://api.github.com/graphql", access.token, "Read review threads", {
+    method: "POST",
+    maxAttempts: REVIEW_READ_ATTEMPTS,
+    jsonBody: {
+      query:
+        "query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){reviewThreads(first:100){nodes{id isResolved comments(first:1){nodes{author{login}}}}}}}}",
+      variables: { owner: access.owner, repo: access.repo, number },
+    },
+  });
+  const login = (value: string) => value.toLowerCase().replace(/\[bot\]$/, "");
+  const own = login(botLogin);
+  if (!own) return 0;
+  const open = (page.data?.repository?.pullRequest?.reviewThreads?.nodes ?? [])
+    .filter(
+      (thread) =>
+        thread.isResolved !== true &&
+        typeof thread.id === "string" &&
+        login(thread.comments?.nodes?.[0]?.author?.login ?? "") === own,
+    )
+    .map((thread) => thread.id as string);
+  for (const id of open)
+    await fetchGitHubAppJsonWithRetry(
+      "https://api.github.com/graphql",
+      access.token,
+      "Resolve review thread",
+      {
+        method: "POST",
+        jsonBody: {
+          query:
+            "mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{id}}}",
+          variables: { id },
+        },
+      },
+    );
+  return open.length;
+}

@@ -370,7 +370,7 @@
       "disconnectFailed": "Failed to disconnect repository",
       "pullRequests": {
         "title": "Pull request reviews",
-        "enabled": "Review new pull requests and commits",
+        "enabled": "Review new pull requests, then re-review on request",
         "description": "Inspect changed code, related implementation and repository guidance. Report only evidence-backed defects. Draft and bot-authored pull requests, including Dependabot, are skipped to protect your token quota.",
         "approval": "Approve before posting",
         "approvalDescription": "Review proposals in Tickets before Gitdog posts inline comments on GitHub. A review with no findings posts right away and approves the pull request when every changed file was reviewed and no Gitdog review thread is open; a later push withdraws that approval.",

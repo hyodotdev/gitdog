@@ -34,7 +34,7 @@ export class GitHubAppRateLimitError extends Error {
 // Requests here may be retried, so each body must be safe to send twice.
 type GitHubAppJsonRequestBody =
   | { repository_ids: ReadonlyArray<number> }
-  // A GraphQL query; callers send only read-only queries.
+  // A GraphQL read, or a mutation that is safe to repeat.
   | { query: string; variables: Record<string, string | number> }
   // Dismissing a review again leaves it dismissed.
   | { message: string };

@@ -19,6 +19,7 @@ import {
   changedSince,
   getPullRequest,
   hasUnresolvedOwnThreads,
+  resolveOwnThreads,
   isBotPullRequestAuthor,
   minimumReviewBatches,
   PullRequestDiffBudgetError,
@@ -55,9 +56,11 @@ import {
   type Finding,
 } from "./review";
 import {
+  addIssueComment,
   GITHUB_API_VERSION,
   fetchGitHubAppJsonWithRetry,
 } from "../github/helpers";
+import { helpText } from "./commands";
 import { getConfiguredGitHubAppSlug } from "../github/botIdentity";
 
 type Source = { headSha: string; baseSha: string; title: string; body: string };
@@ -637,6 +640,17 @@ export const generate = internalAction({
               : undefined),
         ),
       });
+      // Out of tokens: tell the pull request instead of failing silently.
+      if (
+        (cause instanceof ReviewQuotaError &&
+          cause.reason === "insufficient") ||
+        (cause instanceof ChatBillingError && cause.reason === "limit_reached")
+      )
+        await ctx.scheduler.runAfter(
+          0,
+          internal.pullRequests.internalAction.noticeLimit,
+          { actionId: args.actionId },
+        );
     }
   },
 });
@@ -1142,6 +1156,139 @@ export const dismissStaleApproval = internalAction({
     await ctx.runMutation(
       internal.pullRequests.internalMutation.forgetApproval,
       { ticketId: args.ticketId, staleSha: args.staleSha },
+    );
+  },
+});
+
+async function reply(
+  access: VerifiedRepositoryAccess,
+  number: number,
+  body: string,
+) {
+  await addIssueComment(access.owner, access.repo, number, body, access.token);
+}
+
+/** Run one "@gitdogbot <command>" comment on a pull request and answer it. */
+export const runCommand = internalAction({
+  args: {
+    repositoryId: v.id("repositories"),
+    number: v.number(),
+    command: v.union(
+      v.literal("review"),
+      v.literal("full_review"),
+      v.literal("resolve"),
+      v.literal("help"),
+      v.literal("pause_now"),
+    ),
+    login: v.string(),
+  },
+  handler: async (ctx, args): Promise<void> => {
+    const slug = getConfiguredGitHubAppSlug();
+    if (!slug) return;
+    const access = await resolveVerifiedRepositoryAccess(
+      ctx,
+      args.repositoryId,
+    );
+    const mention = `@${slug}`;
+    switch (args.command) {
+      case "pause_now":
+        return reply(
+          access,
+          args.number,
+          `**Commands paused**\n\n@${args.login} sent too many Gitdog commands, so commands from this account are paused on this repository for 24 hours.`,
+        );
+      case "help":
+        return reply(access, args.number, helpText(slug));
+      case "resolve": {
+        const resolved = await resolveOwnThreads(
+          access,
+          args.number,
+          botLogin(),
+        );
+        return reply(
+          access,
+          args.number,
+          resolved
+            ? `**Resolved ${resolved} Gitdog review ${resolved === 1 ? "thread" : "threads"}.**`
+            : "**No open Gitdog review threads to resolve.**",
+        );
+      }
+      case "review":
+      case "full_review": {
+        const pr = await getPullRequest(access, args.number);
+        if (isBotPullRequestAuthor(pr.user)) return;
+        if (pr.state !== "open" || pr.draft)
+          return reply(
+            access,
+            args.number,
+            "**Review not started**\n\nGitdog reviews open pull requests that are ready for review.",
+          );
+        const result = await ctx.runMutation(
+          internal.pullRequests.internalMutation.requestReview,
+          {
+            repositoryId: args.repositoryId,
+            number: args.number,
+            observedAt: Date.now(),
+            author: pr.user.login,
+            open: true,
+            snapshot: {
+              headSha: pr.head.sha,
+              baseSha: pr.base.sha,
+              title: pr.title,
+              body: pr.body ?? "",
+            },
+            full: args.command === "full_review",
+          },
+        );
+        switch (result.status) {
+          case "started":
+            return reply(
+              access,
+              args.number,
+              `**${args.command === "full_review" ? "Full review" : "Review"} started** for ${pr.head.sha}`,
+            );
+          case "running":
+            return reply(
+              access,
+              args.number,
+              `**A review is already running.** Comment \`${mention} review\` again once it is posted.`,
+            );
+          case "up_to_date":
+            return reply(
+              access,
+              args.number,
+              `**Already reviewed** ${pr.head.sha}\n\nComment \`${mention} full review\` to review the whole pull request again.`,
+            );
+          default:
+            return reply(
+              access,
+              args.number,
+              "**Review not started**\n\nPull request reviews are not available for this repository right now.",
+            );
+        }
+      }
+    }
+  },
+});
+
+/** Tell a pull request, at most once a day, that its review limit was hit. */
+export const noticeLimit = internalAction({
+  args: { actionId: v.id("ticketActions") },
+  handler: async (ctx, args): Promise<void> => {
+    const target = await ctx.runMutation(
+      internal.pullRequests.internalMutation.claimLimitNotice,
+      args,
+    );
+    const slug = getConfiguredGitHubAppSlug();
+    if (!target || !slug) return;
+    const access = await resolveVerifiedRepositoryAccess(
+      ctx,
+      target.repositoryId,
+    );
+    await reply(
+      access,
+      target.number,
+      `**Review limit reached**\n\nGitdog could not review${target.headSha ? ` ${target.headSha}` : " this pull request"} because the token limit of the account that connected this repository has been reached. Once more tokens are available, comment \`@${slug} review\` to try again.`,
     );
   },
 });

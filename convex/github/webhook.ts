@@ -16,6 +16,7 @@ import {
   type VerifiedRepositoryAccess,
 } from "./repositoryIdentity";
 import { extractExecutionMarkerKey } from "../ticketActions/executionRecovery";
+import { handlePullRequestCommentEvent } from "../pullRequests/webhook";
 
 const REMOVAL_JOB_MAX_REPOSITORIES = 5_000;
 const REMOVAL_JOB_MAX_PAYLOAD_BYTES = 2 * 1024 * 1024;
@@ -885,7 +886,7 @@ export async function handleIssueCommentEvent(
 ): Promise<void> {
   console.log("Issue comment event:", payload.action);
   if (isRecord(payload.issue) && payload.issue.pull_request !== undefined)
-    return;
+    return handlePullRequestCommentEvent(ctx, payload);
 
   // Handle deleted bot comments (feedback loop for learning)
   if (payload.action === "deleted") {
