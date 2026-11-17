@@ -43,14 +43,14 @@ Maintainers answer the same questions, triage vague reports and review routine
 changes every day. Gitdog indexes your repository and drafts the work for you —
 with the actual code as evidence, not generic advice.
 
-|                          | What it does                                                                                                                                                                                                                                               |
-| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Issue assistant**      | Turns rough reports into clear, structured issues and answers questions                                                                                                                                                                                    |
-| **Discussion assistant** | Replies to GitHub Discussions with context from your codebase                                                                                                                                                                                              |
-| **Pull request reviews** | Reviews changed code against the repository and suggests concrete fixes                                                                                                                                                                                    |
-| **Maintainer tagging**   | Notifies the right people when a request needs a code change                                                                                                                                                                                               |
-| **Approval first**       | With approval on (the default), drafts wait in your queue until you approve them; a clean pull request review posts at once and approves the commit when every changed file was reviewed and no Gitdog thread is open; a later push withdraws the approval |
-| **Team workspace**       | Share projects with members and keep per-project settings and usage in one place                                                                                                                                                                           |
+|                          | What it does                                                                                                                                                                                                                                                                                                                                 |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Issue assistant**      | Turns rough reports into clear, structured issues and answers questions                                                                                                                                                                                                                                                                      |
+| **Discussion assistant** | Replies to GitHub Discussions with context from your codebase                                                                                                                                                                                                                                                                                |
+| **Pull request reviews** | Reviews changed code against the repository and suggests concrete fixes                                                                                                                                                                                                                                                                      |
+| **Maintainer tagging**   | Notifies the right people when a request needs a code change                                                                                                                                                                                                                                                                                 |
+| **Approval first**       | With approval on (the default), drafts wait in your queue until you approve them; a clean pull request review posts at once and approves the commit when every changed file was reviewed and no Gitdog thread is open; a later push, including updating the branch, withdraws the approval until `@gitdogbot review` reviews the new commits |
+| **Team workspace**       | Share projects with members and keep per-project settings and usage in one place                                                                                                                                                                                                                                                             |
 
 ## How it works
 
@@ -70,6 +70,29 @@ flowchart LR
 3. **Draft** — new issues, discussions and pull requests get a reply or review
    grounded in the indexed source.
 4. **Approve** — review the draft in Gitdog or the CLI, then publish it.
+
+## Commands
+
+Gitdog reviews a pull request once, when it is opened or marked ready for
+review. After that, the pull request author or a collaborator asks for more in
+a pull request comment, or from the CLI:
+
+| Pull request comment     | CLI                                         | What it does                                     |
+| ------------------------ | ------------------------------------------- | ------------------------------------------------ |
+| `@gitdogbot review`      | `gitdog reviews request <ticket-id>`        | Reviews the commits pushed since the last review |
+| `@gitdogbot full review` | `gitdog reviews request <ticket-id> --full` | Reviews the whole pull request again             |
+| `@gitdogbot resolve`     | `gitdog reviews resolve <ticket-id>`        | Resolves every Gitdog review thread              |
+| `@gitdogbot help`        | `gitdog reviews --help`                     | Lists the commands                               |
+
+A command is a comment line that starts with the mention. Commands go in the pull request conversation; replies inside a review thread are not read, and pull requests opened by bots such as Dependabot are not reviewed. Collaborators can
+run every command; the pull request author, who may work from a fork, can run
+all but a full review. A review that failed or ran out of tokens can be
+requested again.
+
+In an issue or discussion, mention `@gitdogbot` with a question to get a
+reply grounded in the repository. When the account runs out of tokens, Gitdog
+says so on the pull request at most once a day. Someone who sends more than 10
+commands an hour or 40 a day to one repository is paused there for 24 hours.
 
 ## Get started
 

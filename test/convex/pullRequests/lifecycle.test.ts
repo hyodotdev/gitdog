@@ -105,7 +105,19 @@ async function fixture() {
       open,
       snapshot,
     });
-  return { t, ...ids, observe };
+  // A review a "@gitdogbot review" comment asks for.
+  const request = async (snapshot = source, full = false) =>
+    (
+      await t.mutation(internal.pullRequests.internalMutation.requestReview, {
+        repositoryId: ids.repositoryId,
+        number: 12,
+        author: "author",
+        open: true,
+        snapshot,
+        full,
+      })
+    ).actionId;
+  return { t, ...ids, observe, request };
 }
 const findings = [
   {
@@ -124,6 +136,463 @@ const findings = [
     ],
   },
 ];
+describe("review commands", () => {
+  async function reviewed() {
+    const f = await fixture();
+    const first = (await f.observe())!;
+    await f.t.run((ctx) =>
+      ctx.db.patch(first, {
+        status: "completed",
+        executionResult: { published: true },
+        proposedChanges: {
+          source,
+          mergeBaseSha: source.baseSha,
+          findings: [],
+          uncoveredFiles: 0,
+          changedFiles: 1,
+          excludedPaths: [],
+        },
+      }),
+    );
+    return { ...f, first };
+  }
+  const next = { ...source, headSha: "e".repeat(40) };
+  const requestStatus = (
+    f: Awaited<ReturnType<typeof fixture>>,
+    snapshot = source,
+    full = false,
+  ) =>
+    f.t.mutation(internal.pullRequests.internalMutation.requestReview, {
+      repositoryId: f.repositoryId,
+      number: 12,
+      author: "author",
+      open: true,
+      snapshot,
+      full,
+    });
+  it("reviews a push only when a command asks for it", async () => {
+    const f = await reviewed();
+    expect(await f.observe(next)).toBeNull();
+    const result = await requestStatus(f, next);
+    expect(result.status).toBe("started");
+    expect(await f.t.run((ctx) => ctx.db.get(result.actionId!))).toMatchObject({
+      reviewSince: { headSha: source.headSha },
+    });
+  });
+  it("answers a review of the reviewed commit as up to date", async () => {
+    const f = await reviewed();
+    expect(await requestStatus(f)).toEqual({
+      status: "up_to_date",
+      actionId: null,
+    });
+  });
+  it("reviews the whole PR again on a full review", async () => {
+    const f = await reviewed();
+    const result = await requestStatus(f, source, true);
+    expect(result.status).toBe("started");
+    const action = await f.t.run((ctx) => ctx.db.get(result.actionId!));
+    expect(action?.reviewSince).toBeUndefined();
+  });
+  it("does not start a second review while one runs", async () => {
+    const f = await fixture();
+    const actionId = (await f.observe())!;
+    await f.t.mutation(internal.pullRequests.internalMutation.claimGeneration, {
+      actionId,
+    });
+    expect((await requestStatus(f, source, true)).status).toBe("running");
+    expect((await requestStatus(f, next)).status).toBe("running");
+  });
+  const claim = (f: Awaited<ReturnType<typeof fixture>>, actionId: string) =>
+    f.t.mutation(internal.pullRequests.internalMutation.claimGeneration, {
+      actionId: actionId as never,
+    });
+  it("lets a full review of a reviewed commit actually run", async () => {
+    const f = await reviewed();
+    const result = await requestStatus(f, source, true);
+    expect(result.status).toBe("started");
+    expect(await claim(f, result.actionId!)).toBeTypeOf("string");
+    // A second request while it is queued or running starts nothing.
+    expect((await requestStatus(f, source, true)).status).toBe("running");
+  });
+  it("retries a review that failed on the same commit", async () => {
+    const f = await fixture();
+    const first = (await f.observe())!;
+    await claim(f, first);
+    await f.t.run((ctx) =>
+      ctx.db.patch(first, {
+        status: "failed",
+        errorMessage: "Token limit reached before review could complete.",
+      }),
+    );
+    const retry = await requestStatus(f);
+    expect(retry.status).toBe("started");
+    expect(await claim(f, retry.actionId!)).toBeTypeOf("string");
+  });
+  it("answers a request while a review waits for the owner's approval", async () => {
+    const f = await fixture();
+    const first = (await f.observe())!;
+    await f.t.run((ctx) => ctx.db.patch(first, { status: "pending_approval" }));
+    expect((await requestStatus(f)).status).toBe("awaiting_approval");
+  });
+  it("answers a request that read an older head than the last observation", async () => {
+    const f = await reviewed();
+    await f.t.run(async (ctx) => {
+      const ticket = (await ctx.db.query("tickets").first())!;
+      await ctx.db.patch(ticket._id, {
+        pullRequestObservedAt: Date.now() + 60_000,
+      });
+    });
+    expect(
+      (
+        await f.t.mutation(
+          internal.pullRequests.internalMutation.requestReview,
+          {
+            repositoryId: f.repositoryId,
+            number: 12,
+            author: "author",
+            open: true,
+            observedAt: Date.now(),
+            snapshot: next,
+            full: false,
+          },
+        )
+      ).status,
+    ).toBe("stale");
+  });
+  describe("comment webhook", () => {
+    async function deliver(
+      f: Awaited<ReturnType<typeof fixture>>,
+      comment: Record<string, unknown>,
+      issueAuthor = 2,
+    ) {
+      const { handlePullRequestCommentEvent } =
+        await import("../../../convex/pullRequests/webhook");
+      await handlePullRequestCommentEvent(
+        {
+          runQuery: (ref: never, args: never) => f.t.query(ref, args),
+          runMutation: (ref: never, args: never) => f.t.mutation(ref, args),
+        } as never,
+        {
+          action: "created",
+          repository: { id: 123 },
+          installation: { id: 42 },
+          issue: { number: 12, user: { id: issueAuthor }, pull_request: {} },
+          comment: {
+            id: 500,
+            body: "@gitdogbot review",
+            author_association: "COLLABORATOR",
+            user: { id: 1, login: "octo", type: "User" },
+            ...comment,
+          },
+        },
+      );
+      return f.t.run((ctx) => ctx.db.query("pullRequestCommands").collect());
+    }
+    it("records a collaborator's command and schedules it", async () => {
+      const f = await fixture();
+      expect(await deliver(f, {})).toMatchObject([
+        { command: "review", outcome: "accepted", githubUserId: 1 },
+      ]);
+    });
+    it("ignores bots, strangers and comments without a command", async () => {
+      const f = await fixture();
+      expect(
+        await deliver(f, { user: { id: 1, login: "x[bot]", type: "Bot" } }),
+      ).toHaveLength(0);
+      expect(
+        await deliver(f, { id: 501, author_association: "NONE" }),
+      ).toHaveLength(0);
+      expect(
+        await deliver(f, { id: 502, body: "Looks good, thanks @gitdogbot" }),
+      ).toHaveLength(0);
+    });
+    it("turns a fork author's full review into a refusal", async () => {
+      const f = await fixture();
+      const r = await replies(f);
+      await deliver(
+        f,
+        { body: "@gitdogbot full review", author_association: "NONE" },
+        1,
+      );
+      await drainScheduledFunctions(f.t);
+      expect(r.posted()).toContain("Only repository collaborators");
+    });
+    it("answers an unknown command with the list of commands", async () => {
+      const f = await fixture();
+      expect(await deliver(f, { body: "@gitdogbot summarize" })).toMatchObject([
+        { command: "help" },
+      ]);
+    });
+  });
+  it("reviews the next push automatically when the first review failed", async () => {
+    const f = await fixture();
+    const first = (await f.observe())!;
+    await claim(f, first);
+    await f.t.run((ctx) =>
+      ctx.db.patch(first, { status: "failed", errorMessage: "GitHub 502" }),
+    );
+    expect(await f.observe(next)).toBeTruthy();
+  });
+  it("counts the post window from when publication was scheduled", async () => {
+    const f = await fixture();
+    const first = (await f.observe())!;
+    vi.advanceTimersByTime(20 * 60_000);
+    // A long review is proposed now and its publication just scheduled.
+    await f.t.mutation(internal.pullRequests.internalMutation.propose, {
+      actionId: first,
+      source,
+      findings: [],
+      excludedPaths: [],
+      filesRead: [],
+      coverage: { changedFiles: 1, uncoveredFiles: 0 },
+    });
+    expect((await requestStatus(f, source, true)).status).toBe("running");
+  });
+  it("carries a requested review a push cancelled over to the new head", async () => {
+    const f = await reviewed();
+    const requested = (await requestStatus(f, next)).actionId!;
+    const newer = { ...source, headSha: "f".repeat(40) };
+    const carried = (await f.observe(newer))!;
+    expect((await f.t.run((ctx) => ctx.db.get(requested)))?.status).toBe(
+      "failed",
+    );
+    expect(await f.t.run((ctx) => ctx.db.get(carried))).toMatchObject({
+      reviewRequested: true,
+      proposedChanges: { source: { headSha: newer.headSha } },
+    });
+  });
+  it("lets a request restore an approval after a no-change follow-up", async () => {
+    const f = await reviewed();
+    vi.advanceTimersByTime(60_000);
+    const followUp = (await requestStatus(f, next)).actionId!;
+    await f.t.run((ctx) =>
+      ctx.db.patch(followUp, {
+        status: "completed",
+        executionResult: { published: false, reason: "no_new_changes" },
+      }),
+    );
+    vi.advanceTimersByTime(60_000);
+    // Not approved yet: asking again may approve. It scopes from the earlier
+    // review, so it is no model call and never a whole-PR review.
+    const rerun = await requestStatus(f, next);
+    expect(rerun.status).toBe("started");
+    expect(
+      (await f.t.run((ctx) => ctx.db.get(rerun.actionId!)))?.reviewSince,
+    ).toMatchObject({ headSha: source.headSha });
+  });
+  it("does not carry a requested review that already waits for approval", async () => {
+    const f = await reviewed();
+    const requested = (await requestStatus(f, next)).actionId!;
+    await f.t.run((ctx) =>
+      ctx.db.patch(requested, { status: "pending_approval" }),
+    );
+    expect(await f.observe({ ...source, headSha: "f".repeat(40) })).toBeNull();
+  });
+  it("lets a request pass a review whose post never started", async () => {
+    const f = await fixture();
+    const first = (await f.observe())!;
+    await f.t.run((ctx) => ctx.db.patch(first, { status: "approved" }));
+    expect((await requestStatus(f)).status).toBe("running");
+    vi.advanceTimersByTime(16 * 60_000);
+    expect((await requestStatus(f)).status).toBe("started");
+  });
+  it("does not post again a review whose post could not be confirmed", async () => {
+    const f = await fixture();
+    const first = (await f.observe())!;
+    await claim(f, first);
+    await f.t.run((ctx) =>
+      ctx.db.patch(first, {
+        status: "failed",
+        errorMessage:
+          "GitHub publication outcome requires inspection; no automatic retry was performed",
+      }),
+    );
+    expect((await requestStatus(f)).status).toBe("up_to_date");
+  });
+  it("records nothing while pull request reviews are off", async () => {
+    const f = await fixture();
+    await f.t.run(async (ctx) => {
+      const repo = (await ctx.db.get(f.repositoryId))!;
+      await ctx.db.patch(f.repositoryId, {
+        settings: { ...repo.settings, pullRequestReviewsEnabled: false },
+      });
+    });
+    expect(
+      await f.t.mutation(internal.pullRequests.internalMutation.recordCommand, {
+        repositoryId: f.repositoryId,
+        githubNumber: 12,
+        commentId: 9,
+        githubUserId: 7,
+        login: "octo",
+        command: "review",
+        allowed: true,
+      }),
+    ).toBe("unavailable");
+  });
+  it.each([
+    ["a recheck", { reviewVerificationOnly: true }, {}],
+    ["a closed pull request", {}, { status: "closed" as const }],
+  ])("posts no limit notice for %s", async (_case, action, ticket) => {
+    const f = await fixture();
+    const actionId = (await f.observe())!;
+    await f.t.run(async (ctx) => {
+      const current = (await ctx.db.get(actionId))!;
+      await ctx.db.patch(actionId, action);
+      await ctx.db.patch(current.ticketId, ticket);
+    });
+    expect(
+      await f.t.mutation(
+        internal.pullRequests.internalMutation.claimLimitNotice,
+        { actionId },
+      ),
+    ).toBeNull();
+  });
+  it("pauses a commenter who sends too many commands", async () => {
+    const f = await fixture();
+    const r = await replies(f);
+    const send = (commentId: number) =>
+      f.t.mutation(internal.pullRequests.internalMutation.recordCommand, {
+        repositoryId: f.repositoryId,
+        githubNumber: 12,
+        commentId,
+        githubUserId: 7,
+        login: "octo",
+        command: "help",
+        allowed: true,
+      });
+    for (let id = 1; id <= 10; id++) expect(await send(id)).toBe("accepted");
+    expect(await send(1)).toBe("duplicate");
+    expect(await send(11)).toBe("pause_now");
+    expect(await send(12)).toBe("paused");
+    // Someone else is not affected.
+    expect(
+      await f.t.mutation(internal.pullRequests.internalMutation.recordCommand, {
+        repositoryId: f.repositoryId,
+        githubNumber: 12,
+        commentId: 100,
+        githubUserId: 8,
+        login: "other",
+        command: "help",
+        allowed: true,
+      }),
+    ).toBe("accepted");
+    await drainScheduledFunctions(f.t);
+    // Ten help replies, one pause notice and the other commenter's reply;
+    // the redelivery and the paused command post nothing.
+    const bodies = r.comment.mock.calls.map((call) => call[3]);
+    expect(bodies).toHaveLength(12);
+    expect(
+      bodies.filter((body) => body.includes("sent too many Gitdog commands")),
+    ).toHaveLength(1);
+    vi.advanceTimersByTime(24 * 60 * 60_000 + 1);
+    expect(await send(13)).toBe("accepted");
+  });
+  async function replies(f: Awaited<ReturnType<typeof fixture>>) {
+    const identity = await import("../../../convex/github/repositoryIdentity");
+    const github = await import("../../../convex/pullRequests/github");
+    const helpers = await import("../../../convex/github/helpers");
+    const repository = (await f.t.run((ctx) => ctx.db.get(f.repositoryId)))!;
+    vi.spyOn(identity, "resolveVerifiedRepositoryAccess").mockResolvedValue({
+      repository,
+      installation: {} as never,
+      githubRepositoryId: 123,
+      githubRepo: "owner/repo",
+      owner: "owner",
+      repo: "repo",
+      token: "fixture-token",
+    });
+    vi.spyOn(github, "getPullRequest").mockResolvedValue({
+      id: 1,
+      number: 12,
+      state: "open",
+      draft: false,
+      title: source.title,
+      body: source.body,
+      user: { login: "author" },
+      head: { sha: next.headSha },
+      base: { sha: source.baseSha, repo: { id: 123 } },
+      changed_files: 1,
+    } as never);
+    const comment = vi.spyOn(helpers, "addIssueComment").mockResolvedValue(1);
+    const run = (command: "review" | "full_review" | "help" | "pause_now") =>
+      f.t.action(internal.pullRequests.internalAction.runCommand, {
+        repositoryId: f.repositoryId,
+        number: 12,
+        command,
+        login: "octo",
+      });
+    return { comment, run, posted: () => comment.mock.calls.at(-1)?.[3] };
+  }
+  it("answers each command on the pull request", async () => {
+    const f = await reviewed();
+    const r = await replies(f);
+    await r.run("help");
+    expect(r.posted()).toContain("`@gitdogbot full review`");
+    await r.run("review");
+    expect(r.posted()).toBe(`**Review started** for ${next.headSha}`);
+    await r.run("review");
+    expect(r.posted()).toContain("**A review is already running.**");
+    await r.run("pause_now");
+    expect(r.posted()).toContain("@octo sent too many Gitdog commands");
+    expect(r.comment).toHaveBeenCalledTimes(4);
+  });
+  it("posts the limit notice when a review runs out of tokens", async () => {
+    const f = await fixture();
+    const actionId = (await f.observe())!;
+    const r = await replies(f);
+    await f.t.action(internal.pullRequests.internalAction.noticeLimit, {
+      actionId,
+    });
+    await f.t.action(internal.pullRequests.internalAction.noticeLimit, {
+      actionId,
+    });
+    expect(r.comment).toHaveBeenCalledTimes(1);
+    expect(r.posted()).toContain("**Review limit reached**");
+    expect(r.posted()).toContain("`@gitdogbot review`");
+  });
+  it("runs the same review commands from the CLI without posting a reply", async () => {
+    const f = await reviewed();
+    const r = await replies(f);
+    const ticketId = (await f.t.run((ctx) => ctx.db.get(f.first)))!.ticketId;
+    const run = (command: "review" | "full_review") =>
+      f.t
+        .withIdentity({ subject: f.userId })
+        .action(api.pullRequests.action.command, { ticketId, command });
+    expect(await run("review")).toMatchObject({
+      command: "review",
+      status: "started",
+      headSha: next.headSha,
+      actionId: expect.any(String),
+    });
+    expect((await run("full_review")).status).toBe("running");
+    expect(r.comment).not.toHaveBeenCalled();
+    const stranger = await f.t.run((ctx) => ctx.db.insert("users", {}));
+    await expect(
+      f.t
+        .withIdentity({ subject: stranger })
+        .action(api.pullRequests.action.command, {
+          ticketId,
+          command: "review",
+        }),
+    ).rejects.toThrow("not authorized");
+  });
+  it("tells a pull request about its limit at most once a day", async () => {
+    const f = await fixture();
+    const actionId = (await f.observe())!;
+    const claim = () =>
+      f.t.mutation(internal.pullRequests.internalMutation.claimLimitNotice, {
+        actionId,
+      });
+    expect(await claim()).toMatchObject({
+      repositoryId: f.repositoryId,
+      number: 12,
+      headSha: source.headSha,
+    });
+    expect(await claim()).toBeNull();
+    vi.advanceTimersByTime(24 * 60 * 60_000 + 1);
+    expect(await claim()).not.toBeNull();
+  });
+});
 describe("PR review durable lifecycle", () => {
   it("does not enqueue bot-authored pull requests through observation", async () => {
     const f = await fixture();
@@ -444,8 +913,10 @@ describe("PR review durable lifecycle", () => {
         executionResult: { published: true },
       }),
     );
-    // Once it is done, the next push starts a review again.
-    expect(await f.observe(next)).toBeTruthy();
+    // Once it is done, a push alone no longer starts a review; a command
+    // does.
+    expect(await f.observe(next)).toBeNull();
+    expect(await f.request(next)).toBeTruthy();
     expect((await ticket())?.pullRequestHeadSha).toBe(next.headSha);
   });
   it("keeps a review waiting for approval after a dropped push", async () => {
@@ -487,7 +958,7 @@ describe("PR review durable lifecycle", () => {
       "approved",
     );
     // Nothing is in flight until publication claims it, so a push still
-    // supersedes it and starts a review.
+    // supersedes it; that review never posted, so the push reviews again.
     expect(
       await f.observe({ ...source, headSha: "c".repeat(40) }),
     ).toBeTruthy();
@@ -1113,7 +1584,7 @@ describe("approval", () => {
         }),
       );
       const next = { ...source, headSha: "e".repeat(40) };
-      const second = (await f.observe(next))!;
+      const second = (await f.request(next))!;
       await f.t.mutation(internal.pullRequests.internalMutation.propose, {
         actionId: second,
         source: next,
@@ -1197,7 +1668,7 @@ describe("approval", () => {
     // A newer, incomplete review of another commit must not be the base.
     await finished("c".repeat(40), false);
     const next = { ...source, headSha: "e".repeat(40) };
-    const followUp = (await f.observe(next))!;
+    const followUp = (await f.request(next))!;
     await f.t.mutation(internal.pullRequests.internalMutation.propose, {
       actionId: followUp,
       source: next,
@@ -1288,7 +1759,7 @@ describe("approval", () => {
       }),
     );
     const next = { ...source, headSha: "e".repeat(40) };
-    const actionId = (await f.observe(next))!;
+    const actionId = (await f.request(next))!;
     await f.t.mutation(internal.pullRequests.internalMutation.propose, {
       actionId,
       source: next,
@@ -1386,6 +1857,30 @@ describe("approval", () => {
       (await f.t.run((ctx) => ctx.db.get(ticketId)))?.pullRequestApprovedSha,
     ).toBe(source.headSha);
   });
+  it("keeps a server error as an outcome that needs inspection", async () => {
+    const f = await publicationFixture();
+    await github([]);
+    f.fetch.mockResolvedValue(new Response(null, { status: 502 }));
+    await f.t.action(internal.pullRequests.internalAction.publish, {
+      actionId: f.actionId,
+      manual: true,
+    });
+    expect(
+      (await f.t.run((ctx) => ctx.db.get(f.actionId)))?.errorMessage,
+    ).toContain("requires inspection");
+  });
+  it("records a review GitHub refused as not published, so it can be retried", async () => {
+    const f = await publicationFixture();
+    await github([]);
+    f.fetch.mockResolvedValue(new Response(null, { status: 403 }));
+    await f.t.action(internal.pullRequests.internalAction.publish, {
+      actionId: f.actionId,
+      manual: true,
+    });
+    expect((await f.t.run((ctx) => ctx.db.get(f.actionId)))?.errorMessage).toBe(
+      "GitHub did not accept the review; no review was published",
+    );
+  });
   it("records an earlier approval GitHub refused to dismiss", async () => {
     const f = await publicationFixture();
     await github([], { dismissFails: true });
@@ -1464,7 +1959,7 @@ describe("approval", () => {
         });
       });
       const next = { ...source, headSha: "e".repeat(40) };
-      const second = (await f.observe(next))!;
+      const second = (await f.request(next))!;
       await f.t.mutation(internal.pullRequests.internalMutation.propose, {
         actionId: second,
         source: next,
@@ -2391,6 +2886,13 @@ describe("batched PR reviews", () => {
     );
     expect(f.batches).toEqual([]);
     expect(f.fetch).not.toHaveBeenCalled();
+    // The pull request is told that the review limit was reached.
+    const scheduled = await f.t.run((ctx) =>
+      ctx.db.system.query("_scheduled_functions").collect(),
+    );
+    expect(
+      scheduled.filter((job) => job.name.includes("noticeLimit")),
+    ).toHaveLength(1);
   });
 
   it("reports an interrupted quota check without blaming review evidence", async () => {
@@ -2602,8 +3104,16 @@ describe("batched PR reviews", () => {
     });
     const request = JSON.parse(f.fetch.mock.calls[0][1]!.body as string);
     expect(request.commit_id).toBe(source.headSha);
-    // Once it ended, the PR was observed again and the dropped head is
-    // reviewed from the commit just reviewed.
+    // Once it ended, the PR was observed again: the dropped head is now the
+    // PR's head, and a command reviews it from the commit just reviewed.
+    expect(
+      await f.t.run((ctx) => ctx.db.query("ticketActions").collect()),
+    ).toHaveLength(1);
+    expect(
+      (await f.t.run((ctx) => ctx.db.query("tickets").first()))
+        ?.pullRequestHeadSha,
+    ).toBe(next.headSha);
+    await f.request(next);
     const actions = await f.t.run((ctx) =>
       ctx.db.query("ticketActions").collect(),
     );
@@ -2626,7 +3136,7 @@ describe("batched PR reviews", () => {
     });
     const next = { ...source, headSha: "e".repeat(40) };
     f.live.head = { sha: next.headSha };
-    const nextId = (await f.observe(next))!;
+    const nextId = (await f.request(next))!;
     expect(await f.t.run((ctx) => ctx.db.get(nextId))).toMatchObject({
       reviewSince: { headSha: source.headSha, mergeBaseSha: source.baseSha },
     });
@@ -2670,7 +3180,7 @@ describe("batched PR reviews", () => {
     await drainScheduledFunctions(f.t);
     const next = { ...source, headSha: "e".repeat(40) };
     f.live.head = { sha: next.headSha };
-    const nextId = (await f.observe(next))!;
+    const nextId = (await f.request(next))!;
     await f.t.run((ctx) =>
       ctx.db.patch(nextId, {
         reviewSince: {
@@ -2704,7 +3214,7 @@ describe("batched PR reviews", () => {
     );
     const next = { ...source, headSha: "e".repeat(40) };
     f.live.head = { sha: next.headSha };
-    const nextId = (await f.observe(next))!;
+    const nextId = (await f.request(next))!;
     f.batches.length = 0;
     f.fetch.mockClear();
     await f.t.action(internal.pullRequests.internalAction.generate, {
@@ -2723,7 +3233,12 @@ describe("batched PR reviews", () => {
       new Set(["src/added.ts", "src/file-1.ts"]),
     );
     await drainScheduledFunctions(f.t);
-    expect(f.fetch).not.toHaveBeenCalled();
+    // No review is posted; the requested review says it found nothing new.
+    const urls = f.fetch.mock.calls.map(([url]) => String(url));
+    expect(urls.some((url) => url.includes("/reviews"))).toBe(false);
+    expect(
+      urls.filter((url) => url.endsWith("/issues/12/comments")),
+    ).toHaveLength(1);
     expect(await f.t.run((ctx) => ctx.db.get(f.nextId))).toMatchObject({
       status: "completed",
       executionResult: { published: false, reason: "no_new_changes" },
@@ -2734,7 +3249,11 @@ describe("batched PR reviews", () => {
     const f = await followUp(new Set(["README.md"]));
     await drainScheduledFunctions(f.t);
     expect(f.batches).toEqual([]);
-    expect(f.fetch).not.toHaveBeenCalled();
+    const urls = f.fetch.mock.calls.map(([url]) => String(url));
+    expect(urls.some((url) => url.includes("/reviews"))).toBe(false);
+    expect(
+      JSON.parse(f.fetch.mock.calls.at(-1)![1]!.body as string).body,
+    ).toContain("**No new changes to review**");
     expect(await f.t.run((ctx) => ctx.db.get(f.nextId))).toMatchObject({
       status: "completed",
       executionResult: { published: false, reason: "no_new_changes" },
@@ -2871,7 +3390,7 @@ describe("batched PR reviews", () => {
     expect(request.body).toContain("could not review the 3 changed files");
     const next = { ...source, headSha: "e".repeat(40) };
     f.live.head = { sha: next.headSha };
-    const nextId = (await f.observe(next))!;
+    const nextId = (await f.request(next))!;
     expect((await f.t.run((ctx) => ctx.db.get(nextId)))?.reviewSince).toEqual({
       headSha: source.headSha,
       mergeBaseSha: source.baseSha,
@@ -2915,7 +3434,7 @@ describe("batched PR reviews", () => {
         },
       }),
     );
-    const next = (await f.observe({ ...source, headSha: "e".repeat(40) }))!;
+    const next = (await f.request({ ...source, headSha: "e".repeat(40) }))!;
     expect((await f.t.run((ctx) => ctx.db.get(next)))?.reviewSince).toEqual({
       headSha: source.headSha,
       mergeBaseSha: source.baseSha,

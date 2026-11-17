@@ -8,6 +8,7 @@ import {
   splitReviewDiff,
   readFile,
   readReviewFile,
+  resolveOwnThreads,
   treePaths,
   type PullRequest,
 } from "../../../convex/pullRequests/github";
@@ -570,4 +571,64 @@ it("rejects a present but truncated patch", async () => {
     ]),
   );
   await expect(snapshot(access, pr)).rejects.toThrow("incomplete");
+});
+
+describe("resolving Gitdog review threads", () => {
+  afterEach(() => vi.restoreAllMocks());
+  const page = (errors?: unknown[]) => ({
+    ...(errors ? { errors } : {}),
+    data: {
+      repository: {
+        pullRequest: {
+          reviewThreads: {
+            nodes: [
+              {
+                id: "a",
+                isResolved: false,
+                comments: { nodes: [{ author: { login: "gitdogbot" } }] },
+              },
+              {
+                id: "b",
+                isResolved: false,
+                comments: { nodes: [{ author: { login: "gitdogbot" } }] },
+              },
+              {
+                id: "c",
+                isResolved: false,
+                comments: { nodes: [{ author: { login: "someone" } }] },
+              },
+              {
+                id: "d",
+                isResolved: true,
+                comments: { nodes: [{ author: { login: "gitdogbot" } }] },
+              },
+            ],
+          },
+        },
+      },
+    },
+  });
+  it("counts only the threads GitHub confirms as resolved", async () => {
+    const get = vi
+      .spyOn(helpers, "fetchGitHubAppJsonWithRetry")
+      .mockResolvedValueOnce(page())
+      .mockResolvedValueOnce({
+        data: { resolveReviewThread: { thread: { isResolved: true } } },
+      })
+      .mockResolvedValueOnce({ errors: [{ message: "refused" }], data: null });
+    expect(await resolveOwnThreads(access, 12, "gitdogbot[bot]")).toEqual({
+      open: 2,
+      resolved: 1,
+    });
+    // Only Gitdog's two open threads are resolved.
+    expect(get).toHaveBeenCalledTimes(3);
+  });
+  it("fails when the threads cannot be read", async () => {
+    vi.spyOn(helpers, "fetchGitHubAppJsonWithRetry").mockResolvedValueOnce(
+      page([{ message: "partial" }]),
+    );
+    await expect(
+      resolveOwnThreads(access, 12, "gitdogbot[bot]"),
+    ).rejects.toThrow("Review threads could not be read");
+  });
 });

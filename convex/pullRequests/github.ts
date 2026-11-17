@@ -464,3 +464,75 @@ export async function hasUnresolvedOwnThreads(
       login(thread.comments?.nodes?.[0]?.author?.login ?? "") === own,
   );
 }
+
+/**
+ * Resolve every unresolved review thread Gitdog started on a PR, up to one
+ * page, and return how many were resolved. Resolving twice is harmless.
+ */
+export async function resolveOwnThreads(
+  access: VerifiedRepositoryAccess,
+  number: number,
+  botLogin: string,
+): Promise<{ open: number; resolved: number }> {
+  const page = await fetchGitHubAppJsonWithRetry<{
+    errors?: unknown[];
+    data?: {
+      repository?: {
+        pullRequest?: {
+          reviewThreads?: {
+            nodes?: Array<{
+              id?: string;
+              isResolved?: boolean;
+              comments?: {
+                nodes?: Array<{ author?: { login?: string } | null }>;
+              };
+            }>;
+          };
+        };
+      };
+    };
+  }>("https://api.github.com/graphql", access.token, "Read review threads", {
+    method: "POST",
+    maxAttempts: REVIEW_READ_ATTEMPTS,
+    jsonBody: {
+      query:
+        "query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){reviewThreads(first:100){nodes{id isResolved comments(first:1){nodes{author{login}}}}}}}}",
+      variables: { owner: access.owner, repo: access.repo, number },
+    },
+  });
+  if (page.errors?.length || !page.data?.repository?.pullRequest)
+    throw new Error("Review threads could not be read");
+  const login = (value: string) => value.toLowerCase().replace(/\[bot\]$/, "");
+  const own = login(botLogin);
+  if (!own) return { open: 0, resolved: 0 };
+  const open = (page.data?.repository?.pullRequest?.reviewThreads?.nodes ?? [])
+    .filter(
+      (thread) =>
+        thread.isResolved !== true &&
+        typeof thread.id === "string" &&
+        login(thread.comments?.nodes?.[0]?.author?.login ?? "") === own,
+    )
+    .map((thread) => thread.id as string);
+  // GraphQL reports a refused mutation in the body, so count confirmed ones.
+  let resolved = 0;
+  for (const id of open) {
+    const result = await fetchGitHubAppJsonWithRetry<{
+      data?: { resolveReviewThread?: { thread?: { isResolved?: boolean } } };
+    }>(
+      "https://api.github.com/graphql",
+      access.token,
+      "Resolve review thread",
+      {
+        method: "POST",
+        jsonBody: {
+          query:
+            "mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{isResolved}}}",
+          variables: { id },
+        },
+      },
+    );
+    if (result.data?.resolveReviewThread?.thread?.isResolved === true)
+      resolved++;
+  }
+  return { open: open.length, resolved };
+}

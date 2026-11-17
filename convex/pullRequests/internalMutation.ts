@@ -3,6 +3,11 @@ import type { Doc, Id } from "../_generated/dataModel";
 import { internal } from "../_generated/api";
 import { v } from "convex/values";
 import {
+  COMMAND_PAUSE_MS,
+  COMMANDS_PER_DAY,
+  COMMANDS_PER_HOUR,
+} from "./commands";
+import {
   getExactGitHubInstallation,
   isGitHubInstallationReady,
 } from "../github/installationAccess";
@@ -107,7 +112,13 @@ function latestFinishedReview(
 }
 
 function lastReviewed(actions: Doc<"ticketActions">[], headSha: string) {
-  const latest = latestFinishedReview(actions);
+  // A rerun on the same head scopes from the review before it, never from a
+  // review of this head, which would make it review the whole PR.
+  const latest = latestFinishedReview(
+    actions.filter(
+      (action) => action.proposedChanges?.source?.headSha !== headSha,
+    ),
+  );
   const proposal = latest?.proposedChanges;
   const source = proposal?.source;
   // Older reviews do not record the merge base or their coverage counts, so
@@ -310,6 +321,284 @@ export const queueVerification = internalMutation({
     return actionId;
   },
 });
+type ObserveArgs = {
+  repositoryId: Id<"repositories">;
+  number: number;
+  observedAt?: number;
+  author: string;
+  open: boolean;
+  snapshot: { headSha: string; baseSha: string; title: string; body: string };
+};
+const UNAVAILABLE = { status: "unavailable" as const, actionId: null };
+const RUNNING = { status: "running" as const, actionId: null };
+const UP_TO_DATE = { status: "up_to_date" as const, actionId: null };
+const AWAITING_APPROVAL = {
+  status: "awaiting_approval" as const,
+  actionId: null,
+};
+// A newer observation of the PR already won; the request read an old head.
+const STALE = { status: "stale" as const, actionId: null };
+
+/**
+ * Record the PR's current state and queue a review when one is due: the
+ * first review of the PR, or one a command requested ("review" covers what
+ * changed since the last review, "full" the whole PR).
+ */
+async function observePullRequest(
+  ctx: MutationCtx,
+  args: ObserveArgs,
+  requested?: "review" | "full",
+) {
+  let request = requested;
+  const repo = await ctx.db.get(args.repositoryId);
+  if (
+    !repo ||
+    repo.settings.pullRequestReviewsEnabled !== true ||
+    !repo.isActive ||
+    repo.disconnectCleanupPending ||
+    repo.githubAccessRevokedAt !== undefined ||
+    isBotPullRequestAuthor({ login: args.author })
+  )
+    return UNAVAILABLE;
+  const install = await getExactGitHubInstallation(ctx, repo.installationId);
+  if (!isGitHubInstallationReady(install) || install.userId !== repo.userId)
+    return UNAVAILABLE;
+  const existing = await ctx.db
+    .query("tickets")
+    .withIndex("by_github_number", (q) =>
+      q.eq("repositoryId", repo._id).eq("githubNumber", args.number),
+    )
+    .take(3);
+  if (
+    existing.some((t) => t.ticketType !== "pull_request") ||
+    existing.length > 1
+  )
+    throw new Error("Conflicting pull request identity");
+  const now = Date.now();
+  const observedAt = args.observedAt ?? now;
+  let ticket = existing[0];
+  if (!ticket) {
+    if (!args.open) return UNAVAILABLE;
+    const ticketId = await ctx.db.insert("tickets", {
+      repositoryId: repo._id,
+      userId: repo.userId,
+      githubRepo: repo.githubRepo,
+      ticketType: "pull_request",
+      githubNumber: args.number,
+      githubTitle: args.snapshot.title,
+      githubBody: args.snapshot.body,
+      githubAuthor: args.author,
+      aiInputVersion: 1,
+      status: "open",
+      createdAt: now,
+    });
+    ticket = (await ctx.db.get(ticketId))!;
+  }
+  if (
+    ticket.deletedAt !== undefined ||
+    (ticket.pullRequestObservedAt ?? 0) > observedAt
+  )
+    return ticket.deletedAt === undefined && request ? STALE : UNAVAILABLE;
+  const actions = await listTicketActions(ctx, ticket._id);
+  const source = args.snapshot;
+  const commitChanged = !sameCommit(
+    {
+      headSha: ticket.pullRequestHeadSha,
+      baseSha: ticket.pullRequestBaseSha,
+    },
+    source,
+  );
+  // Gitdog's approval covered only the commit it approved.
+  if (
+    ticket.pullRequestApprovedSha !== undefined &&
+    ticket.pullRequestApprovedSha !== source.headSha
+  )
+    await ctx.scheduler.runAfter(
+      0,
+      internal.pullRequests.internalAction.dismissStaleApproval,
+      {
+        repositoryId: repo._id,
+        number: args.number,
+        ticketId: ticket._id,
+        staleSha: ticket.pullRequestApprovedSha,
+      },
+    );
+  // A push while a review is running is dropped: the review finishes on
+  // the commit it started on, and the ticket keeps that commit so a later
+  // push is reviewed from there.
+  if (args.open && commitChanged && actions.some(isRunningReview)) {
+    const edited =
+      ticket.githubTitle !== source.title || ticket.githubBody !== source.body;
+    await ctx.db.patch(ticket._id, {
+      pullRequestObservedAt: observedAt,
+      pullRequestDroppedAt: now,
+      githubTitle: source.title,
+      githubBody: source.body,
+      aiInputVersion: edited
+        ? ticket.aiInputVersion + 1
+        : ticket.aiInputVersion,
+    });
+    return RUNNING;
+  }
+  const changed =
+    commitChanged ||
+    ticket.githubTitle !== source.title ||
+    ticket.githubBody !== source.body;
+  // A requested review a push cancelled before it ran carries over to the
+  // new head, so "Review started" is still answered with a review.
+  if (
+    !request &&
+    args.open &&
+    commitChanged &&
+    actions.some(
+      (action) =>
+        action.reviewRequested === true &&
+        action.status === "pending" &&
+        action.reviewGenerationToken === undefined,
+    )
+  )
+    request = "review";
+  const sameHeadReviews = actions.filter((action) =>
+    isAutomaticReviewForHead(action, source.headSha),
+  );
+  const attempted = sameHeadReviews.some(hasAttemptedReview);
+  const queued =
+    args.open && !sameHeadReviews.some(hasAttemptedReview)
+      ? sameHeadReviews.find((action) => action.status === "pending")
+      : undefined;
+  // Without a command, only a pull request's first review runs. A first
+  // review that failed does not count, so the next push tries again.
+  const reviewedBefore = actions.some(
+    (action) =>
+      action.actionType === "review" &&
+      action.reviewVerificationOnly !== true &&
+      action.status === "completed" &&
+      (action.executionResult?.published === true ||
+        action.executionResult?.reason === "no_new_changes"),
+  );
+  for (const action of actions) {
+    if (action._id === queued?._id) {
+      const queuedSource = action.proposedChanges?.source;
+      if (
+        queuedSource?.baseSha !== source.baseSha ||
+        queuedSource.title !== source.title ||
+        queuedSource.body !== source.body
+      ) {
+        await ctx.db.patch(action._id, { proposedChanges: { source } });
+      }
+      continue;
+    }
+    if (
+      (!args.open || commitChanged) &&
+      (action.reviewVerificationOnly !== true || commitChanged) &&
+      ["pending", "pending_approval", "approved"].includes(action.status) &&
+      action.executionClaimedAt === undefined
+    )
+      await ctx.db.patch(action._id, {
+        status: "failed",
+        errorMessage: SUPERSEDED_REVIEW,
+        ...ENDED_BATCH,
+        completedAt: now,
+      });
+  }
+  await ctx.db.patch(ticket._id, {
+    pullRequestObservedAt: observedAt,
+    status: args.open ? "open" : "closed",
+    closedAt: args.open ? undefined : now,
+    pullRequestHeadSha: source.headSha,
+    pullRequestBaseSha: source.baseSha,
+    // The newest head is now observed, so nothing is waiting to be.
+    pullRequestDroppedAt: undefined,
+    githubTitle: source.title,
+    githubBody: source.body,
+    aiInputVersion: changed ? ticket.aiInputVersion + 1 : ticket.aiInputVersion,
+  });
+  if (!args.open) return UNAVAILABLE;
+  if (request) {
+    const thisHead = actions.filter(
+      (action) =>
+        action.actionType === "review" &&
+        action.proposedChanges?.source?.headSha === source.headSha,
+    );
+    // One review at a time: a queued, running or about-to-post review, or a
+    // queued recheck, answers the request.
+    if (
+      actions.some(isRunningReview) ||
+      thisHead.some(
+        (action) =>
+          (action.status === "pending" &&
+            action.reviewGenerationToken === undefined) ||
+          // Publication is scheduled; one that never claimed within the
+          // expiry window is stuck and no longer holds the commit.
+          (action.status === "approved" &&
+            action.executionClaimedAt === undefined &&
+            (action.approvedAt ?? action.createdAt) > now - 15 * 60_000),
+      )
+    )
+      return RUNNING;
+    if (sameHeadReviews.some((action) => action.status === "pending_approval"))
+      return AWAITING_APPROVAL;
+    // Only a finished review of this commit makes it up to date; a failed
+    // or limit-stopped one can be retried. One whose post could not be
+    // confirmed may already be on GitHub, so it is not posted again.
+    if (
+      request === "review" &&
+      sameHeadReviews.some(
+        (action) =>
+          (action.status === "completed" &&
+            (action.executionResult?.published === true ||
+              // Asking again may restore an approval, for no model call.
+              (action.executionResult?.reason === "no_new_changes" &&
+                ticket.pullRequestApprovedSha === source.headSha))) ||
+          (action.status === "failed" &&
+            action.errorMessage?.startsWith(
+              "GitHub publication outcome requires inspection",
+            ) === true),
+      )
+    )
+      return UP_TO_DATE;
+  } else {
+    if (queued) return RUNNING;
+    if (attempted || reviewedBefore) return UP_TO_DATE;
+  }
+  const user = await ctx.db.get(repo.userId);
+  const profiles = await ctx.db
+    .query("userProfiles")
+    .withIndex("by_user", (q) => q.eq("userId", repo.userId))
+    .take(2);
+  if (
+    !user ||
+    profiles.length !== 1 ||
+    !hasCurrentLegalAttestation(profiles[0])
+  )
+    return UNAVAILABLE;
+  const since =
+    request === "full" ? undefined : lastReviewed(actions, source.headSha);
+  const actionId = await ctx.db.insert("ticketActions", {
+    ticketId: ticket._id,
+    actionType: "review",
+    proposedChanges: { source },
+    proposalVersion: 1,
+    status: "pending",
+    chatHistory: [],
+    createdAt: now,
+    ...(since ? { reviewSince: since } : {}),
+    // A requested review may follow an earlier attempt on the same commit.
+    ...(request ? { reviewRequested: true } : {}),
+  });
+  await ctx.scheduler.runAfter(
+    0,
+    internal.pullRequests.internalAction.generate,
+    { actionId },
+  );
+  await ctx.scheduler.runAfter(
+    15 * 60_000,
+    internal.pullRequests.internalMutation.expire,
+    { actionId },
+  );
+  return { status: "started" as const, actionId };
+}
+
 export const observe = internalMutation({
   args: {
     repositoryId: v.id("repositories"),
@@ -319,186 +608,23 @@ export const observe = internalMutation({
     open: v.boolean(),
     snapshot: snapshotValidator,
   },
-  handler: async (ctx, args) => {
-    const repo = await ctx.db.get(args.repositoryId);
-    if (
-      !repo ||
-      repo.settings.pullRequestReviewsEnabled !== true ||
-      !repo.isActive ||
-      repo.disconnectCleanupPending ||
-      repo.githubAccessRevokedAt !== undefined ||
-      isBotPullRequestAuthor({ login: args.author })
-    )
-      return null;
-    const install = await getExactGitHubInstallation(ctx, repo.installationId);
-    if (!isGitHubInstallationReady(install) || install.userId !== repo.userId)
-      return null;
-    const existing = await ctx.db
-      .query("tickets")
-      .withIndex("by_github_number", (q) =>
-        q.eq("repositoryId", repo._id).eq("githubNumber", args.number),
-      )
-      .take(3);
-    if (
-      existing.some((t) => t.ticketType !== "pull_request") ||
-      existing.length > 1
-    )
-      throw new Error("Conflicting pull request identity");
-    const now = Date.now();
-    const observedAt = args.observedAt ?? now;
-    let ticket = existing[0];
-    if (!ticket) {
-      if (!args.open) return null;
-      const ticketId = await ctx.db.insert("tickets", {
-        repositoryId: repo._id,
-        userId: repo.userId,
-        githubRepo: repo.githubRepo,
-        ticketType: "pull_request",
-        githubNumber: args.number,
-        githubTitle: args.snapshot.title,
-        githubBody: args.snapshot.body,
-        githubAuthor: args.author,
-        aiInputVersion: 1,
-        status: "open",
-        createdAt: now,
-      });
-      ticket = (await ctx.db.get(ticketId))!;
-    }
-    if (
-      ticket.deletedAt !== undefined ||
-      (ticket.pullRequestObservedAt ?? 0) > observedAt
-    )
-      return null;
-    const actions = await listTicketActions(ctx, ticket._id);
-    const source = args.snapshot;
-    const commitChanged = !sameCommit(
-      {
-        headSha: ticket.pullRequestHeadSha,
-        baseSha: ticket.pullRequestBaseSha,
-      },
-      source,
-    );
-    // Gitdog's approval covered only the commit it approved.
-    if (
-      ticket.pullRequestApprovedSha !== undefined &&
-      ticket.pullRequestApprovedSha !== source.headSha
-    )
-      await ctx.scheduler.runAfter(
-        0,
-        internal.pullRequests.internalAction.dismissStaleApproval,
-        {
-          repositoryId: repo._id,
-          number: args.number,
-          ticketId: ticket._id,
-          staleSha: ticket.pullRequestApprovedSha,
-        },
-      );
-    // A push while a review is running is dropped: the review finishes on
-    // the commit it started on, and the ticket keeps that commit so a later
-    // push is reviewed from there.
-    if (args.open && commitChanged && actions.some(isRunningReview)) {
-      const edited =
-        ticket.githubTitle !== source.title ||
-        ticket.githubBody !== source.body;
-      await ctx.db.patch(ticket._id, {
-        pullRequestObservedAt: observedAt,
-        pullRequestDroppedAt: now,
-        githubTitle: source.title,
-        githubBody: source.body,
-        aiInputVersion: edited
-          ? ticket.aiInputVersion + 1
-          : ticket.aiInputVersion,
-      });
-      return null;
-    }
-    const changed =
-      commitChanged ||
-      ticket.githubTitle !== source.title ||
-      ticket.githubBody !== source.body;
-    const sameHeadReviews = actions.filter((action) =>
-      isAutomaticReviewForHead(action, source.headSha),
-    );
-    const attempted = sameHeadReviews.some(hasAttemptedReview);
-    const queued =
-      args.open && !attempted
-        ? sameHeadReviews.find((action) => action.status === "pending")
-        : undefined;
-    for (const action of actions) {
-      if (action._id === queued?._id) {
-        const queuedSource = action.proposedChanges?.source;
-        if (
-          queuedSource?.baseSha !== source.baseSha ||
-          queuedSource.title !== source.title ||
-          queuedSource.body !== source.body
-        ) {
-          await ctx.db.patch(action._id, { proposedChanges: { source } });
-        }
-        continue;
-      }
-      if (
-        (!args.open || commitChanged) &&
-        (action.reviewVerificationOnly !== true || commitChanged) &&
-        ["pending", "pending_approval", "approved"].includes(action.status) &&
-        action.executionClaimedAt === undefined
-      )
-        await ctx.db.patch(action._id, {
-          status: "failed",
-          errorMessage: SUPERSEDED_REVIEW,
-          ...ENDED_BATCH,
-          completedAt: now,
-        });
-    }
-    await ctx.db.patch(ticket._id, {
-      pullRequestObservedAt: observedAt,
-      status: args.open ? "open" : "closed",
-      closedAt: args.open ? undefined : now,
-      pullRequestHeadSha: source.headSha,
-      pullRequestBaseSha: source.baseSha,
-      // The newest head is now observed, so nothing is waiting to be.
-      pullRequestDroppedAt: undefined,
-      githubTitle: source.title,
-      githubBody: source.body,
-      aiInputVersion: changed
-        ? ticket.aiInputVersion + 1
-        : ticket.aiInputVersion,
-    });
-    if (!args.open || attempted || queued) return null;
-    const user = await ctx.db.get(repo.userId);
-    const profiles = await ctx.db
-      .query("userProfiles")
-      .withIndex("by_user", (q) => q.eq("userId", repo.userId))
-      .take(2);
-    if (
-      !user ||
-      profiles.length !== 1 ||
-      !hasCurrentLegalAttestation(profiles[0])
-    )
-      return null;
-    const since = lastReviewed(actions, source.headSha);
-    const actionId = await ctx.db.insert("ticketActions", {
-      ticketId: ticket._id,
-      actionType: "review",
-      proposedChanges: { source },
-      proposalVersion: 1,
-      status: "pending",
-      chatHistory: [],
-      createdAt: now,
-      ...(since ? { reviewSince: since } : {}),
-    });
-    await ctx.scheduler.runAfter(
-      0,
-      internal.pullRequests.internalAction.generate,
-      { actionId },
-    );
-    await ctx.scheduler.runAfter(
-      15 * 60_000,
-      internal.pullRequests.internalMutation.expire,
-      { actionId },
-    );
-    return actionId;
-  },
+  handler: async (ctx, args) => (await observePullRequest(ctx, args)).actionId,
 });
 
+/** A review a PR command asked for, and what became of the request. */
+export const requestReview = internalMutation({
+  args: {
+    repositoryId: v.id("repositories"),
+    number: v.number(),
+    observedAt: v.optional(v.number()),
+    author: v.string(),
+    open: v.boolean(),
+    snapshot: snapshotValidator,
+    full: v.boolean(),
+  },
+  handler: async (ctx, { full, ...args }) =>
+    await observePullRequest(ctx, args, full ? "full" : "review"),
+});
 export const claimGeneration = internalMutation({
   args: {
     actionId: v.id("ticketActions"),
@@ -551,6 +677,7 @@ export const claimGeneration = internalMutation({
       }
       const actions = await listTicketActions(ctx, action.ticketId);
       if (
+        action.reviewRequested !== true &&
         actions.some(
           (other) =>
             other._id !== action._id &&
@@ -781,6 +908,12 @@ export const propose = internalMutation({
             reviewFailureDetails: `Stage · Token quota check (review batch ${page})\nReason · ${quota.message}`,
             completedAt: Date.now(),
           });
+          if (quota.reason === "insufficient")
+            await ctx.scheduler.runAfter(
+              0,
+              internal.pullRequests.internalAction.noticeLimit,
+              { actionId: action._id },
+            );
           return false;
         }
       }
@@ -840,8 +973,9 @@ export const propose = internalMutation({
         (base?.proposedChanges?.coverageComplete === true &&
           (baseFindings === 0 ||
             base.executionResult?.inlineFindings === true)));
-    // A follow-up with nothing new still posts when it can approve, so the
-    // approval a push withdrew (such as a base merge) comes back.
+    // A requested follow-up with nothing new still posts when it can
+    // approve, so "@gitdogbot review" restores an approval a push such as a
+    // base merge withdrew.
     const unpublished = verificationOnly || (nothingNew && !coverageComplete);
     await ctx.db.patch(action._id, {
       ...ENDED_BATCH,
@@ -900,6 +1034,10 @@ export const propose = internalMutation({
         : approval && !noFindings
           ? "pending_approval"
           : "approved",
+      // When publication was scheduled, for the post's expiry window.
+      ...(!unpublished && !(approval && !noFindings)
+        ? { approvedAt: Date.now() }
+        : {}),
       completedAt: unpublished ? Date.now() : undefined,
       executionResult: unpublished
         ? {
@@ -917,7 +1055,16 @@ export const propose = internalMutation({
     // A review that ended unpublished is done, so a dropped push can be
     // reviewed now. One waiting for approval keeps it: reviewing the newer
     // head would supersede the review before the owner sees it.
-    else if (unpublished) await observeDroppedPush(ctx, action.ticketId);
+    else if (unpublished) {
+      // A requested review answered "started", so it says it found nothing.
+      if (nothingNew && action.reviewRequested === true)
+        await ctx.scheduler.runAfter(
+          0,
+          internal.pullRequests.internalAction.noticeNoChanges,
+          { actionId: action._id },
+        );
+      await observeDroppedPush(ctx, action.ticketId);
+    }
     return true;
   },
 });
@@ -1153,6 +1300,117 @@ export const completeUnposted = internalMutation({
       completedAt: Date.now(),
       executionResult: { published: false, reason: "no_new_changes" },
     });
+    if (action.reviewRequested === true)
+      await ctx.scheduler.runAfter(
+        0,
+        internal.pullRequests.internalAction.noticeNoChanges,
+        { actionId: action._id },
+      );
     await observeDroppedPush(ctx, action.ticketId);
+  },
+});
+
+/**
+ * Record a command comment and decide whether it runs. A commenter who sends
+ * too many commands to one repository is paused for a day; only the command
+ * that pauses them gets a reply, so a paused commenter cannot make Gitdog
+ * post either.
+ */
+export const recordCommand = internalMutation({
+  args: {
+    repositoryId: v.id("repositories"),
+    githubNumber: v.number(),
+    commentId: v.number(),
+    githubUserId: v.number(),
+    login: v.string(),
+    command: v.union(
+      v.literal("review"),
+      v.literal("full_review"),
+      v.literal("resolve"),
+      v.literal("help"),
+    ),
+    // False when the commenter may not run this command.
+    allowed: v.boolean(),
+  },
+  handler: async (ctx, { login, allowed, ...args }) => {
+    const repo = await ctx.db.get(args.repositoryId);
+    if (
+      !repo?.isActive ||
+      repo.disconnectCleanupPending ||
+      repo.settings.pullRequestReviewsEnabled !== true
+    )
+      return "unavailable" as const;
+    const seen = await ctx.db
+      .query("pullRequestCommands")
+      .withIndex("by_comment", (q) =>
+        q.eq("repositoryId", args.repositoryId).eq("commentId", args.commentId),
+      )
+      .first();
+    if (seen) return "duplicate" as const;
+    const now = Date.now();
+    const recent = await ctx.db
+      .query("pullRequestCommands")
+      .withIndex("by_repository_user", (q) =>
+        q
+          .eq("repositoryId", args.repositoryId)
+          .eq("githubUserId", args.githubUserId)
+          .gt("createdAt", now - COMMAND_PAUSE_MS),
+      )
+      .take(COMMANDS_PER_DAY + 1);
+    if (recent.some((row) => row.outcome === "paused"))
+      return "paused" as const;
+    const lastHour = recent.filter((row) => row.createdAt > now - 60 * 60_000);
+    const pause =
+      lastHour.length >= COMMANDS_PER_HOUR || recent.length >= COMMANDS_PER_DAY;
+    await ctx.db.insert("pullRequestCommands", {
+      ...args,
+      outcome: pause ? "paused" : "accepted",
+      createdAt: now,
+    });
+    await ctx.scheduler.runAfter(
+      0,
+      internal.pullRequests.internalAction.runCommand,
+      {
+        repositoryId: args.repositoryId,
+        number: args.githubNumber,
+        command: pause ? "pause_now" : allowed ? args.command : "not_allowed",
+        login,
+      },
+    );
+    return pause ? ("pause_now" as const) : ("accepted" as const);
+  },
+});
+
+/** Claim the once-a-day notice that this PR hit its review limit. */
+export const claimLimitNotice = internalMutation({
+  args: { actionId: v.id("ticketActions") },
+  handler: async (ctx, args) => {
+    const action = await ctx.db.get(args.actionId);
+    const ticket = action ? await ctx.db.get(action.ticketId) : null;
+    const repo = ticket?.repositoryId
+      ? await ctx.db.get(ticket.repositoryId)
+      : null;
+    if (
+      !ticket?.repositoryId ||
+      ticket.ticketType !== "pull_request" ||
+      ticket.status !== "open" ||
+      ticket.deletedAt !== undefined ||
+      action?.reviewVerificationOnly === true ||
+      !repo?.isActive ||
+      repo.settings.pullRequestReviewsEnabled !== true
+    )
+      return null;
+    const now = Date.now();
+    if (
+      ticket.pullRequestLimitNoticeAt !== undefined &&
+      ticket.pullRequestLimitNoticeAt > now - COMMAND_PAUSE_MS
+    )
+      return null;
+    await ctx.db.patch(ticket._id, { pullRequestLimitNoticeAt: now });
+    return {
+      repositoryId: ticket.repositoryId,
+      number: ticket.githubNumber,
+      headSha: action?.proposedChanges?.source?.headSha as string | undefined,
+    };
   },
 });

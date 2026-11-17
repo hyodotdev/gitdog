@@ -193,6 +193,7 @@ are excluded. All authorization is enforced by the backend.
 | Indexing and cached code | `index status/logs/files/file/restart/learnings`                                                           |
 | Issues and discussions   | `tickets list/pending/get/delete/restore`                                                                  |
 | Assistant approvals      | `actions list/get/approve/reject/request-changes`                                                          |
+| Pull request reviews     | `reviews request [--full]/resolve/recheck`                                                                 |
 | Notifications            | `notifications list/count/read/read-all`                                                                   |
 | Members and sharing      | `team members/role/invite/invitations/remove/leave`                                                        |
 | Incoming invitations     | `invitations list/accept/reject/cancel`                                                                    |
@@ -363,7 +364,20 @@ npx gitdog@latest config set requireApprovalForPullRequests true
 npx gitdog@latest config push --dry-run
 npx gitdog@latest config push
 npx gitdog@latest tickets pending --type pull_request
+npx gitdog@latest reviews request TICKET_ID
+npx gitdog@latest reviews request TICKET_ID --full
+npx gitdog@latest reviews resolve TICKET_ID
+npx gitdog@latest reviews recheck ACTION_ID
 ```
+
+Gitdog reviews a pull request once, when it is opened or marked ready for
+review. The `reviews` commands match the pull request comments
+`@gitdogbot review` (commits since the last review), `@gitdogbot full review`
+and `@gitdogbot resolve` (resolves Gitdog's threads); the CLI prints the result
+instead of replying on GitHub. On GitHub, commands go in the pull request
+conversation, not in replies inside a review thread. `reviews request` asks before spending tokens
+(skip with `--yes`) and prints the queued review's action id. `reviews recheck`
+reruns a failed review on the latest commit without posting.
 
 Reviews are opt-in and require GitHub App pull-request write permission.
 Proposals appear in Tickets; approval posts inline comments on the reviewed
@@ -372,7 +386,9 @@ or reviewers with write access. Disable them with
 `config set pullRequestSuggestionsEnabled false`. A review with no findings in
 fully reviewed changes posts at once and approves the reviewed commit when
 no Gitdog thread is open; a later
-push withdraws the approval while pull request reviews stay on. Gitdog does not commit changes automatically or
+push, including updating the branch, withdraws the approval while pull
+request reviews stay on; `reviews request` (or `@gitdogbot review`) reviews the
+new commits and can approve again. Gitdog does not commit changes automatically or
 execute PR code. Incomplete coverage
 and failed reviews remain visible. New settings require the corresponding
 Gitdog server release.

@@ -20,3 +20,20 @@ export const get = internalQuery({
     return { action, ticket, repository };
   },
 });
+export const getTicket = internalQuery({
+  args: { ticketId: v.id("tickets") },
+  handler: async (ctx, args) => {
+    const ticket = await ctx.db.get(args.ticketId);
+    if (!ticket || ticket.deletedAt !== undefined) return null;
+    const repository = ticket.repositoryId
+      ? await ctx.db.get(ticket.repositoryId)
+      : null;
+    if (
+      !repository ||
+      repository.userId !== ticket.userId ||
+      repository.disconnectCleanupPending === true
+    )
+      return null;
+    return ticket;
+  },
+});

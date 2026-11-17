@@ -170,6 +170,10 @@ const fixedFailureReasons = new Map([
     "GitHub returned an invalid review history response.",
   ],
   [
+    "Review threads could not be read",
+    "GitHub returned an error while reading the review threads.",
+  ],
+  [
     "Review findings are invalid",
     "The saved review did not contain a valid set of findings.",
   ],

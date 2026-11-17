@@ -16,6 +16,12 @@ import { cn } from "../../../utils/cn";
 import { IndexingStatus } from "../../home/IndexingStatus";
 import { Button } from "../../../components/uis/Button";
 import { TeamSection } from "../../../components/TeamSection";
+import { resolveGitHubAppSlug } from "../connectFlow";
+
+const GITDOG_MENTION = `@${resolveGitHubAppSlug(
+  import.meta.env.VITE_GITHUB_APP_SLUG,
+  import.meta.env.MODE,
+)}`;
 
 export function RepositorySettingsPage() {
   const { t } = useTranslation();
@@ -510,6 +516,11 @@ export function RepositorySettingsPage() {
                 />
                 <p className={cn("text-sm text-gray-500 dark:text-gray-400")}>
                   {t("repositories.settings.pullRequests.limitations")}
+                </p>
+                <p className={cn("text-sm text-gray-500 dark:text-gray-400")}>
+                  {t("repositories.settings.pullRequests.commands", {
+                    mention: GITDOG_MENTION,
+                  })}
                 </p>
                 {isOwner && !requiresReconnect && (
                   <a

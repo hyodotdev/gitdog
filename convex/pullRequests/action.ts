@@ -6,6 +6,10 @@ import type { Id } from "../_generated/dataModel";
 import { resolveVerifiedRepositoryAccess } from "../github/repositoryIdentity";
 import { requireCurrentAiLegalAttestation } from "../_ai/legalAttestation";
 import { getPullRequest, isBotPullRequestAuthor } from "./github";
+import {
+  runPullRequestCommand,
+  type PullRequestCommandResult,
+} from "./internalAction";
 
 export const recheck = action({
   args: { actionId: v.id("ticketActions") },
@@ -50,6 +54,51 @@ export const recheck = action({
           body: pr.body ?? "",
         },
       },
+    );
+  },
+});
+
+/**
+ * The CLI and web counterpart of the "@gitdogbot review", "full review" and
+ * "resolve" pull request comments. The command reply is returned instead of
+ * posted. The review itself, a limit notice if it runs out of tokens, and a
+ * note when there is nothing new to review are posted as for comments.
+ */
+export const command = action({
+  args: {
+    ticketId: v.id("tickets"),
+    command: v.union(
+      v.literal("review"),
+      v.literal("full_review"),
+      v.literal("resolve"),
+    ),
+  },
+  handler: async (ctx, args): Promise<PullRequestCommandResult> => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+    const ticket = await ctx.runQuery(
+      internal.pullRequests.internalQuery.getTicket,
+      { ticketId: args.ticketId },
+    );
+    if (
+      !ticket ||
+      ticket.ticketType !== "pull_request" ||
+      ticket.userId !== userId ||
+      !ticket.repositoryId
+    )
+      throw new Error("Pull request not found or not authorized");
+    if (args.command !== "resolve")
+      await requireCurrentAiLegalAttestation(ctx, userId);
+    const access = await resolveVerifiedRepositoryAccess(
+      ctx,
+      ticket.repositoryId,
+    );
+    return await runPullRequestCommand(
+      ctx,
+      access,
+      ticket.repositoryId,
+      ticket.githubNumber,
+      args.command,
     );
   },
 });

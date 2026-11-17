@@ -19,6 +19,7 @@ import {
   changedSince,
   getPullRequest,
   hasUnresolvedOwnThreads,
+  resolveOwnThreads,
   isBotPullRequestAuthor,
   minimumReviewBatches,
   PullRequestDiffBudgetError,
@@ -55,9 +56,11 @@ import {
   type Finding,
 } from "./review";
 import {
+  addIssueComment,
   GITHUB_API_VERSION,
   fetchGitHubAppJsonWithRetry,
 } from "../github/helpers";
+import { helpText } from "./commands";
 import { getConfiguredGitHubAppSlug } from "../github/botIdentity";
 
 type Source = { headSha: string; baseSha: string; title: string; body: string };
@@ -637,6 +640,18 @@ export const generate = internalAction({
               : undefined),
         ),
       });
+      // Out of tokens: tell the pull request instead of failing silently.
+      // The notice skips rechecks, which promise not to post.
+      if (
+        (cause instanceof ReviewQuotaError &&
+          cause.reason === "insufficient") ||
+        (cause instanceof ChatBillingError && cause.reason === "limit_reached")
+      )
+        await ctx.scheduler.runAfter(
+          0,
+          internal.pullRequests.internalAction.noticeLimit,
+          { actionId: args.actionId },
+        );
     }
   },
 });
@@ -719,6 +734,9 @@ export const publish = internalAction({
     args,
   ): Promise<{ success: boolean; reason?: string }> => {
     let claimed: number | false = false;
+    // Set once a review POST may have reached GitHub. Before that, or when
+    // GitHub answered with an error, nothing was posted for certain.
+    let mayHavePosted = false;
     try {
       const initial = await ctx.runQuery(
         internal.pullRequests.internalQuery.get,
@@ -1006,6 +1024,7 @@ export const publish = internalAction({
               }),
               signal: AbortSignal.timeout(30_000),
             });
+          mayHavePosted = true;
           let response = await post({
             body: `${body(approve)}\n\n${marker}`,
             ...(findings.length
@@ -1041,6 +1060,9 @@ export const publish = internalAction({
           }
           if (!response.ok) {
             await response.body?.cancel().catch(() => undefined);
+            // A client error means GitHub created no review; a server error
+            // may come after it did.
+            if (response.status < 500) mayHavePosted = false;
             throw new Error(
               `Publish GitHub review failed (HTTP ${response.status})`,
             );
@@ -1090,9 +1112,11 @@ export const publish = internalAction({
         actionId: args.actionId,
         stage: claimed ? "publication" : "preflight",
         claimedAt: claimed || undefined,
-        error: claimed
-          ? "GitHub publication outcome requires inspection; no automatic retry was performed"
-          : "Review is stale or GitHub access is unavailable; no review was published",
+        error: !claimed
+          ? "Review is stale or GitHub access is unavailable; no review was published"
+          : mayHavePosted
+            ? "GitHub publication outcome requires inspection; no automatic retry was performed"
+            : "GitHub did not accept the review; no review was published",
         reviewFailureDetails: reviewFailureDetails(
           error,
           claimed ? "Review publication" : "Publication preflight",
@@ -1134,7 +1158,7 @@ export const dismissStaleApproval = internalAction({
       access,
       args.number,
       stale,
-      "New commits were pushed after the commit Gitdog approved.",
+      `New commits were pushed after the commit Gitdog approved. Comment @${getConfiguredGitHubAppSlug() ?? "gitdogbot"} review to review them.`,
     );
     // Remembered until GitHub accepts every dismissal, including any past
     // the per-run cap, so a later push retries.
@@ -1142,6 +1166,226 @@ export const dismissStaleApproval = internalAction({
     await ctx.runMutation(
       internal.pullRequests.internalMutation.forgetApproval,
       { ticketId: args.ticketId, staleSha: args.staleSha },
+    );
+  },
+});
+
+async function reply(
+  access: VerifiedRepositoryAccess,
+  number: number,
+  body: string,
+) {
+  await addIssueComment(access.owner, access.repo, number, body, access.token);
+}
+
+export type PullRequestCommandResult =
+  | {
+      command: "review" | "full_review";
+      status:
+        | "started"
+        | "running"
+        | "up_to_date"
+        | "unavailable"
+        | "closed"
+        | "bot_author"
+        | "awaiting_approval"
+        | "stale"
+        | "not_allowed";
+      headSha?: string;
+      // The review a "started" request queued.
+      actionId?: Id<"ticketActions"> | null;
+    }
+  | { command: "resolve"; resolved: number; open: number };
+
+/**
+ * Run a review, full review or resolve command on a pull request. Comment
+ * commands and the CLI share this, so both behave the same.
+ */
+export async function runPullRequestCommand(
+  ctx: ActionCtx,
+  access: VerifiedRepositoryAccess,
+  repositoryId: Id<"repositories">,
+  number: number,
+  command: "review" | "full_review" | "resolve",
+): Promise<PullRequestCommandResult> {
+  if (command === "resolve")
+    return {
+      command,
+      ...(await resolveOwnThreads(access, number, botLogin())),
+    };
+  // Stamped before the read, so a push observed meanwhile wins.
+  const observedAt = Date.now();
+  const pr = await getPullRequest(access, number);
+  if (isBotPullRequestAuthor(pr.user))
+    return { command, status: "bot_author", headSha: pr.head.sha };
+  if (pr.state !== "open" || pr.draft)
+    return { command, status: "closed", headSha: pr.head.sha };
+  const result = await ctx.runMutation(
+    internal.pullRequests.internalMutation.requestReview,
+    {
+      repositoryId,
+      number,
+      observedAt,
+      author: pr.user.login,
+      open: true,
+      snapshot: {
+        headSha: pr.head.sha,
+        baseSha: pr.base.sha,
+        title: pr.title,
+        body: pr.body ?? "",
+      },
+      full: command === "full_review",
+    },
+  );
+  return {
+    command,
+    status: result.status,
+    headSha: pr.head.sha,
+    actionId: result.actionId,
+  };
+}
+
+/** The reply a command comment gets on the pull request. */
+export function commandReply(
+  result: PullRequestCommandResult,
+  slug: string,
+): string {
+  const mention = `@${slug}`;
+  if (result.command === "resolve")
+    return result.open === 0
+      ? "**No open Gitdog review threads to resolve.**"
+      : result.resolved === result.open
+        ? `**Resolved ${result.resolved} Gitdog review ${result.resolved === 1 ? "thread" : "threads"}.**`
+        : `**Resolved ${result.resolved} of ${result.open} Gitdog review threads.** GitHub refused the rest; try again or resolve them on GitHub.`;
+  switch (result.status) {
+    case "started":
+      return `**${result.command === "full_review" ? "Full review" : "Review"} started** for ${result.headSha}`;
+    case "running":
+      return `**A review is already running.** Comment \`${mention} review\` again once it is posted.`;
+    case "up_to_date":
+      return `**Already reviewed** ${result.headSha}\n\nComment \`${mention} full review\` to review the whole pull request again.`;
+    case "closed":
+      return "**Review not started**\n\nGitdog reviews open pull requests that are ready for review.";
+    case "bot_author":
+      return "**Review not started**\n\nGitdog does not review pull requests opened by bots, such as Dependabot.";
+    case "awaiting_approval":
+      return "**A review of this commit is waiting for approval.** The repository owner can post it from Gitdog.";
+    case "stale":
+      return `**Review not started**\n\nGitdog is processing a newer update to this pull request. Comment \`${mention} review\` again in a moment.`;
+    case "not_allowed":
+      return (
+        "**Full review not started**\n\nOnly repository collaborators can request a full review. The pull request author can comment `" +
+        mention +
+        " review`."
+      );
+    default:
+      return "**Review not started**\n\nPull request reviews are not available for this repository right now.";
+  }
+}
+
+/** Run one "@gitdogbot <command>" comment on a pull request and answer it. */
+export const runCommand = internalAction({
+  args: {
+    repositoryId: v.id("repositories"),
+    number: v.number(),
+    command: v.union(
+      v.literal("review"),
+      v.literal("full_review"),
+      v.literal("resolve"),
+      v.literal("help"),
+      v.literal("pause_now"),
+      v.literal("not_allowed"),
+    ),
+    login: v.string(),
+  },
+  handler: async (ctx, args): Promise<void> => {
+    const slug = getConfiguredGitHubAppSlug();
+    if (!slug) return;
+    const access = await resolveVerifiedRepositoryAccess(
+      ctx,
+      args.repositoryId,
+    );
+    switch (args.command) {
+      case "pause_now":
+        return reply(
+          access,
+          args.number,
+          `**Commands paused**\n\n@${args.login} sent too many Gitdog commands, so commands from this account are paused on this repository for 24 hours.`,
+        );
+      case "help":
+        return reply(access, args.number, helpText(slug));
+      case "not_allowed":
+        return reply(
+          access,
+          args.number,
+          commandReply({ command: "full_review", status: "not_allowed" }, slug),
+        );
+      default: {
+        const result = await runPullRequestCommand(
+          ctx,
+          access,
+          args.repositoryId,
+          args.number,
+          args.command,
+        ).catch(async (error) => {
+          // A command that could not run says so instead of going silent.
+          await reply(
+            access,
+            args.number,
+            "**Command not completed**\n\nGitdog could not reach GitHub or the review queue. Try again in a few minutes.",
+          ).catch(() => undefined);
+          throw error;
+        });
+        return reply(access, args.number, commandReply(result, slug));
+      }
+    }
+  },
+});
+
+/** Tell a pull request, at most once a day, that its review limit was hit. */
+export const noticeLimit = internalAction({
+  args: { actionId: v.id("ticketActions") },
+  handler: async (ctx, args): Promise<void> => {
+    const target = await ctx.runMutation(
+      internal.pullRequests.internalMutation.claimLimitNotice,
+      args,
+    );
+    const slug = getConfiguredGitHubAppSlug();
+    if (!target || !slug) return;
+    const access = await resolveVerifiedRepositoryAccess(
+      ctx,
+      target.repositoryId,
+    );
+    await reply(
+      access,
+      target.number,
+      `**Review limit reached**\n\nGitdog could not review${target.headSha ? ` ${target.headSha}` : " this pull request"} because the token limit of the account that connected this repository has been reached. Once more tokens are available, comment \`@${slug} review\` to try again.`,
+    );
+  },
+});
+
+/** Answer a requested review that found no pull request changes to review. */
+export const noticeNoChanges = internalAction({
+  args: { actionId: v.id("ticketActions") },
+  handler: async (ctx, args): Promise<void> => {
+    const state = await ctx.runQuery(
+      internal.pullRequests.internalQuery.get,
+      args,
+    );
+    const slug = getConfiguredGitHubAppSlug();
+    if (!state || !slug) return;
+    const source = sourceOf(state.action.proposedChanges?.source);
+    const since = state.action.proposedChanges?.reviewedSince;
+    const access = await resolveVerifiedRepositoryAccess(
+      ctx,
+      state.repository._id,
+    );
+    await reply(
+      access,
+      state.ticket.githubNumber,
+      `**No new changes to review** in ${source.headSha}${
+        typeof since === "string" ? ` since ${since}` : ""
+      }\n\nNothing in the pull request diff changed, so no review was posted. Comment \`@${slug} full review\` to review the whole pull request again.`,
     );
   },
 });

@@ -1033,6 +1033,49 @@ export function createProgram(
     "Request a new response using this feedback?",
   );
 
+  const reviews = program
+    .command("reviews")
+    .description(
+      "Run pull request review commands, like @gitdogbot comments on GitHub",
+    );
+  command(
+    reviews,
+    "request <ticket-id>",
+    "Review the commits pushed since the last review (@gitdogbot review)",
+    async ({ api, ui }, [ticketId], opts) => {
+      await ui.confirm(
+        "Start a pull request review? It uses tokens.",
+        flag(opts.yes),
+      );
+      ui.output(
+        await api.call("action", "pullRequests/action:command", {
+          ticketId,
+          command: flag(opts.full) ? "full_review" : "review",
+        }),
+      );
+    },
+  ).option(
+    "--full",
+    "Review the whole pull request again (@gitdogbot full review)",
+  );
+  service(
+    reviews,
+    "resolve <ticket-id>",
+    "Resolve every Gitdog review thread (@gitdogbot resolve)",
+    "action",
+    "pullRequests/action:command",
+    ([ticketId]) => ({ ticketId, command: "resolve" }),
+    "Resolve every Gitdog review thread on this pull request?",
+  );
+  service(
+    reviews,
+    "recheck <action-id>",
+    "Recheck a failed review on the latest commit without posting",
+    "action",
+    "pullRequests/action:recheck",
+    ([actionId]) => ({ actionId }),
+  );
+
   const notifications = program
     .command("notifications")
     .description("Read workspace notifications");
@@ -1553,6 +1596,7 @@ export function normalizeArgv(argv: string[]): string[] {
     "config",
     "tickets",
     "actions",
+    "reviews",
     "notifications",
     "team",
     "invitations",
