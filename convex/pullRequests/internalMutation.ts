@@ -166,6 +166,15 @@ async function observeDroppedPush(ctx: MutationCtx, ticketId: Id<"tickets">) {
   );
 }
 
+/** Bring a review's status comment on the pull request up to date. */
+async function settleStatus(ctx: MutationCtx, actionId: Id<"ticketActions">) {
+  await ctx.scheduler.runAfter(
+    0,
+    internal.pullRequests.internalAction.settleStatusComment,
+    { actionId },
+  );
+}
+
 function hasAttemptedReview(action: Doc<"ticketActions">) {
   if (action.reviewGenerationToken !== undefined) return true;
   // Keep the slot available when a queued review was superseded before its worker started.
@@ -493,13 +502,16 @@ async function observePullRequest(
       (action.reviewVerificationOnly !== true || commitChanged) &&
       ["pending", "pending_approval", "approved"].includes(action.status) &&
       action.executionClaimedAt === undefined
-    )
+    ) {
       await ctx.db.patch(action._id, {
         status: "failed",
         errorMessage: SUPERSEDED_REVIEW,
         ...ENDED_BATCH,
         completedAt: now,
       });
+      if (action.statusCommentId !== undefined)
+        await settleStatus(ctx, action._id);
+    }
   }
   await ctx.db.patch(ticket._id, {
     pullRequestObservedAt: observedAt,
@@ -908,12 +920,7 @@ export const propose = internalMutation({
             reviewFailureDetails: `Stage · Token quota check (review batch ${page})\nReason · ${quota.message}`,
             completedAt: Date.now(),
           });
-          if (quota.reason === "insufficient")
-            await ctx.scheduler.runAfter(
-              0,
-              internal.pullRequests.internalAction.noticeLimit,
-              { actionId: action._id },
-            );
+          await settleStatus(ctx, action._id);
           return false;
         }
       }
@@ -1055,16 +1062,9 @@ export const propose = internalMutation({
     // A review that ended unpublished is done, so a dropped push can be
     // reviewed now. One waiting for approval keeps it: reviewing the newer
     // head would supersede the review before the owner sees it.
-    else if (unpublished) {
-      // A requested review answered "started", so it says it found nothing.
-      if (nothingNew && action.reviewRequested === true)
-        await ctx.scheduler.runAfter(
-          0,
-          internal.pullRequests.internalAction.noticeNoChanges,
-          { actionId: action._id },
-        );
-      await observeDroppedPush(ctx, action.ticketId);
-    }
+    else if (unpublished) await observeDroppedPush(ctx, action.ticketId);
+    // The status comment says the review is ready, waiting or found nothing.
+    await settleStatus(ctx, action._id);
     return true;
   },
 });
@@ -1213,6 +1213,7 @@ export const finish = internalMutation({
           }
         : undefined,
     });
+    await settleStatus(ctx, action._id);
     await observeDroppedPush(ctx, action.ticketId);
   },
 });
@@ -1246,7 +1247,10 @@ export const expire = internalMutation({
             ? "Review exceeded its processing deadline"
             : "GitHub publication outcome requires inspection; automatic retries are disabled",
       });
-    if (action) await observeDroppedPush(ctx, action.ticketId);
+    if (action) {
+      await settleStatus(ctx, action._id);
+      await observeDroppedPush(ctx, action.ticketId);
+    }
   },
 });
 
@@ -1300,12 +1304,7 @@ export const completeUnposted = internalMutation({
       completedAt: Date.now(),
       executionResult: { published: false, reason: "no_new_changes" },
     });
-    if (action.reviewRequested === true)
-      await ctx.scheduler.runAfter(
-        0,
-        internal.pullRequests.internalAction.noticeNoChanges,
-        { actionId: action._id },
-      );
+    await settleStatus(ctx, action._id);
     await observeDroppedPush(ctx, action.ticketId);
   },
 });
@@ -1381,36 +1380,13 @@ export const recordCommand = internalMutation({
   },
 });
 
-/** Claim the once-a-day notice that this PR hit its review limit. */
-export const claimLimitNotice = internalMutation({
-  args: { actionId: v.id("ticketActions") },
+/** Remember the status comment posted for a review, once. */
+export const recordStatusComment = internalMutation({
+  args: { actionId: v.id("ticketActions"), commentId: v.number() },
   handler: async (ctx, args) => {
     const action = await ctx.db.get(args.actionId);
-    const ticket = action ? await ctx.db.get(action.ticketId) : null;
-    const repo = ticket?.repositoryId
-      ? await ctx.db.get(ticket.repositoryId)
-      : null;
-    if (
-      !ticket?.repositoryId ||
-      ticket.ticketType !== "pull_request" ||
-      ticket.status !== "open" ||
-      ticket.deletedAt !== undefined ||
-      action?.reviewVerificationOnly === true ||
-      !repo?.isActive ||
-      repo.settings.pullRequestReviewsEnabled !== true
-    )
-      return null;
-    const now = Date.now();
-    if (
-      ticket.pullRequestLimitNoticeAt !== undefined &&
-      ticket.pullRequestLimitNoticeAt > now - COMMAND_PAUSE_MS
-    )
-      return null;
-    await ctx.db.patch(ticket._id, { pullRequestLimitNoticeAt: now });
-    return {
-      repositoryId: ticket.repositoryId,
-      number: ticket.githubNumber,
-      headSha: action?.proposedChanges?.source?.headSha as string | undefined,
-    };
+    if (!action || action.statusCommentId !== undefined) return false;
+    await ctx.db.patch(action._id, { statusCommentId: args.commentId });
+    return true;
   },
 });

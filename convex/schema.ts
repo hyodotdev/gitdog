@@ -961,6 +961,8 @@ const applicationTables = {
     reviewVerificationOnly: v.optional(v.boolean()),
     // Started by a "@gitdogbot review" comment or the CLI.
     reviewRequested: v.optional(v.boolean()),
+    // The pull request comment that shows this review's progress and outcome.
+    statusCommentId: v.optional(v.number()),
     reviewRecheckOfActionId: v.optional(v.id("ticketActions")),
     // The last finished review of this PR: a later push reviews only the
     // files changed since its head.

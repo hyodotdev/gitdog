@@ -1,6 +1,6 @@
 import { internalAction } from "../_generated/server";
 import { internal } from "../_generated/api";
-import type { Id } from "../_generated/dataModel";
+import type { Doc, Id } from "../_generated/dataModel";
 import type { ActionCtx } from "../_generated/server";
 import { v } from "convex/values";
 import {
@@ -57,10 +57,11 @@ import {
 } from "./review";
 import {
   addIssueComment,
+  updateIssueComment,
   GITHUB_API_VERSION,
   fetchGitHubAppJsonWithRetry,
 } from "../github/helpers";
-import { helpText } from "./commands";
+import { helpText, reviewStatusBody } from "./commands";
 import { getConfiguredGitHubAppSlug } from "../github/botIdentity";
 
 type Source = { headSha: string; baseSha: string; title: string; body: string };
@@ -327,6 +328,13 @@ export const generate = internalAction({
         });
         return;
       }
+      // Show on the pull request that a review is running, once per review.
+      if (
+        !previous &&
+        !verificationOnly &&
+        initial.action.statusCommentId === undefined
+      )
+        await postReviewingStatus(ctx, access, initial, data);
       const fileKeys = new Set(previous?.fileKeys);
       if (batched) {
         // Keep the complete file inventory bounded even when paths are long.
@@ -640,18 +648,6 @@ export const generate = internalAction({
               : undefined),
         ),
       });
-      // Out of tokens: tell the pull request instead of failing silently.
-      // The notice skips rechecks, which promise not to post.
-      if (
-        (cause instanceof ReviewQuotaError &&
-          cause.reason === "insufficient") ||
-        (cause instanceof ChatBillingError && cause.reason === "limit_reached")
-      )
-        await ctx.scheduler.runAfter(
-          0,
-          internal.pullRequests.internalAction.noticeLimit,
-          { actionId: args.actionId },
-        );
     }
   },
 });
@@ -1170,6 +1166,49 @@ export const dismissStaleApproval = internalAction({
   },
 });
 
+/** Best effort: the review runs whether or not GitHub takes the comment. */
+async function postReviewingStatus(
+  ctx: ActionCtx,
+  access: VerifiedRepositoryAccess,
+  state: {
+    action: Doc<"ticketActions">;
+    ticket: Doc<"tickets">;
+  },
+  data: { changedFiles: number },
+) {
+  const slug = getConfiguredGitHubAppSlug();
+  if (!slug) return;
+  const body = reviewStatusBody(
+    {
+      ...state.action,
+      proposedChanges: {
+        ...state.action.proposedChanges,
+        changedFiles: data.changedFiles,
+      },
+    },
+    slug,
+  );
+  if (!body) return;
+  try {
+    const commentId = await addIssueComment(
+      access.owner,
+      access.repo,
+      state.ticket.githubNumber,
+      body,
+      access.token,
+    );
+    await ctx.runMutation(
+      internal.pullRequests.internalMutation.recordStatusComment,
+      { actionId: state.action._id, commentId },
+    );
+  } catch (error) {
+    console.warn(
+      "Review status comment could not be posted:",
+      error instanceof Error ? error.message : "unknown error",
+    );
+  }
+}
+
 async function reply(
   access: VerifiedRepositoryAccess,
   number: number,
@@ -1336,36 +1375,19 @@ export const runCommand = internalAction({
           ).catch(() => undefined);
           throw error;
         });
+        // A started review announces itself in its status comment.
+        if (result.command !== "resolve" && result.status === "started") return;
         return reply(access, args.number, commandReply(result, slug));
       }
     }
   },
 });
 
-/** Tell a pull request, at most once a day, that its review limit was hit. */
-export const noticeLimit = internalAction({
-  args: { actionId: v.id("ticketActions") },
-  handler: async (ctx, args): Promise<void> => {
-    const target = await ctx.runMutation(
-      internal.pullRequests.internalMutation.claimLimitNotice,
-      args,
-    );
-    const slug = getConfiguredGitHubAppSlug();
-    if (!target || !slug) return;
-    const access = await resolveVerifiedRepositoryAccess(
-      ctx,
-      target.repositoryId,
-    );
-    await reply(
-      access,
-      target.number,
-      `**Review limit reached**\n\nGitdog could not review${target.headSha ? ` ${target.headSha}` : " this pull request"} because the token limit of the account that connected this repository has been reached. Once more tokens are available, comment \`@${slug} review\` to try again.`,
-    );
-  },
-});
-
-/** Answer a requested review that found no pull request changes to review. */
-export const noticeNoChanges = internalAction({
+/**
+ * Bring a review's status comment up to date: post it for a failure or a
+ * no-change follow-up that has none yet, and otherwise edit it in place.
+ */
+export const settleStatusComment = internalAction({
   args: { actionId: v.id("ticketActions") },
   handler: async (ctx, args): Promise<void> => {
     const state = await ctx.runQuery(
@@ -1373,19 +1395,42 @@ export const noticeNoChanges = internalAction({
       args,
     );
     const slug = getConfiguredGitHubAppSlug();
-    if (!state || !slug) return;
-    const source = sourceOf(state.action.proposedChanges?.source);
-    const since = state.action.proposedChanges?.reviewedSince;
+    if (!state || !slug || state.action.reviewVerificationOnly === true) return;
+    const body = reviewStatusBody(state.action, slug);
+    const existing = state.action.statusCommentId;
+    // Only something a reader is waiting on gets a new comment; a posted
+    // review or a cancelled one speaks for itself.
+    const postNew =
+      existing === undefined &&
+      body !== null &&
+      (state.action.status === "failed"
+        ? !state.action.errorMessage?.includes("superseded")
+        : state.action.executionResult?.reason === "no_new_changes");
+    if (!body || (existing === undefined && !postNew)) return;
     const access = await resolveVerifiedRepositoryAccess(
       ctx,
       state.repository._id,
     );
-    await reply(
-      access,
-      state.ticket.githubNumber,
-      `**No new changes to review** in ${source.headSha}${
-        typeof since === "string" ? ` since ${since}` : ""
-      }\n\nNothing in the pull request diff changed, so no review was posted. Comment \`@${slug} full review\` to review the whole pull request again.`,
-    );
+    if (existing !== undefined)
+      await updateIssueComment(
+        access.owner,
+        access.repo,
+        existing,
+        body,
+        access.token,
+      );
+    else {
+      const commentId = await addIssueComment(
+        access.owner,
+        access.repo,
+        state.ticket.githubNumber,
+        body,
+        access.token,
+      );
+      await ctx.runMutation(
+        internal.pullRequests.internalMutation.recordStatusComment,
+        { actionId: args.actionId, commentId },
+      );
+    }
   },
 });

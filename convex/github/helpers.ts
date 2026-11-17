@@ -486,6 +486,34 @@ export async function addIssueComment(
   return data.id;
 }
 
+// Replace the body of an issue or pull request comment
+export async function updateIssueComment(
+  owner: string,
+  repo: string,
+  commentId: number,
+  body: string,
+  token: string,
+): Promise<void> {
+  const response = await fetchGitHubApi(
+    `https://api.github.com/repos/${owner}/${repo}/issues/comments/${commentId}`,
+    {
+      method: "PATCH",
+      headers: {
+        Accept: "application/vnd.github.v3+json",
+        Authorization: `Bearer ${token}`,
+        "User-Agent": "Gitdog",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ body }),
+    },
+  );
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new Error(`Failed to update issue comment (HTTP ${response.status})`);
+  }
+  await response.body?.cancel().catch(() => undefined);
+}
+
 // Update issue title and/or body
 export async function updateIssue(
   owner: string,

@@ -43,10 +43,11 @@ export function parseReviewCommand(
       (line) => !line.trimStart().startsWith(">") && !/^( {4}|\t)/.test(line),
     )
     .join("\n");
-  // Only a mention that starts a line is a command, so "@gitdogbot review"
-  // quoted in a sentence does not run one.
+  // A command starts a line, or follows another review bot's command on it,
+  // as in "@coderabbitai review @gitdogbot review"; "@gitdogbot review"
+  // inside a sentence does not run one. "@gitdog" is accepted as shorthand.
   const match = new RegExp(
-    `^[ \\t]*@${slug}(?=\\s|[:,]|$)[:,]?[ \\t]*([^\\n]*)`,
+    `^[ \\t]*(?:@(?:[\\w-]*(?:bot|ai|copilot|assist)|[\\w-]+\\[bot\\])(?:[ \\t]+[a-z-]+){0,2}[ \\t]+){0,2}@(?:${slug}|gitdog)(?=\\s|[:,]|$)[:,]?[ \\t]*([^@\\n]*)`,
     "im",
   ).exec(text);
   if (!match) return null;
@@ -79,6 +80,89 @@ export function helpText(slug: string): string {
     `- \`${mention} full review\`: review the whole pull request again`,
     `- \`${mention} resolve\`: resolve every Gitdog review thread`,
     `- \`${mention} help\`: show this list`,
-    "Collaborators can run every command; the pull request author can run all but a full review.",
+    "Collaborators can run every command; the pull request author can run all but a full review. `@gitdog` works as shorthand.",
   ].join("\n");
+}
+
+type StatusAction = {
+  status: string;
+  errorMessage?: string;
+  reviewRequested?: boolean;
+  executionResult?: {
+    published?: boolean;
+    reason?: string;
+    reviewUrl?: string;
+  };
+  proposedChanges?: {
+    source?: { headSha?: string };
+    changedFiles?: number;
+    reviewedSince?: string;
+  };
+};
+
+// Failures safe to show on a public pull request, in the owner's words.
+function failureReason(message: string | undefined): string {
+  switch (true) {
+    case !message:
+      return "Gitdog could not complete the review.";
+    case message!.startsWith("Not enough tokens remain") ||
+      message!.startsWith("Token limit reached"):
+      return "The token limit of the account that connected this repository has been reached.";
+    // A user's own provider key is the owner's business, not the public's.
+    case message!.startsWith("Your "):
+      return "The AI provider settings of the account that connected this repository need attention.";
+    case message!.startsWith("GitHub publication outcome requires inspection"):
+      return "Gitdog could not confirm that the review was posted. Check the reviews above before asking again.";
+    case /split this PR/.test(message!):
+      return message!;
+    default:
+      return "Gitdog could not complete the review.";
+  }
+}
+
+/**
+ * The status comment for a review in its current state, or null when the
+ * state needs no comment (a successful review is the review itself, but an
+ * existing status comment is still updated to point at it).
+ */
+export function reviewStatusBody(
+  action: StatusAction,
+  slug: string,
+): string | null {
+  const sha = action.proposedChanges?.source?.headSha ?? "this pull request";
+  const files = action.proposedChanges?.changedFiles;
+  switch (action.status) {
+    case "pending":
+      return `**Reviewing** ${sha}${
+        typeof files === "number"
+          ? ` · ${files} changed ${files === 1 ? "file" : "files"}`
+          : ""
+      }\n\nThe review will be posted here when it is done.`;
+    case "pending_approval":
+      return `**Review ready for approval** for ${sha}\n\nThe repository owner can post it from Gitdog.`;
+    case "approved":
+      return `**Posting the review** for ${sha}`;
+    case "completed":
+      if (action.executionResult?.published)
+        return `**Reviewed** ${sha}${
+          action.executionResult.reviewUrl
+            ? ` · [see the review](${action.executionResult.reviewUrl})`
+            : ""
+        }`;
+      if (action.executionResult?.reason === "no_new_changes")
+        return `**No new changes to review** in ${sha}${
+          action.proposedChanges?.reviewedSince
+            ? ` since ${action.proposedChanges.reviewedSince}`
+            : ""
+        }\n\nNothing in the pull request diff changed, so no review was posted. Comment \`@${slug} full review\` to review the whole pull request again.`;
+      return null;
+    case "failed":
+      if (action.errorMessage?.includes("superseded"))
+        return `**Review cancelled** for ${sha}\n\nA newer push replaced this commit.`;
+      return `**Review not completed** for ${sha}\n\n${failureReason(
+        action.errorMessage,
+      )} Comment \`@${slug} review\` to try again.`;
+    default:
+      return null;
+  }
 }

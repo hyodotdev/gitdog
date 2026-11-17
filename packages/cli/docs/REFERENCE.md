@@ -385,7 +385,8 @@ review. The `reviews` commands match the pull request comments
 `@gitdogbot review` (commits since the last review), `@gitdogbot full review`
 and `@gitdogbot resolve` (resolves Gitdog's threads); the CLI prints the result
 instead of replying on GitHub. On GitHub, commands go in the pull request
-conversation, not in replies inside a review thread. `reviews request` asks before spending tokens
+conversation, not in replies inside a review thread; `@gitdog` works as
+shorthand for `@gitdogbot`. `reviews request` asks before spending tokens
 (skip with `--yes`) and prints the queued review's action id. `reviews recheck`
 reruns a failed review on the latest commit without posting.
 
