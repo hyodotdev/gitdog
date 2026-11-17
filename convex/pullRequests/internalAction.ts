@@ -37,6 +37,7 @@ import { reviewWithContext } from "./workflow";
 import { REVIEW_QUOTA_FAILURES } from "./internalMutation";
 import {
   isReviewGroupModelFailure,
+  isLifecycleChange,
   isReviewRefusal,
   ReviewQuotaError,
   reviewGenerationError,
@@ -634,6 +635,7 @@ export const generate = internalAction({
       await ctx.runMutation(internal.pullRequests.internalMutation.finish, {
         actionId: args.actionId,
         stage: "generation",
+        cancelled: isLifecycleChange(error),
         page: args.page,
         group: args.group,
         error:
@@ -1118,6 +1120,8 @@ export const publish = internalAction({
       await ctx.runMutation(internal.pullRequests.internalMutation.finish, {
         actionId: args.actionId,
         stage: claimed ? "publication" : "preflight",
+        // A pull request that moved on before the post was cancelled.
+        cancelled: !claimed && isLifecycleChange(error),
         claimedAt: claimed || undefined,
         error: !claimed
           ? "Review is stale or GitHub access is unavailable; no review was published"
@@ -1210,7 +1214,7 @@ async function postReviewingStatus(
     );
     await ctx.runMutation(
       internal.pullRequests.internalMutation.recordStatusComment,
-      { actionId: state.action._id, commentId },
+      { actionId: state.action._id, commentId, reviewing: true },
     );
   } catch (error) {
     console.warn(
@@ -1404,17 +1408,38 @@ export const settleStatusComment = internalAction({
   args: { actionId: v.id("ticketActions") },
   handler: async (ctx, args): Promise<void> => {
     const slug = getConfiguredGitHubAppSlug();
+    if (!slug) return;
     const read = () =>
       ctx.runQuery(internal.pullRequests.internalQuery.get, args);
+    // Whether this state changes the pull request at all, decided before
+    // any GitHub token is fetched.
+    const plan = (state: NonNullable<Awaited<ReturnType<typeof read>>>) => {
+      const { action } = state;
+      if (
+        action.reviewVerificationOnly === true ||
+        action.status === "pending" ||
+        action.status === "approved"
+      )
+        return null;
+      const body = reviewStatusBody(action, slug);
+      if (!body) return null;
+      if (action.statusCommentId !== undefined)
+        return { body, commentId: action.statusCommentId };
+      // Only something a reader is waiting on gets a new comment: a failure
+      // worth retrying or a requested no-change result, while reviews stay on.
+      const wanted =
+        action.status === "failed"
+          ? !isCancelledReview(action)
+          : action.executionResult?.reason === "no_new_changes" &&
+            action.reviewRequested === true;
+      return wanted &&
+        state.ticket.status === "open" &&
+        state.repository.settings.pullRequestReviewsEnabled === true
+        ? { body, commentId: undefined }
+        : null;
+    };
     const first = await read();
-    if (
-      !first ||
-      !slug ||
-      first.action.reviewVerificationOnly === true ||
-      first.action.status === "pending" ||
-      first.action.status === "approved"
-    )
-      return;
+    if (!first || !plan(first)) return;
     const access = await resolveVerifiedRepositoryAccess(
       ctx,
       first.repository._id,
@@ -1422,49 +1447,43 @@ export const settleStatusComment = internalAction({
     // Re-read right before writing, so a late settle never overwrites a
     // newer outcome with an older one.
     const state = await read();
-    if (
-      !state ||
-      state.action.status === "pending" ||
-      state.action.status === "approved"
-    )
-      return;
-    const body = reviewStatusBody(state.action, slug);
-    if (!body) return;
-    const existing = state.action.statusCommentId;
-    if (existing !== undefined) {
+    const next = state && plan(state);
+    if (!state || !next) return;
+    const { action } = state;
+    // An automatic review that failed counts toward the daily allowance
+    // whether it edits its comment or needs a new one.
+    const automaticFailure =
+      action.reviewRequested !== true &&
+      action.status === "failed" &&
+      !isCancelledReview(action);
+    if (next.commentId !== undefined) {
       await updateIssueComment(
         access.owner,
         access.repo,
-        existing,
-        body,
+        next.commentId,
+        next.body,
         access.token,
       );
+      if (automaticFailure)
+        await ctx.runMutation(
+          internal.pullRequests.internalMutation.stampAutomaticNotice,
+          { ticketId: state.ticket._id },
+        );
       return;
     }
-    // Only something a reader is waiting on gets a new comment: a failure
-    // worth retrying or a no-change follow-up, while reviews stay on. An
-    // automatic review says so at most once a day per pull request.
-    const failed = state.action.status === "failed";
     if (
-      (failed
-        ? isCancelledReview(state.action.errorMessage)
-        : // Only a requested review was promised an answer.
-          state.action.executionResult?.reason !== "no_new_changes" ||
-          state.action.reviewRequested !== true) ||
-      state.ticket.status !== "open" ||
-      state.repository.settings.pullRequestReviewsEnabled !== true ||
-      (state.action.reviewRequested !== true &&
-        !(await ctx.runMutation(
-          internal.pullRequests.internalMutation.claimAutomaticNotice,
-          { ticketId: state.ticket._id },
-        )))
+      automaticFailure &&
+      !(await ctx.runMutation(
+        internal.pullRequests.internalMutation.claimAutomaticNotice,
+        { ticketId: state.ticket._id },
+      ))
     )
       return;
     const commentId = await addIssueComment(
       access.owner,
       access.repo,
       state.ticket.githubNumber,
-      body,
+      next.body,
       access.token,
     );
     await ctx.runMutation(

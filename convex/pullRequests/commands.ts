@@ -13,6 +13,8 @@ const REVIEW_BOTS = [
   "greptileai",
   "codeant-ai",
   "qodo-merge",
+  "codiumai-agent",
+  "cursor",
   "[\\w-]+\\[bot\\]",
 ].join("|");
 
@@ -76,7 +78,10 @@ export function parseReviewCommand(
   switch (true) {
     // A chained mention without a command is a thank-you, not a request.
     case chained &&
-      !["help", "review", "full", "resolve"].includes(words[0] ?? ""):
+      !(
+        ["help", "review", "resolve"].includes(words[0] ?? "") ||
+        (words[0] === "full" && words[1] === "review")
+      ):
       return null;
     case words.length === 0 || words[0] === "help":
       return "help";
@@ -100,13 +105,16 @@ export function helpText(slug: string): string {
     `- \`${mention} full review\`: review the whole pull request again`,
     `- \`${mention} resolve\`: resolve every Gitdog review thread`,
     `- \`${mention} help\`: show this list`,
-    "Collaborators can run every command; the pull request author can run all but a full review. `@gitdog` works as shorthand.",
+    "Collaborators can run every command; the pull request author can run all but a full review.",
+    ...(slug === "gitdogbot" ? ["`@gitdog` works as shorthand."] : []),
   ].join("\n");
 }
 
 type StatusAction = {
   status: string;
   errorMessage?: string;
+  reviewCancelled?: boolean;
+  reviewRequested?: boolean;
   executionResult?: {
     published?: boolean;
     reason?: string;
@@ -119,12 +127,14 @@ type StatusAction = {
   };
 };
 
-// A review cancelled because the pull request moved on, not one to retry.
-export function isCancelledReview(message: string | undefined): boolean {
+// A review cancelled because the pull request moved on, not a failure.
+export function isCancelledReview(action: {
+  errorMessage?: string;
+  reviewCancelled?: boolean;
+}): boolean {
   return (
-    message !== undefined &&
-    (message.includes("superseded") ||
-      /^Pull request changed (before|during|after)/.test(message))
+    action.reviewCancelled === true ||
+    action.errorMessage?.includes("superseded") === true
   );
 }
 
@@ -193,15 +203,18 @@ export function reviewStatusBody(
             : ""
         }`;
       if (action.executionResult?.reason === "no_new_changes")
-        return `**No new changes to review** in ${sha}${
-          action.proposedChanges?.reviewedSince
-            ? ` since ${action.proposedChanges.reviewedSince}`
-            : ""
-        }\n\nNothing in the pull request diff changed, so no review was posted. Comment \`@${slug} full review\` to review the whole pull request again.`;
+        return action.proposedChanges?.reviewedSince
+          ? `**No new changes to review** in ${sha} since ${action.proposedChanges.reviewedSince}\n\nNothing in the pull request diff changed, so no review was posted. Comment \`@${slug} full review\` to review the whole pull request again.`
+          : `**Nothing to review** in ${sha}\n\nThe pull request has no changes Gitdog can review, such as only deleted or binary files.`;
       return null;
     case "failed": {
-      if (isCancelledReview(action.errorMessage))
-        return `**Review cancelled** for ${sha}\n\nThe pull request changed before the review finished.`;
+      if (isCancelledReview(action))
+        return `**Review cancelled** for ${sha}\n\nThe pull request changed or was closed before the review finished.${
+          // A request is answered either way; an automatic review is not.
+          action.reviewRequested
+            ? ` Comment \`@${slug} review\` to review the latest commit.`
+            : ""
+        }`;
       const [reason, retry] = failureReason(action.errorMessage);
       return `**Review not completed** for ${sha}\n\n${reason}${
         retry ? ` Comment \`@${slug} review\` to try again.` : ""

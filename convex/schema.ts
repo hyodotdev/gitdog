@@ -963,6 +963,8 @@ const applicationTables = {
     reviewRequested: v.optional(v.boolean()),
     // The pull request comment that shows this review's progress and outcome.
     statusCommentId: v.optional(v.number()),
+    // The pull request moved on mid-review, so the review was cancelled.
+    reviewCancelled: v.optional(v.boolean()),
     reviewRecheckOfActionId: v.optional(v.id("ticketActions")),
     // The last finished review of this PR: a later push reviews only the
     // files changed since its head.

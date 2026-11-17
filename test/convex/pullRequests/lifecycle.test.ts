@@ -534,7 +534,7 @@ describe("review commands", () => {
     it.each([
       [
         "a review that changed under it as cancelled",
-        "Pull request changed before review",
+        "Source preflight: The pull request changed before verification finished.",
         "**Review cancelled**",
         "try again",
       ],
@@ -553,6 +553,7 @@ describe("review commands", () => {
           status: "failed",
           errorMessage,
           statusCommentId: 7,
+          ...(expected.includes("cancelled") ? { reviewCancelled: true } : {}),
         }),
       );
       await settle(f, actionId);
@@ -579,6 +580,39 @@ describe("review commands", () => {
         "**Review not posted**",
       );
     });
+    it("records a review the pull request moved past as cancelled", async () => {
+      const f = await fixture();
+      const actionId = (await f.observe())!;
+      await f.t.mutation(internal.pullRequests.internalMutation.finish, {
+        actionId,
+        stage: "generation",
+        error: "Source preflight: changed",
+        cancelled: true,
+      });
+      expect(await f.t.run((ctx) => ctx.db.get(actionId))).toMatchObject({
+        status: "failed",
+        reviewCancelled: true,
+      });
+    });
+    it("counts an edited automatic failure toward the daily allowance", async () => {
+      const f = await fixture();
+      await withAccess(f);
+      const actionId = (await f.observe())!;
+      await f.t.run((ctx) =>
+        ctx.db.patch(actionId, {
+          status: "failed",
+          errorMessage:
+            "Not enough tokens remain for this pull request review. No review was published.",
+          statusCommentId: 7,
+        }),
+      );
+      await settle(f, actionId);
+      expect(f.statusComments.update).toHaveBeenCalledTimes(1);
+      expect(
+        (await f.t.run((ctx) => ctx.db.query("tickets").first()))
+          ?.pullRequestLimitNoticeAt,
+      ).toBeTypeOf("number");
+    });
     it("leaves a running review's comment alone", async () => {
       const f = await fixture();
       await withAccess(f);
@@ -599,7 +633,7 @@ describe("review commands", () => {
       );
       await f.t.mutation(
         internal.pullRequests.internalMutation.recordStatusComment,
-        { actionId, commentId: 9 },
+        { actionId, commentId: 9, reviewing: true },
       );
       const scheduled = await f.t.run((ctx) =>
         ctx.db.system.query("_scheduled_functions").collect(),
@@ -2857,6 +2891,25 @@ describe("batched PR reviews", () => {
     };
   }
 
+  it.each([
+    [false, 0],
+    [true, 1],
+  ])(
+    "stays quiet within a day of an automatic failure unless requested (requested %s)",
+    async (requested, posts) => {
+      const f = await batchFixture();
+      await f.t.run(async (ctx) => {
+        const action = (await ctx.db.get(f.actionId))!;
+        await ctx.db.patch(action.ticketId, {
+          pullRequestLimitNoticeAt: Date.now(),
+        });
+        if (requested)
+          await ctx.db.patch(f.actionId, { reviewRequested: true });
+      });
+      await f.generate();
+      expect(f.statusComments.add).toHaveBeenCalledTimes(posts);
+    },
+  );
   it("shows a reviewing comment once, when the review starts", async () => {
     const f = await batchFixture();
     await f.generate();

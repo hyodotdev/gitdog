@@ -1175,6 +1175,8 @@ export const finish = internalMutation({
     inlineFindings: v.optional(v.boolean()),
     // Earlier Gitdog approvals GitHub refused to dismiss.
     keptApprovals: v.optional(v.array(v.number())),
+    // The pull request moved on mid-review; the review was cancelled.
+    cancelled: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const action = await ctx.db.get(args.actionId);
@@ -1199,6 +1201,7 @@ export const finish = internalMutation({
       return;
     await ctx.db.patch(action._id, {
       status: args.error ? "failed" : "completed",
+      ...(args.error && args.cancelled ? { reviewCancelled: true } : {}),
       ...ENDED_BATCH,
       errorMessage: args.error,
       reviewFailureDetails: args.error ? args.reviewFailureDetails : undefined,
@@ -1405,15 +1408,31 @@ export const claimAutomaticNotice = internalMutation({
   },
 });
 
+/** Start the daily quiet window after an automatic review failed. */
+export const stampAutomaticNotice = internalMutation({
+  args: { ticketId: v.id("tickets") },
+  handler: async (ctx, args) => {
+    const ticket = await ctx.db.get(args.ticketId);
+    if (ticket)
+      await ctx.db.patch(ticket._id, { pullRequestLimitNoticeAt: Date.now() });
+  },
+});
+
 /** Remember the status comment posted for a review, once. */
 export const recordStatusComment = internalMutation({
-  args: { actionId: v.id("ticketActions"), commentId: v.number() },
+  args: {
+    actionId: v.id("ticketActions"),
+    commentId: v.number(),
+    // A "Reviewing" comment, which a review that has since ended must update.
+    reviewing: v.optional(v.boolean()),
+  },
   handler: async (ctx, args) => {
     const action = await ctx.db.get(args.actionId);
     if (!action || action.statusCommentId !== undefined) return false;
     await ctx.db.patch(action._id, { statusCommentId: args.commentId });
     // The review may have ended while its comment was being posted.
-    if (action.status !== "pending") await settleStatus(ctx, action._id);
+    if (args.reviewing && action.status !== "pending")
+      await settleStatus(ctx, action._id);
     return true;
   },
 });
