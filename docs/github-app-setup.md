@@ -204,6 +204,8 @@ Users can install the app on:
 Each installation is separate with its own installation ID. All installations can be managed at <https://github.com/settings/installations>
 
 Do not connect the same repository to both `gitdogai` and `gitdogbot-dev`.
+The placeholder `gitdogbot` app only holds the production app's former name;
+it has no webhook or permissions and is never installed.
 Mentions are isolated by `GITHUB_APP_SLUG`, but GitHub sends automatic issue,
 discussion, repository, and push events to every App installed on that
 repository. Use a dedicated test repository for the development App.
