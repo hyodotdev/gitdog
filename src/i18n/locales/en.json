@@ -155,7 +155,7 @@
           "description": "Install the GitHub App and choose the repositories Gitdog can read."
         },
         "mention": {
-          "title": "Mention @gitdogbot",
+          "title": "Mention @gitdogai",
           "description": "Tag it on GitHub, or let your repository settings start work on new tickets."
         },
         "approve": {

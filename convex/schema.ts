@@ -970,7 +970,7 @@ const applicationTables = {
       }),
     ),
     reviewVerificationOnly: v.optional(v.boolean()),
-    // Started by a "@gitdogbot review" comment or the CLI.
+    // Started by a "@gitdogai review" comment or the CLI.
     reviewRequested: v.optional(v.boolean()),
     // The pull request comment that shows this review's progress and outcome.
     statusCommentId: v.optional(v.number()),
@@ -1699,7 +1699,7 @@ const applicationTables = {
     .index("by_repository_and_user", ["repositoryId", "userId"]),
 
   // ============================================
-  // PULL REQUEST COMMANDS (@gitdogbot review, ...)
+  // PULL REQUEST COMMANDS (@gitdogai review, ...)
   // ============================================
   // One row per command comment, kept to drop redeliveries and to pause a
   // commenter who sends too many.

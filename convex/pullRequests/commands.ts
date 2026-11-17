@@ -1,4 +1,7 @@
-import { getConfiguredGitHubAppSlug } from "../github/botIdentity";
+import {
+  getConfiguredGitHubAppSlug,
+  getGitdogMentionNames,
+} from "../github/botIdentity";
 
 export type ReviewCommand = "review" | "full_review" | "resolve" | "help";
 
@@ -60,9 +63,9 @@ export function parseReviewCommand(
     )
     .join("\n");
   // A command starts a line, or follows another review bot's command on it,
-  // as in "@coderabbitai review @gitdogbot review". "@gitdog" is shorthand
+  // as in "@coderabbitai review @gitdogai review". "@gitdog" is shorthand
   // for the production app only, so a development app never answers it.
-  const names = slug === "gitdogbot" ? `${slug}|gitdog` : slug;
+  const names = commandNames(slug).join("|");
   const match = new RegExp(
     `^[ \\t]*((?:@(?:${REVIEW_BOTS})(?:[ \\t]+[a-z-]+){0,2}[ \\t]+){0,3})@(?:${names})(?=\\s|[:,]|$)[:,]?[ \\t]*([^@\\n]*)`,
     "im",
@@ -96,8 +99,16 @@ export function parseReviewCommand(
   }
 }
 
+function commandNames(slug: string): string[] {
+  const names = getGitdogMentionNames(slug);
+  return names.length > 1 ? [...names, "gitdog"] : names;
+}
+
 export function helpText(slug: string): string {
   const mention = `@${slug}`;
+  const others = commandNames(slug)
+    .slice(1)
+    .map((name) => `\`@${name}\``);
   return [
     "**Gitdog commands**",
     "Gitdog reviews a pull request once when it is opened or marked ready for review. After that, comment:",
@@ -106,7 +117,7 @@ export function helpText(slug: string): string {
     `- \`${mention} resolve\`: resolve every Gitdog review thread`,
     `- \`${mention} help\`: show this list`,
     "Collaborators can run every command; the pull request author can run all but a full review.",
-    ...(slug === "gitdogbot" ? ["`@gitdog` works as shorthand."] : []),
+    ...(others.length ? [`${others.join(" and ")} work too.`] : []),
   ].join("\n");
 }
 

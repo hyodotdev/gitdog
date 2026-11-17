@@ -58,7 +58,7 @@ function SampleThread() {
         </p>
         <p className="text-sm leading-relaxed text-gray-700 dark:text-gray-300">
           <span className="font-medium text-black dark:text-white">
-            @gitdogbot
+            @gitdogai
           </span>{" "}
           {t("home.landing.thread.question")}
         </p>

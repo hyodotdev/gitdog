@@ -84,7 +84,7 @@ review. Later reviews run when the author or a collaborator comments
 `@<app-slug> review` (changes since the last review) or `@<app-slug> full
 review`; `@<app-slug> resolve` resolves Gitdog's threads and `@<app-slug> help`
 lists the commands; `gitdog reviews request|resolve` runs the same from the CLI.
-A command is a comment line that starts with the mention, or follows another review bot's command on the same line; `@gitdog` works as shorthand in production. The pull request
+A command is a comment line that starts with the mention, or follows another review bot's command on the same line; in production, `@gitdogbot` (the app's former name) and the `@gitdog` shorthand also work. The pull request
 author can run every command except a full review, which needs a collaborator.
 These arrive through the **Issue comments** event. A
 commenter who sends more than 10 commands an hour or 40 a day to one
@@ -148,7 +148,7 @@ Set the matching Convex environment variable for each backend deployment:
 
 ```bash
 # Production Convex deployment
-bunx convex env set GITHUB_APP_SLUG gitdogbot --prod
+bunx convex env set GITHUB_APP_SLUG gitdogai --prod
 ```
 
 The backend fails closed for mentions and bot-authorship checks when this value
@@ -161,7 +161,7 @@ authenticate against or mutate the production Convex deployment. Keep the
 production `VITE_CONVEX_URL` secret reserved for the main-branch deployment.
 
 When the frontend `VITE_GITHUB_APP_SLUG` variable is omitted, Gitdog defaults
-to `gitdogbot-dev` in development and `gitdogbot` in production. The backend
+to `gitdogbot-dev` in development and `gitdogai` in production. The backend
 variable has no fallback and must match the frontend deployment exactly.
 
 ### Verify Environment Variables
@@ -203,7 +203,7 @@ Users can install the app on:
 
 Each installation is separate with its own installation ID. All installations can be managed at <https://github.com/settings/installations>
 
-Do not connect the same repository to both `gitdogbot` and `gitdogbot-dev`.
+Do not connect the same repository to both `gitdogai` and `gitdogbot-dev`.
 Mentions are isolated by `GITHUB_APP_SLUG`, but GitHub sends automatic issue,
 discussion, repository, and push events to every App installed on that
 repository. Use a dedicated test repository for the development App.
@@ -225,7 +225,7 @@ For production deployment:
 2. Update Convex environment variables for production deployment:
 
    ```bash
-   bunx convex env set GITHUB_APP_SLUG gitdogbot --prod
+   bunx convex env set GITHUB_APP_SLUG gitdogai --prod
    bunx convex env set GITHUB_APP_ID "your_app_id" --prod
    bunx convex env set GITHUB_APP_CLIENT_ID "your_client_id" --prod
    bunx convex env set GITHUB_APP_CLIENT_SECRET --prod < github-app-client-secret.txt

@@ -23,8 +23,6 @@ import {
   CLAIMED_EXECUTION_RECOVERY_GRACE_MS,
 } from "./executionRecovery";
 
-const FOOTER_MESSAGE = getGitdogFollowUpFooter();
-
 /**
  * Approve a pending action
  */
@@ -269,7 +267,7 @@ export const approve = action({
         const commentBody = buildMarkedResponseComment(
           ticketAction.proposedChanges.suggestedResponse,
           typeof authorToMention === "string" ? authorToMention : undefined,
-          FOOTER_MESSAGE,
+          getGitdogFollowUpFooter(),
           executionClaim.idempotencyKey,
         );
 

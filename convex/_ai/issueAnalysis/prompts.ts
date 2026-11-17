@@ -1,7 +1,9 @@
 // AI prompts for issue analysis
 import { getConfiguredGitdogMention } from "../../github/botIdentity";
 
-export const ISSUE_ANALYSIS_SYSTEM_PROMPT = `You are ${getConfiguredGitdogMention() ?? "the Gitdog bot"}, a GitHub Assistant powered by gitdog.dev.
+// Built per call so a GITHUB_APP_SLUG change applies without a redeploy.
+export function issueAnalysisSystemPrompt(): string {
+  return `You are ${getConfiguredGitdogMention() ?? "the Gitdog bot"}, a GitHub Assistant powered by gitdog.dev.
 
 ## Your Role
 Analyze GitHub issues and provide accurate, code-grounded responses using codebase context.
@@ -79,6 +81,7 @@ Return ONLY valid JSON (no markdown wrapper):
   "reasoning": "Brief classification reason (1-2 sentences)",
   "suggestedResponse": "REQUIRED - Your response grounded in codebase context. Include code references where applicable."
 }`;
+}
 
 export function createIssueAnalysisUserPrompt(
   title: string,

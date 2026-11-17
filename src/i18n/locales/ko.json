@@ -155,7 +155,7 @@
           "description": "GitHub App을 설치하고 Gitdog이 읽을 저장소를 선택합니다."
         },
         "mention": {
-          "title": "@gitdogbot 멘션",
+          "title": "@gitdogai 멘션",
           "description": "GitHub에서 태그하거나, 저장소 설정에 따라 새 티켓 작업을 자동으로 시작합니다."
         },
         "approve": {

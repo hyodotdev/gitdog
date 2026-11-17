@@ -155,7 +155,7 @@
           "description": "GitHub Appをインストールし、Gitdogが読むリポジトリを選びます。"
         },
         "mention": {
-          "title": "@gitdogbotをメンション",
+          "title": "@gitdogaiをメンション",
           "description": "GitHubでタグ付けするか、リポジトリ設定に従って新しいチケットの処理を自動で始めます。"
         },
         "approve": {

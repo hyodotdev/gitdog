@@ -494,7 +494,7 @@ export function resolveGitHubAppSlug(
   configuredSlug: string | undefined,
   mode: string,
 ): string {
-  const defaultSlug = mode === "production" ? "gitdogbot" : "gitdogbot-dev";
+  const defaultSlug = mode === "production" ? "gitdogai" : "gitdogbot-dev";
   if (configuredSlug === undefined || configuredSlug === "") {
     return defaultSlug;
   }

@@ -626,7 +626,7 @@ describe("repository connection flow", () => {
     expect(resolveGitHubAppSlug("custom-gitdog-app", "production")).toBe(
       "custom-gitdog-app",
     );
-    expect(resolveGitHubAppSlug(undefined, "production")).toBe("gitdogbot");
+    expect(resolveGitHubAppSlug(undefined, "production")).toBe("gitdogai");
     expect(resolveGitHubAppSlug("", "development")).toBe("gitdogbot-dev");
   });
 

@@ -1042,12 +1042,12 @@ export function createProgram(
   const reviews = program
     .command("reviews")
     .description(
-      "Run pull request review commands, like @gitdogbot comments on GitHub",
+      "Run pull request review commands, like @gitdogai comments on GitHub",
     );
   command(
     reviews,
     "request <ticket-id>",
-    "Review the commits pushed since the last review (@gitdogbot review)",
+    "Review the commits pushed since the last review (@gitdogai review)",
     async ({ api, ui }, [ticketId], opts) => {
       await ui.confirm(
         "Start a pull request review? It uses tokens.",
@@ -1062,12 +1062,12 @@ export function createProgram(
     },
   ).option(
     "--full",
-    "Review the whole pull request again (@gitdogbot full review)",
+    "Review the whole pull request again (@gitdogai full review)",
   );
   service(
     reviews,
     "resolve <ticket-id>",
-    "Resolve every Gitdog review thread (@gitdogbot resolve)",
+    "Resolve every Gitdog review thread (@gitdogai resolve)",
     "action",
     "pullRequests/action:command",
     ([ticketId]) => ({ ticketId, command: "resolve" }),
@@ -1353,7 +1353,7 @@ export function createProgram(
     "install",
     "Open GitHub App installation and permission selection",
     async ({ ui }, _args, opts) => {
-      const slug = text(opts.app) ?? "gitdogbot";
+      const slug = text(opts.app) ?? "gitdogai";
       if (!/^[a-z\d][a-z\d-]{0,99}$/.test(slug))
         throw new Error("Invalid GitHub App slug.");
       const url = `https://github.com/apps/${slug}/installations/new`;
@@ -1367,7 +1367,7 @@ export function createProgram(
     .option(
       "--app <slug>",
       "GitHub App slug (use gitdogbot-dev for development)",
-      "gitdogbot",
+      "gitdogai",
     )
     .option("--print", "Print the installation URL");
   command(

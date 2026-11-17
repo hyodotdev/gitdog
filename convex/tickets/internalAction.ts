@@ -61,8 +61,6 @@ import {
   stripExecutionMarkers,
 } from "../ticketActions/executionRecovery";
 
-const FOOTER_MESSAGE = getGitdogFollowUpFooter();
-
 function getProviderRetryAttempt(attempt?: number): number {
   return attempt !== undefined && Number.isSafeInteger(attempt) && attempt >= 0
     ? attempt
@@ -1662,7 +1660,7 @@ export const executeAutoApprovedAction = internalAction({
         const commentBody = buildMarkedResponseComment(
           ticketAction.proposedChanges.suggestedResponse,
           typeof authorToMention === "string" ? authorToMention : undefined,
-          FOOTER_MESSAGE,
+          getGitdogFollowUpFooter(),
           executionClaim.idempotencyKey,
         );
 

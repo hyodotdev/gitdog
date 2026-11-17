@@ -1170,7 +1170,7 @@ export const dismissStaleApproval = internalAction({
       access,
       args.number,
       stale,
-      `New commits were pushed after the commit Gitdog approved. Comment @${getConfiguredGitHubAppSlug() ?? "gitdogbot"} review to review them.`,
+      `New commits were pushed after the commit Gitdog approved. Comment @${getConfiguredGitHubAppSlug() ?? "gitdogai"} review to review them.`,
     );
     // Remembered until GitHub accepts every dismissal, including any past
     // the per-run cap, so a later push retries.
@@ -1338,7 +1338,7 @@ export function commandReply(
   }
 }
 
-/** Run one "@gitdogbot <command>" comment on a pull request and answer it. */
+/** Run one "@gitdogai <command>" comment on a pull request and answer it. */
 export const runCommand = internalAction({
   args: {
     repositoryId: v.id("repositories"),

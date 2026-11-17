@@ -62,7 +62,9 @@ function isResponseIncomplete(response: string): boolean {
   return false;
 }
 
-const AGENTIC_SYSTEM_PROMPT = `You are ${getConfiguredGitdogMention() ?? "the Gitdog bot"}, an AI-powered GitHub assistant analyzing issues for THIS SPECIFIC REPOSITORY.
+// Built per call so a GITHUB_APP_SLUG change applies without a redeploy.
+function agenticSystemPrompt(): string {
+  return `You are ${getConfiguredGitdogMention() ?? "the Gitdog bot"}, an AI-powered GitHub assistant analyzing issues for THIS SPECIFIC REPOSITORY.
 
 ## ⛔ ABSOLUTE PROHIBITION - NEVER VIOLATE ⛔
 
@@ -703,6 +705,7 @@ When there is **Previous Conversation** context, you are in a DIALOGUE with the 
 **Key principle:** Read the conversation flow. If your previous response answered a question and the follow-up is just adding/correcting details, respond briefly. Only use tools when genuinely new information is being requested.
 
 **Note:** Users marked with \`[Maintainer]\` are repository owners/collaborators - they are authoritative about their own codebase.`;
+}
 
 const ISSUE_ANALYSIS_TYPES = new Set([
   "actionable",
@@ -1016,7 +1019,7 @@ If the remaining evidence is insufficient, say exactly what could not be verifie
     }
 
     // Build system prompt with optional response style and learned context
-    let systemPrompt = AGENTIC_SYSTEM_PROMPT;
+    let systemPrompt = agenticSystemPrompt();
 
     // Add AI guide files content if found
     if (aiGuides.found && aiGuides.content) {

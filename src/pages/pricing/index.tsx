@@ -116,7 +116,7 @@ export function PricingPage() {
     {
       question: "How do I get started with Gitdog?",
       answer:
-        "Sign in with your GitHub account at gitdog.dev, connect your repository, and start mentioning @gitdogbot in your issues or discussions.",
+        "Sign in with your GitHub account at gitdog.dev, connect your repository, and start mentioning @gitdogai in your issues or discussions.",
     },
     {
       question: "What is the difference between Free and Pro plans?",
