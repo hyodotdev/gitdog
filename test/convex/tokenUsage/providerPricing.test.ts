@@ -73,6 +73,7 @@ describe("Claude and OpenAI generation pricing", () => {
   it("weighs Opus twice and reserves at the highest routed weight", () => {
     expect(getChatModel("claude-opus-5-5", "anthropic").quotaWeight).toBe(2);
     expect(getChatModel("gpt-6.1-sol", "openai").quotaWeight).toBe(1);
+    expect(getChatModel("gpt-6.2-sol", "openai").quotaWeight).toBe(1);
     expect(RESERVATION_QUOTA_WEIGHT).toBe(2);
   });
   it("does not apply long-context pricing to Claude", () => {
@@ -88,5 +89,12 @@ describe("Claude and OpenAI generation pricing", () => {
     expect(
       calculateChatCost(272_001, 100, 0, "gpt-6.1-sol", "openai").baseCostCents,
     ).toBeCloseTo(108.9504);
+    for (const [input, cents] of [
+      [272_000, 54.5],
+      [272_001, 108.9504],
+    ] as const)
+      expect(
+        calculateChatCost(input, 100, 0, "gpt-6.2-sol", "openai").baseCostCents,
+      ).toBeCloseTo(cents);
   });
 });

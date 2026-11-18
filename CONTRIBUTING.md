@@ -20,7 +20,7 @@ organized, how to run it locally and what a pull request needs.
 | -------- | -------------------------------------------------------------------- |
 | Frontend | React 19, TypeScript, Vite, Tailwind CSS, react-i18next (en, ko, ja) |
 | Backend  | Convex                                                               |
-| AI       | Claude Opus 5.5 with GPT-6.1 Sol fallback; users' own keys optional  |
+| AI       | Claude Opus 5.5 with GPT-6.2 Sol fallback; users' own keys optional  |
 | GitHub   | GitHub App (OAuth, webhooks, repository access)                      |
 | Payments | Lemon Squeezy                                                        |
 | Hosting  | Firebase Hosting                                                     |
@@ -31,7 +31,7 @@ organized, how to run it locally and what a pull request needs.
 GitHub webhook ─▶ Convex ─▶ repository index (keyword search)
                     │
                     ▼
-        Claude Opus 5.5 (GPT-6.1 Sol fallback)
+        Claude Opus 5.5 (GPT-6.2 Sol fallback)
                     │
                     ▼
      draft reply or review ─▶ approval ─▶ GitHub comment / PR review

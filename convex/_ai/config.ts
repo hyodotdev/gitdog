@@ -202,16 +202,18 @@ export const USER_KEY_MODELS: Record<"anthropic" | "openai", UserKeyModel[]> = {
       defaultEffort: "medium",
     },
   ],
+  // Keys saved before GPT-6.2 Sol were checked against 6.1 and store no
+  // model, so 6.1 stays the default they resolve to.
   openai: [
     {
-      modelId: "gpt-6.2-sol",
-      name: "GPT-6.2 Sol",
+      modelId: "gpt-6.1-sol",
+      name: "GPT-6.1 Sol",
       efforts: ["low", "medium", "high"],
       defaultEffort: "high",
     },
     {
-      modelId: "gpt-6.1-sol",
-      name: "GPT-6.1 Sol",
+      modelId: "gpt-6.2-sol",
+      name: "GPT-6.2 Sol",
       efforts: ["low", "medium", "high"],
       defaultEffort: "high",
     },

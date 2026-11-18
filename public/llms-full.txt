@@ -64,7 +64,7 @@ The `gitdog` npm CLI (`npx gitdog@latest`) covers the same workflows as the web 
 
 ### Free Plan - $0/month
 - 100,000 one-time trial tokens on first sign-in
-- Then use your own Anthropic or OpenAI API key (that usage never uses Gitdog tokens), with the model and effort you choose: Claude Opus 5.5, Sonnet 5.5 or Haiku 5.5, or GPT-6.2 or 6.1 Sol
+- Then use your own Anthropic or OpenAI API key (that usage never uses Gitdog tokens), with the model and effort you choose: Claude Opus 5.5, Sonnet 5.5 or Haiku 5.5, or GPT-6.1 or 6.2 Sol
 - Hard limit with no automatic overage charges
 - Prepaid token packs available for additional usage
 - All features included

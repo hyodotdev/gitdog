@@ -31,8 +31,9 @@ those keys instead of Gitdog's:
 - Each key runs the model and effort its owner chooses (web settings or
   `gitdog provider-keys model`), checked against the key when chosen and when
   the key is saved again. Anthropic: Claude Opus 5.5 (default, `medium`),
-  Sonnet 5.5 (`high`) or Haiku 5.5 (`medium`); OpenAI: GPT-6.2 Sol (default,
-  `high`) or GPT-6.1 Sol (`high`).
+  Sonnet 5.5 (`high`) or Haiku 5.5 (`medium`); OpenAI: GPT-6.1 Sol (default,
+  `high`; keys saved before 6.2 were checked against it) or GPT-6.2 Sol
+  (`high`).
   Efforts are `low`, `medium` or `high`: requests are not streamed and stop
   after two minutes, so Fable 5.1 and `xhigh`/`max` are not offered. Haiku
   5.5 bills prompts over 100K tokens at 5x and has no server-side refusal

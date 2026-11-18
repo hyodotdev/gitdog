@@ -574,6 +574,24 @@ it("bills OpenAI cache usage as the input it costs", async () => {
   expect(await new OpenAIProvider("test").chat(messages)).toMatchObject({
     usage: { promptTokens: 2_300, completionTokens: 10, totalTokens: 2_310 },
   });
+  // A prompt that is all cache writes and reads, with null details elsewhere.
+  vi.mocked(globalThis.fetch).mockResolvedValue(
+    openai({
+      usage: {
+        input_tokens: 2_000,
+        output_tokens: 1,
+        total_tokens: 2_001,
+        input_tokens_details: {
+          cache_write_tokens: 1_000,
+          cached_tokens: 1_000,
+        },
+        output_tokens_details: null,
+      },
+    }),
+  );
+  expect(await new OpenAIProvider("test").chat(messages)).toMatchObject({
+    usage: { promptTokens: 1_300 },
+  });
 });
 
 it("counts reasoning-effort reasoning inside output usage exactly once", async () => {

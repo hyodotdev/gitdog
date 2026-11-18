@@ -526,8 +526,8 @@ export class OpenAIProvider implements AiProvider {
     const details = record(counts.input_tokens_details)
       ? counts.input_tokens_details
       : {};
-    // OpenAI caches prompts on its own. Cache writes and reads are part of
-    // input_tokens, and count as the input they cost on this model.
+    // Should OpenAI still report cache usage, its writes and reads are part
+    // of input_tokens and count as the input they cost on this model.
     const cacheWrite = details.cache_write_tokens ?? 0;
     const cacheRead = details.cached_tokens ?? 0;
     if (

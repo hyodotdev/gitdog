@@ -379,9 +379,10 @@ export function getChatReservationLimits(
   options?: ChatCompletionOptions,
 ): { inputTokenLimit: number; outputTokenLimit: number } {
   // The request size bounds its input tokens, and the cacheable prefix bounds
-  // the extra a Claude cache write costs. OpenAI may write a whole prompt to
-  // its cache, which a serialized request still covers: a token there costs
-  // 1.25x but always spans well over 1.25 bytes.
+  // the extra a Claude cache write costs. OpenAI caching is off; were it to
+  // write a whole prompt, the serialized request covers it for any text whose
+  // tokens average over 1.25 bytes, and otherwise settlement holds the
+  // attempt for reconciliation instead of charging it.
   const inputTokenLimit =
     chatRequestBytes(messages, options) +
     Math.ceil(
