@@ -21,6 +21,8 @@ export type PullRequest = {
   head: { sha: string };
   base: { sha: string; repo: { id: number } };
   changed_files: number;
+  // Conversation comments, for reading the newest page of them.
+  comments?: number;
 };
 export class PullRequestSizeLimitError extends Error {}
 /** The whole diff is too large for one review; batches may still cover it. */
@@ -455,6 +457,9 @@ const DISCUSSION_CHARS = 8_000;
 function discussionText(body: unknown): string {
   return typeof body === "string"
     ? body
+        // A command to Gitdog is not a request, but the rest of the comment
+        // may be one.
+        .replace(/^[ \t]*@gitdog\S*[^\n]*$/gim, " ")
         .replace(/<!--[\s\S]*?(-->|$)/g, " ")
         .replace(/<details[\s\S]*?(<\/details>|$)/gi, " ")
         .replace(/<[^>]+>/g, " ")
@@ -473,21 +478,26 @@ export async function readDiscussion(
   access: VerifiedRepositoryAccess,
   number: number,
   isGitdog: (login: string) => boolean,
+  // How many conversation comments the pull request has, so the newest
+  // page is read: GitHub lists them oldest first.
+  commentCount = 0,
 ): Promise<DiscussionEntry[]> {
-  type Item = { at: string; entry: DiscussionEntry };
+  type Item = { at: string; bot: boolean; entry: DiscussionEntry };
   const items: Item[] = [];
   const add = (
     at: unknown,
     login: unknown,
+    bot: boolean,
     kind: DiscussionEntry["kind"],
     body: unknown,
     path?: unknown,
   ) => {
     if (typeof login !== "string" || isGitdog(login)) return;
     const text = discussionText(body);
-    if (text.length < 20 || /^@gitdog/i.test(text)) return;
+    if (text.length < 10) return;
     items.push({
       at: typeof at === "string" ? at : "",
+      bot: bot || /\[bot\]$/i.test(login),
       entry: {
         author: login.replace(/\[bot\]$/i, ""),
         kind,
@@ -498,14 +508,22 @@ export async function readDiscussion(
   };
   const [comments, reviews, threads] = await Promise.all([
     readReviewJson<
-      Array<{ created_at?: string; user?: { login?: string }; body?: string }>
+      Array<{
+        created_at?: string;
+        user?: { login?: string; type?: string };
+        body?: string;
+      }>
     >(
       access,
-      `/issues/${number}/comments?per_page=100`,
+      `/issues/${number}/comments?per_page=100&page=${Math.max(1, Math.ceil(commentCount / 100))}`,
       "Read pull request comments",
     ),
     readReviewJson<
-      Array<{ submitted_at?: string; user?: { login?: string }; body?: string }>
+      Array<{
+        submitted_at?: string;
+        user?: { login?: string; type?: string };
+        body?: string;
+      }>
     >(
       access,
       `/pulls/${number}/reviews?per_page=100`,
@@ -524,7 +542,7 @@ export async function readDiscussion(
                     nodes?: Array<{
                       createdAt?: string;
                       body?: string;
-                      author?: { login?: string };
+                      author?: { login?: string; __typename?: string };
                     }>;
                   };
                 }>;
@@ -541,7 +559,7 @@ export async function readDiscussion(
           maxAttempts: REVIEW_READ_ATTEMPTS,
           jsonBody: {
             query:
-              "query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){reviewThreads(first:100){nodes{isResolved path comments(first:1){nodes{createdAt body author{login}}}}}}}}",
+              "query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){reviewThreads(last:100){nodes{isResolved path comments(first:1){nodes{createdAt body author{__typename login}}}}}}}}",
             variables: { owner: access.owner, repo: access.repo, number },
           },
         },
@@ -549,18 +567,41 @@ export async function readDiscussion(
     ),
   ]);
   for (const c of Array.isArray(comments) ? comments : [])
-    add(c?.created_at, c?.user?.login, "comment", c?.body);
+    add(
+      c?.created_at,
+      c?.user?.login,
+      c?.user?.type === "Bot",
+      "comment",
+      c?.body,
+    );
   for (const r of Array.isArray(reviews) ? reviews : [])
-    add(r?.submitted_at, r?.user?.login, "review", r?.body);
+    add(
+      r?.submitted_at,
+      r?.user?.login,
+      r?.user?.type === "Bot",
+      "review",
+      r?.body,
+    );
   for (const t of threads.data?.repository?.pullRequest?.reviewThreads?.nodes ??
     []) {
     if (t?.isResolved !== false) continue;
     const first = t.comments?.nodes?.[0];
-    add(first?.createdAt, first?.author?.login, "thread", first?.body, t.path);
+    add(
+      first?.createdAt,
+      first?.author?.login,
+      first?.author?.__typename === "Bot",
+      "thread",
+      first?.body,
+      t.path,
+    );
   }
   const result: DiscussionEntry[] = [];
   let size = 0;
-  for (const { entry } of items.sort((a, b) => b.at.localeCompare(a.at))) {
+  // People first, then bots, each newest first: bot summaries must not crowd
+  // out what a person asked for.
+  for (const { entry } of items.sort(
+    (a, b) => Number(a.bot) - Number(b.bot) || b.at.localeCompare(a.at),
+  )) {
     size += entry.text.length;
     if (size > DISCUSSION_CHARS) break;
     result.push(entry);

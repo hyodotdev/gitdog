@@ -523,15 +523,17 @@ export const generate = internalAction({
         const generationKey = `pr/${args.actionId}/${source.headSha}`;
         // A single review also reads what people asked for on the pull
         // request. Reading it is best effort; the review runs without it.
-        const discussion = batched
-          ? undefined
-          : await readDiscussion(
-              access,
-              pr.number,
-              (login) =>
-                login.toLowerCase().replace(/\[bot\]$/, "") ===
-                botLogin().replace(/\[bot\]$/, ""),
-            ).catch(() => undefined);
+        const discussion =
+          batched || verificationOnly
+            ? undefined
+            : await readDiscussion(
+                access,
+                pr.number,
+                (login) =>
+                  login.toLowerCase().replace(/\[bot\]$/, "") ===
+                  botLogin().replace(/\[bot\]$/, ""),
+                pr.comments,
+              ).catch(() => undefined);
         const provider = createMeteredProvider(ctx, {
           userId: initial.repository.userId,
           repositoryId: initial.repository._id,
@@ -1002,7 +1004,9 @@ export const publish = internalAction({
       // Another reviewer's open thread or standing request for changes also
       // keeps a clean review from approving.
       const threadsOpen =
-        findings.length === 0 && canApproveReview(0, proposal.coverageComplete)
+        findings.length === 0 &&
+        openRequests.length === 0 &&
+        canApproveReview(0, proposal.coverageComplete)
           ? changesRequested ||
             (await hasUnresolvedThreads(access, live.number).catch(() => true))
           : true;
@@ -1046,7 +1050,7 @@ export const publish = internalAction({
             { actionId: args.actionId },
           );
         const kept =
-          findingCount > 0
+          findingCount > 0 || openRequests.length > 0
             ? await dismissApprovals(
                 access,
                 live.number,
@@ -1215,7 +1219,7 @@ export const publish = internalAction({
       // already made, so a dismissal that fails is recorded, never turned
       // into a failed review.
       const kept =
-        findingCount > 0
+        findingCount > 0 || openRequests.length > 0
           ? await dismissApprovals(
               current.access,
               live.number,

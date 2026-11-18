@@ -91,11 +91,15 @@ Gitdog reads the source of every changed file. Files that do not fit the main
 review are reviewed in further passes, and a review that still could not read
 a file says so.
 
-Gitdog also reads the conversation: people's comments, review summaries and
-open review threads. A change a reviewer asked for that the code does not make
-yet is listed in the review as not yet addressed.
+A single review also reads the conversation: people's comments, review
+summaries and open review threads. A change a reviewer asked for that the code
+does not make yet is listed in the review as not yet addressed, and such a
+review waits for approval like one with findings. A large pull request reviewed
+in batches does not read the conversation; open threads and requested changes
+still keep it from approving.
 
-A pull request review with no findings needs no approval. It posts at once and
+A pull request review with no findings and nothing left open needs no approval.
+It posts at once and
 approves the reviewed commit when every changed file was reviewed, no review
 thread from anyone is open, no reviewer has requested changes, and nothing from
 the discussion is left unaddressed. A later push, including updating the

@@ -80,15 +80,27 @@ export const REVIEW_RESPONSE_FORMAT = {
 export type OpenRequest = { author: string; request: string };
 export const MAX_OPEN_REQUESTS = 5;
 
+const words = (text: string) =>
+  new Set(text.toLowerCase().match(/[a-z0-9_]{4,}/g) ?? []);
+
 /**
  * The changes reviewers asked for in the discussion that the diff does not
- * make yet, as the reviewer reported them. Only authors who took part count,
- * and the text can notify no one.
+ * make yet, as the reviewer reported them. A request counts only under a
+ * login that took part and only if it shares wording with what that person
+ * wrote, so text cannot be put in someone else's mouth; it notifies no one.
  */
 export function validOpenRequests(
   value: unknown,
-  authors: Set<string>,
+  discussion: Array<{ author: string; text: string }>,
 ): OpenRequest[] {
+  const said = new Map<string, Set<string>>();
+  for (const entry of discussion) {
+    const author = entry.author.toLowerCase();
+    said.set(
+      author,
+      new Set([...(said.get(author) ?? []), ...words(entry.text)]),
+    );
+  }
   if (
     value === null ||
     typeof value !== "object" ||
@@ -103,11 +115,23 @@ export function validOpenRequests(
       typeof item !== "object" ||
       typeof item.author !== "string" ||
       typeof item.request !== "string" ||
-      !authors.has(item.author.toLowerCase())
+      !/^[\w.-]{1,39}$/.test(item.author) ||
+      !said.has(item.author.toLowerCase())
     )
       continue;
-    const request = quietMentions(item.request.trim());
-    if (visibleLength(request) < 10 || visibleLength(request) > 300) continue;
+    // One line of plain text: no breaking out of the list, and no links or
+    // cross-references posted from Gitdog's account.
+    const request = quietMentions(item.request.replace(/\s+/g, " ").trim());
+    const shared = [...words(request)].filter((w) =>
+      said.get(item.author.toLowerCase())!.has(w),
+    ).length;
+    if (
+      visibleLength(request) < 10 ||
+      visibleLength(request) > 300 ||
+      shared < 2 ||
+      /:\/\/|\]\(|<[a-z/!]|\b[\w.-]+\/[\w.-]+#\d+/i.test(request)
+    )
+      continue;
     if (result.some((r) => r.request === request)) continue;
     result.push({ author: item.author, request });
     if (result.length === MAX_OPEN_REQUESTS) break;

@@ -649,11 +649,11 @@ describe("pull request discussion", () => {
             {
               created_at: "2026-11-02T00:00:00Z",
               user: { login: "hyochan" },
-              body: "@gitdogai review this one again please",
+              body: "@gitdogai review\nAlso add tests.",
             },
             {
               created_at: "2026-11-03T00:00:00Z",
-              user: { login: "coderabbitai[bot]" },
+              user: { login: "coderabbitai[bot]", type: "Bot" },
               body: "<!-- hidden -->Walkthrough<details><summary>x</summary>long table</details> of the change set.",
             },
           ] as never;
@@ -678,7 +678,10 @@ describe("pull request discussion", () => {
                         nodes: [
                           {
                             createdAt: "2026-11-05T00:00:00Z",
-                            author: { login: "coderabbitai" },
+                            author: {
+                              login: "coderabbitai",
+                              __typename: "Bot",
+                            },
                             body: "Release the session after a failed player start.",
                           },
                         ],
@@ -710,6 +713,14 @@ describe("pull request discussion", () => {
         login.toLowerCase().startsWith("gitdogai"),
       ),
     ).toEqual([
+      // People first, newest first; a command line is dropped, not the
+      // request after it.
+      {
+        author: "hyochan",
+        kind: "review",
+        text: "Two things before merging: release the session when playback ends.",
+      },
+      { author: "hyochan", kind: "comment", text: "Also add tests." },
       {
         author: "coderabbitai",
         kind: "thread",
@@ -717,15 +728,25 @@ describe("pull request discussion", () => {
         path: "ios/Sound.swift",
       },
       {
-        author: "hyochan",
-        kind: "review",
-        text: "Two things before merging: release the session when playback ends.",
-      },
-      {
         author: "coderabbitai",
         kind: "comment",
         text: "Walkthrough of the change set.",
       },
     ]);
+  });
+});
+
+describe("status comment removal", () => {
+  afterEach(() => vi.restoreAllMocks());
+  it("treats a comment that is already gone as deleted", async () => {
+    const fetch = vi.spyOn(globalThis, "fetch");
+    fetch.mockResolvedValueOnce(new Response(null, { status: 404 }));
+    await expect(
+      helpers.deleteIssueComment("owner", "repo", 55, "token"),
+    ).resolves.toBeUndefined();
+    fetch.mockResolvedValueOnce(new Response(null, { status: 403 }));
+    await expect(
+      helpers.deleteIssueComment("owner", "repo", 55, "token"),
+    ).rejects.toThrow("HTTP 403");
   });
 });

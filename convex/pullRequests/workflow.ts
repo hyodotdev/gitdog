@@ -252,13 +252,11 @@ export async function reviewWithContext(args: {
   openRequests: OpenRequest[];
 }> {
   const actionStarted = args.startedAt ?? Date.now();
-  const discussionAuthors = new Set(
-    (args.discussion ?? []).map((entry) => entry.author.toLowerCase()),
-  );
+  const discussion = args.discussion ?? [];
   // The latest answer's unaddressed reviewer requests.
   let openRequests: OpenRequest[] = [];
   const recordOpenRequests = (answer: unknown) => {
-    openRequests = validOpenRequests(answer, discussionAuthors);
+    openRequests = validOpenRequests(answer, discussion);
     return answer;
   };
   // Reports the raw candidates of one step before any filtering.
@@ -1390,7 +1388,7 @@ export async function reviewWithContext(args: {
     if (response.finishReason !== "stop")
       throw new Error("Review did not finish completely");
     const answer = proposed(`main/${turn}`, await parse(response.content));
-    openRequests = validOpenRequests(answer, discussionAuthors);
+    openRequests = validOpenRequests(answer, discussion);
     const value = confidentCandidates(
       answer,
       args.allowSuggestions,

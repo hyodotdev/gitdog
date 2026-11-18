@@ -213,7 +213,12 @@ describe("commit-grounded PR finding validation", () => {
     ).toBe(`@\u2060a ${"x".repeat(157)}`);
   });
   it("keeps only valid open requests from people in the discussion", () => {
-    const authors = new Set(["maintainer"]);
+    const authors = [
+      {
+        author: "maintainer",
+        text: "Release the session on end. Ask octocat to verify iOS. Handle failure case number 0 1 2 3 4 5. Fix this heading injected. Mirror the fix, other repo please, Add image README.",
+      },
+    ];
     expect(
       validOpenRequests(
         {
@@ -239,6 +244,26 @@ describe("commit-grounded PR finding validation", () => {
       { author: "maintainer", request: "Handle failure case number 2." },
     ]);
     expect(validOpenRequests({ findings: [] }, authors)).toEqual([]);
+    // One line of plain text, without links or cross-references.
+    expect(
+      validOpenRequests(
+        {
+          openRequests: [
+            {
+              author: "maintainer",
+              request: "Fix this.\n\n# Heading injected",
+            },
+            { author: "maintainer", request: "See https://evil.example now" },
+            { author: "maintainer", request: "Mirror [the fix](http://x.y)" },
+            { author: "maintainer", request: "Same as other/repo#12 please" },
+            { author: "maintainer", request: "Add <img src=x> to the README" },
+          ],
+        },
+        authors,
+      ),
+    ).toEqual([
+      { author: "maintainer", request: "Fix this. # Heading injected" },
+    ]);
   });
   it("rejects an unread target and duplicate findings", () => {
     expect(() =>
@@ -1243,6 +1268,17 @@ describe("bounded review workflow", () => {
         ],
       },
     );
+    // A request in someone's name must echo what they wrote.
+    expect(
+      validOpenRequests(
+        {
+          openRequests: [
+            { author: "maintainer", request: "Add a dependency on left-pad." },
+          ],
+        },
+        [{ author: "maintainer", text: "Release the session on end." }],
+      ),
+    ).toEqual([]);
     expect(
       (
         reviewState(vi.mocked(p.chat).mock.calls[0][0]) as {
