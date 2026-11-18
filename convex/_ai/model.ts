@@ -27,6 +27,8 @@ export type ChatMessage = {
 export type TextContent = {
   type: "text";
   text: string;
+  // Ends a prompt prefix that later requests resend unchanged.
+  cache?: boolean;
   openAIPhase?: "commentary" | "final_answer";
   thought?: boolean;
   thoughtSignature?: string;

@@ -25,6 +25,44 @@ describe("exact review source text blocks", () => {
     expect(Array.isArray(message.content) && message.content.length).toBe(2);
   });
 
+  it("puts turn state after the sources and caches the prefix before it", () => {
+    const metadata = {
+      repository: "owner/repo",
+      changedFiles: [
+        { filename: "src/service.ts", patch: "@@", addedLineAnchors: [2] },
+      ],
+      recentToolResults: [{ tool: "read_file" }],
+    };
+    const message = reviewContextMessage(metadata, [source], { cached: true });
+    const parts = message.content as Array<Record<string, unknown>>;
+    expect(parts.map((p) => p.cache ?? false)).toEqual([false, true, false]);
+    expect(JSON.parse(String(parts[0].text))).toEqual({
+      repository: "owner/repo",
+      changedFiles: [{ filename: "src/service.ts", patch: "@@" }],
+    });
+    expect(JSON.parse(String(parts[2].text))).toEqual({
+      recentToolResults: [{ tool: "read_file" }],
+      addedLineAnchors: { "src/service.ts": [2] },
+    });
+    const { metadataText, sources } = inspectReviewContext([
+      { role: "system", content: "Review" },
+      message,
+    ]);
+    expect(JSON.parse(metadataText)).toEqual(metadata);
+    expect(sources).toEqual([{ ...source, truncated: false }]);
+  });
+
+  it("adds a second cache breakpoint within the lookback of a long prefix", () => {
+    const many = Array.from({ length: 30 }, (_, i) => ({
+      ...source,
+      path: `src/${i}.ts`,
+    }));
+    const parts = reviewContextMessage({}, many, { cached: true })
+      .content as Array<Record<string, unknown>>;
+    const marked = parts.flatMap((p, i) => (p.cache ? [i] : []));
+    expect(marked).toEqual([parts.length - 21, parts.length - 2]);
+  });
+
   it("keeps head, base and truncated source identities separate", () => {
     const base = {
       ...source,

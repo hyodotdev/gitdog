@@ -72,7 +72,7 @@ export function summarizeReviewTrace(events: ReviewTraceEvent[]): {
   }
   const half = MAX_TRACE_STEPS / 2;
   return {
-    // The first steps and the last, where the final verification is.
+    // The first steps, with the main review's verification, and the last.
     trace:
       trace.length > MAX_TRACE_STEPS
         ? [...trace.slice(0, half), ...trace.slice(-half)]

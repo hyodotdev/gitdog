@@ -49,6 +49,8 @@ export const CHAT_MODELS: Record<
     inputPer1M: number;
     outputPer1M: number;
     quotaWeight: number;
+    // A prompt cache read's share of the input price; 0.1 when unset.
+    cacheReadMultiplier?: number;
     // Input above the threshold bills the whole request at the multipliers.
     longContext?: {
       inputTokens: number;
@@ -62,6 +64,7 @@ export const CHAT_MODELS: Record<
     inputPer1M: 4,
     outputPer1M: 20,
     quotaWeight: 2,
+    cacheReadMultiplier: 0.05,
   },
   // Refusal fallback targets for Opus 5.5, priced only for recorded cost.
   "claude-opus-5": {
@@ -112,6 +115,34 @@ export const CHAT_MODELS: Record<
     quotaWeight: 1,
   },
 };
+
+// A five-minute prompt cache write costs this share of the input price.
+export const CACHE_WRITE_MULTIPLIER = 1.25;
+const DEFAULT_CACHE_READ_MULTIPLIER = 0.1;
+
+/**
+ * Prompt tokens as the plain input tokens they cost, so quota, cost and
+ * reservations need no separate cache accounting: a cache write counts at
+ * CACHE_WRITE_MULTIPLIER and a read at the model's read rate. Fractions round
+ * up, so a request is never charged less than it cost.
+ */
+export function cacheAdjustedInputTokens(
+  model: string,
+  input: number,
+  cacheWrite: number,
+  cacheRead: number,
+): number {
+  const entry = Object.hasOwn(CHAT_MODELS, model)
+    ? CHAT_MODELS[model]
+    : undefined;
+  return (
+    input +
+    Math.ceil(cacheWrite * CACHE_WRITE_MULTIPLIER) +
+    Math.ceil(
+      cacheRead * (entry?.cacheReadMultiplier ?? DEFAULT_CACHE_READ_MULTIPLIER),
+    )
+  );
+}
 
 export function getChatModel(model: string, provider: string) {
   const entry = Object.hasOwn(CHAT_MODELS, model)
