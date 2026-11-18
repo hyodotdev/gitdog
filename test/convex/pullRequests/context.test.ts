@@ -52,6 +52,17 @@ describe("exact review source text blocks", () => {
     expect(sources).toEqual([{ ...source, truncated: false }]);
   });
 
+  it("adds a second cache breakpoint within the lookback of a long prefix", () => {
+    const many = Array.from({ length: 30 }, (_, i) => ({
+      ...source,
+      path: `src/${i}.ts`,
+    }));
+    const parts = reviewContextMessage({}, many, { cached: true })
+      .content as Array<Record<string, unknown>>;
+    const marked = parts.flatMap((p, i) => (p.cache ? [i] : []));
+    expect(marked).toEqual([parts.length - 21, parts.length - 2]);
+  });
+
   it("keeps head, base and truncated source identities separate", () => {
     const base = {
       ...source,

@@ -111,8 +111,14 @@ shown so far, which the loop resends each turn ahead of the turn's own state.
 Cached prompt tokens are recorded as the input tokens they cost: a cache write
 counts 1.25x and a read 0.05x on Opus 5.5 (0.1x on other Claude models),
 rounded up. Quota, cost and reservations therefore need no separate cache
-accounting, and reservations hold 1.25x the request size so a prompt written
-to the cache in full still fits.
+accounting. A reservation holds the request size plus a quarter of its
+cacheable prefix (tools, system prompt and any marked part), so that prefix
+can be written to the cache in full. Two consequences: a long-context price
+tier (Haiku 5.5 above 100K) is chosen from these equivalent tokens rather than
+the raw prompt length, which only affects the recorded cost of own-key usage;
+and an admin reconciling an ambiguous Claude attempt enters the equivalent
+input (`input + 1.25 x cache writes + read rate x cache reads`), not the raw
+`input_tokens`.
 
 A request Opus 5.5 declines may be served inside the same call by Anthropic's
 refusal fallback model (Claude Opus 5 or Opus 4.8, $5/$25), and later turns

@@ -877,9 +877,9 @@ describe("review recovery without weakening source evidence", () => {
       chatRequestBytes(requests[0], requestOptions[0]) +
         limits.outputTokenLimit,
     ).toBeLessThanOrEqual(90_000);
-    // Billing holds room for the whole prompt to be written to the cache.
-    expect(limits.inputTokenLimit).toBe(
-      Math.ceil(chatRequestBytes(requests[0], requestOptions[0]) * 1.25),
+    // Billing holds room for the cached prefix to be written in full.
+    expect(limits.inputTokenLimit).toBeGreaterThan(
+      chatRequestBytes(requests[0], requestOptions[0]),
     );
     const shown = state(requests[0]).headImplementationContext;
     expect(shown.length).toBeGreaterThan(0);
@@ -1065,6 +1065,34 @@ describe("second looks after the main review", () => {
       "pr-review/critique",
       "pr-review/look/removed-behavior",
       "pr-review/look/edge-cases",
+    ]);
+  });
+
+  it("reports a look's finding without its suggestion", async () => {
+    const suggested = {
+      ...finding,
+      confidence: 0.99,
+      suggestion: {
+        startLine: 2,
+        original: " return cache.get('constant');",
+        replacement: " return cache.get(key);",
+      },
+    };
+    const { promise } = looks([stop(), stop([suggested]), verified(), stop()]);
+    const [result] = (await promise).findings;
+    expect(result.title).toBe(finding.title);
+    expect(result).not.toHaveProperty("suggestion");
+  });
+
+  it("ends the looks on a provider failure and keeps the review", async () => {
+    const { promise, requestOptions } = looks([stop([finding]), verified()]);
+    // The scripted provider has no answer left, as in an outage.
+    const result = await promise;
+    expect(result.findings).toEqual([finding]);
+    expect(labels(requestOptions)).toEqual([
+      "pr-review/0",
+      "pr-review/critique",
+      "pr-review/look/removed-behavior",
     ]);
   });
 

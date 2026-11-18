@@ -67,7 +67,13 @@ export function reviewContextMessage(
     { type: "text", text: JSON.stringify(context) },
     ...sources.map(sourceBlock),
   ];
-  blocks[blocks.length - 1] = { ...blocks[blocks.length - 1], cache: true };
+  // A cache read looks back at most 20 blocks for an earlier entry, so a turn
+  // that shows many sources at once gets a second breakpoint before them.
+  const marks =
+    blocks.length > 20
+      ? [blocks.length - 20, blocks.length - 1]
+      : [blocks.length - 1];
+  for (const index of marks) blocks[index] = { ...blocks[index], cache: true };
   return {
     role: "user",
     content: [...blocks, { type: "text", text: JSON.stringify(state) }],

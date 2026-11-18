@@ -1,6 +1,6 @@
 import { internal } from "../_generated/api";
 import { CACHE_WRITE_MULTIPLIER, RESERVATION_QUOTA_WEIGHT } from "./config";
-import { chatRequestBytes } from "./requestSize";
+import { cachedPrefixBytes, chatRequestBytes } from "./requestSize";
 import { ChatProviderRequestError } from "./providerErrors";
 import { CreditFallbackProvider } from "./providers";
 import { UserApiKeyError } from "./providerResolution";
@@ -379,10 +379,12 @@ export function getChatReservationLimits(
   options?: ChatCompletionOptions,
 ): { inputTokenLimit: number; outputTokenLimit: number } {
   // Every token is at least one byte, so the request size bounds its input
-  // tokens even when all of them are written to the prompt cache.
-  const inputTokenLimit = Math.ceil(
-    chatRequestBytes(messages, options) * CACHE_WRITE_MULTIPLIER,
-  );
+  // tokens, and the cacheable prefix bounds the extra a cache write costs.
+  const inputTokenLimit =
+    chatRequestBytes(messages, options) +
+    Math.ceil(
+      cachedPrefixBytes(messages, options) * (CACHE_WRITE_MULTIPLIER - 1),
+    );
   const outputTokenLimit = getGenerationOutputReservationLimit(
     options?.maxTokens,
   );

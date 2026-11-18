@@ -517,6 +517,11 @@ export async function reviewWithContext(args: {
       { cached: true },
     ),
   ];
+  const initialBytes = (sources = headContext) =>
+    chatRequestBytes(initialMessages(sources), {
+      tools: reviewTools,
+      responseFormat: REVIEW_RESPONSE_FORMAT,
+    }) + REVIEW_OUTPUT_TOKENS;
   // Returns whether a source read was used, so batched preloading can stop
   // before the shared file-read budget is exhausted.
   const preloadHead = async (path: string, contentLimit?: number) => {
@@ -529,14 +534,10 @@ export async function reviewWithContext(args: {
     if (JSON.stringify([...headContext, evidence]).length > headContextLimit)
       return true;
     const prepared = [...headContext, evidence];
-    // Use the same UTF-8/escaping estimate billing reserves from before
-    // claiming source inspection, so optional preparation stays bounded.
-    const reserved =
-      chatRequestBytes(initialMessages(prepared), {
-        tools: reviewTools,
-        responseFormat: REVIEW_RESPONSE_FORMAT,
-      }) + REVIEW_OUTPUT_TOKENS;
-    if (reserved > 90_000) return true;
+    // Use the same UTF-8/escaping estimate as billing before claiming source
+    // inspection, so optional preparation stays bounded. Billing holds up to
+    // a quarter more for the cache write of this prefix.
+    if (initialBytes(prepared) > 90_000) return true;
     headContext.push(evidence);
     preparedReads.push(evidence);
     return true;
@@ -603,15 +604,7 @@ export async function reviewWithContext(args: {
   }
   // Later unavailable-path metadata can increase the prepared request too.
   // Commit evidence only after the final initial envelope has been bounded.
-  while (
-    headContext.length > 0 &&
-    chatRequestBytes(initialMessages(), {
-      tools: reviewTools,
-      responseFormat: REVIEW_RESPONSE_FORMAT,
-    }) +
-      REVIEW_OUTPUT_TOKENS >
-      90_000
-  ) {
+  while (headContext.length > 0 && initialBytes() > 90_000) {
     headContext.pop();
     preparedReads.pop();
   }
@@ -1216,7 +1209,9 @@ export async function reviewWithContext(args: {
               )
               .slice(0, MAX_REVIEW_FINDINGS),
           },
-          args.allowSuggestions,
+          // A look's suggestion could overlap one already reported, which
+          // publication refuses, so looks report findings only.
+          false,
           new Set(args.files.map((f) => f.filename)),
         ) as { findings: unknown[] };
         let candidates: Finding[] = [];
@@ -1251,18 +1246,12 @@ export async function reviewWithContext(args: {
       } catch (error) {
         if (isLifecycleChange(error)) throw error;
         const cause = reviewFailureCause(error);
-        if (cause instanceof ChatBillingError) {
+        if (cause instanceof ChatBillingError)
           accountLimited ||= cause.reason === "limit_reached";
-          break;
-        }
-        // A second look is optional: an outage, a timeout or an answer that
-        // cannot be used ends the looks, and the review keeps what it has.
-        if (
-          cause instanceof ChatProviderRequestError &&
-          !isReviewGroupModelFailure(error)
-        )
-          break;
-        if (!isReviewGroupModelFailure(error)) throw error;
+        // A second look is optional: an answer that cannot be used skips it,
+        // and any other failure ends the looks with what the review has.
+        if (isReviewGroupModelFailure(error)) continue;
+        break;
       }
     }
     return found;
