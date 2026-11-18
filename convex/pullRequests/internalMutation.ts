@@ -25,6 +25,7 @@ import {
   reviewSummary,
 } from "./review";
 import { isBotPullRequestAuthor, REVIEW_BATCH_TOKEN_ESTIMATE } from "./github";
+import { REVIEW_TRACE_RETENTION_MS, reviewTraceStepValidator } from "./records";
 
 const snapshotValidator = v.object({
   headSha: v.string(),
@@ -1465,5 +1466,71 @@ export const recordStatusComment = internalMutation({
     if (args.reviewing && action.status !== "pending")
       await settleStatus(ctx, action._id);
     return true;
+  },
+});
+
+export const recordReview = internalMutation({
+  args: {
+    actionId: v.id("ticketActions"),
+    page: v.optional(v.number()),
+    group: v.optional(v.number()),
+    outcome: v.union(v.literal("proposed"), v.literal("failed")),
+    providerId: v.optional(v.string()),
+    modelId: v.optional(v.string()),
+    keySource: v.optional(v.union(v.literal("gitdog"), v.literal("user"))),
+    durationMs: v.number(),
+    changedFiles: v.number(),
+    inspectedFiles: v.number(),
+    uncoveredFiles: v.number(),
+    discussionEntries: v.number(),
+    steps: v.number(),
+    candidates: v.number(),
+    discarded: v.number(),
+    findings: v.number(),
+    openRequests: v.number(),
+    trace: v.array(reviewTraceStepValidator),
+  },
+  handler: async (ctx, args) => {
+    const action = await ctx.db.get(args.actionId);
+    if (!action || action.actionType !== "review") return;
+    const ticket = await ctx.db.get(action.ticketId);
+    if (!ticket?.repositoryId) return;
+    const now = Date.now();
+    const { trace, ...counts } = args;
+    await ctx.db.insert("reviewRecords", {
+      ...counts,
+      repositoryId: ticket.repositoryId,
+      ...(trace.length
+        ? { trace, traceExpiresAt: now + REVIEW_TRACE_RETENTION_MS }
+        : {}),
+      createdAt: now,
+    });
+  },
+});
+
+const REVIEW_TRACE_TRIM_BATCH = 200;
+
+// Clears review traces past their retention window; the counts stay.
+export const trimReviewTraces = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const expired = await ctx.db
+      .query("reviewRecords")
+      .withIndex("by_trace_expiry", (q) =>
+        q.gt("traceExpiresAt", 0).lte("traceExpiresAt", Date.now()),
+      )
+      .take(REVIEW_TRACE_TRIM_BATCH);
+    for (const record of expired)
+      await ctx.db.patch(record._id, {
+        trace: undefined,
+        traceExpiresAt: undefined,
+      });
+    if (expired.length === REVIEW_TRACE_TRIM_BATCH)
+      await ctx.scheduler.runAfter(
+        0,
+        internal.pullRequests.internalMutation.trimReviewTraces,
+        {},
+      );
+    return expired.length;
   },
 });

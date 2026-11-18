@@ -1072,6 +1072,7 @@
           "Provide, maintain, and improve our service",
           "Authenticate and manage user accounts",
           "Process AI requests and generate responses",
+          "Measure and improve the quality of pull request reviews",
           "Calculate and track token usage for billing",
           "Offer customer support",
           "Ensure platform security",
@@ -1141,6 +1142,7 @@
         "items": [
           "Account data for as long as your account is active",
           "Repository index data while repositories are connected",
+          "Pull request review records while the repository is connected: the model used, how long each review ran, and how many files it read and findings it proposed, kept and posted. The file paths and titles of the candidate findings each review step considered are kept for 30 days, then deleted",
           "Action history for 12 months for your reference",
           "Normalized payment transaction, entitlement-change, and refund/audit records are ordinarily retained for 5 years, then deleted unless a longer legal, security, accounting, or unresolved manual-review hold applies",
           "A non-content, non-reversible settlement fingerprint may be retained indefinitely to prevent duplicate credits or charges; it contains no raw payload, card, or contact data",
@@ -1189,7 +1191,7 @@
       "description": "Terms of Service for Gitdog - AI-powered GitHub assistant",
       "heading": "Terms of Service",
       "companyInfo": "Hyo Dev",
-      "lastUpdated": "Last updated: November 13, 2026",
+      "lastUpdated": "Last updated: November 18, 2026",
       "intro": "Welcome to Gitdog, an AI-powered GitHub assistant platform provided by Hyo Dev (\"we\", \"our\", \"us\"). By using our service, you agree to these Terms of Service.",
       "section1": {
         "title": "1. Acceptance of Terms",
@@ -1251,7 +1253,7 @@
         },
         "yourContent": {
           "title": "6.2. Your Content",
-          "description": "You retain ownership of your code and repository content. By using Gitdog, you grant us a limited, non-exclusive license to process and disclose your content to the providers identified in our Privacy Policy as needed to provide the service under their applicable terms."
+          "description": "You retain ownership of your code and repository content. By using Gitdog, you grant us a limited, non-exclusive license to process and disclose your content to the providers identified in our Privacy Policy as needed to provide the service under their applicable terms. This includes keeping the pull request review records described in our Privacy Policy to measure and improve review quality; we do not sell your content or use it to train Gitdog's own models."
         }
       },
       "section7": {

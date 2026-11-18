@@ -445,6 +445,24 @@ describe("repository lifecycle fencing", () => {
         status: "pending_approval",
         createdAt: now,
       });
+      await ctx.db.insert("reviewRecords", {
+        repositoryId,
+        actionId: referencedActionId,
+        outcome: "proposed",
+        durationMs: 1,
+        changedFiles: 1,
+        inspectedFiles: 1,
+        uncoveredFiles: 0,
+        discussionEntries: 0,
+        steps: 1,
+        candidates: 1,
+        discarded: 0,
+        findings: 1,
+        openRequests: 0,
+        trace: [{ step: "main/0", kept: ["Finding"] }],
+        traceExpiresAt: now + 1,
+        createdAt: now,
+      });
       for (let index = 1; index < 55; index++) {
         await ctx.db.insert("ticketActions", {
           ticketId,
@@ -595,6 +613,10 @@ describe("repository lifecycle fencing", () => {
         .query("pullRequestCommands")
         .withIndex("by_repository", (q) => q.eq("repositoryId", repositoryId))
         .collect(),
+      reviewRecords: await ctx.db
+        .query("reviewRecords")
+        .withIndex("by_repository", (q) => q.eq("repositoryId", repositoryId))
+        .collect(),
       repository: await ctx.db.get(repositoryId),
       chunks: await ctx.db
         .query("repoChunks")
@@ -638,6 +660,7 @@ describe("repository lifecycle fencing", () => {
       queueStorageUrl: await ctx.storage.getUrl(seeded.queueStorageId),
     }));
     expect(final.commands).toHaveLength(0);
+    expect(final.reviewRecords).toHaveLength(0);
     expect(final.repository).toBeNull();
     expect(final.chunks).toHaveLength(0);
     expect(final.maps).toHaveLength(0);

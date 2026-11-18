@@ -578,6 +578,7 @@ type DisconnectCleanupPhase =
   | "invitations"
   | "api_keys"
   | "commands"
+  | "review_records"
   | "tickets"
   | "history"
   | "notifications"
@@ -760,6 +761,7 @@ export const continueRepositoryDisconnectCleanup = internalMutation({
         | "repositoryMembers"
         | "projectApiKeys"
         | "pullRequestCommands"
+        | "reviewRecords"
         | "invitations",
       nextPhase: DisconnectCleanupPhase,
     ) => {
@@ -798,7 +800,13 @@ export const continueRepositoryDisconnectCleanup = internalMutation({
       return await deleteRepositoryPage("projectApiKeys", "commands");
     }
     if (phase === "commands") {
-      return await deleteRepositoryPage("pullRequestCommands", "tickets");
+      return await deleteRepositoryPage(
+        "pullRequestCommands",
+        "review_records",
+      );
+    }
+    if (phase === "review_records") {
+      return await deleteRepositoryPage("reviewRecords", "tickets");
     }
 
     if (phase === "tickets") {
@@ -1157,6 +1165,16 @@ export const continueRepositoryDisconnectCleanup = internalMutation({
       .first();
     if (remainingCommand) {
       await advanceDisconnectCleanup(ctx, args.repositoryId, "commands");
+      return { completed: false, processed: 0 };
+    }
+    const remainingRecord = await ctx.db
+      .query("reviewRecords")
+      .withIndex("by_repository", (q) =>
+        q.eq("repositoryId", args.repositoryId),
+      )
+      .first();
+    if (remainingRecord) {
+      await advanceDisconnectCleanup(ctx, args.repositoryId, "review_records");
       return { completed: false, processed: 0 };
     }
     // embeddingUsageReservations deliberately retain the immutable repository

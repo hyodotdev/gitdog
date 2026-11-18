@@ -35,7 +35,8 @@ import {
   treePaths,
   type PullRequest,
 } from "./github";
-import { reviewWithContext } from "./workflow";
+import { reviewWithContext, type ReviewTraceEvent } from "./workflow";
+import { summarizeReviewTrace } from "./records";
 import { REVIEW_QUOTA_FAILURES } from "./internalMutation";
 import {
   isReviewGroupModelFailure,
@@ -329,6 +330,35 @@ export const generate = internalAction({
     const group = args.group ?? 0;
     let stage = "Source preflight";
     let batched = args.page !== undefined;
+    // What this run did, recorded once a model was chosen to measure review
+    // quality. A record that cannot be written never fails the review.
+    const traceEvents: ReviewTraceEvent[] = [];
+    let run:
+      | {
+          providerId: string;
+          modelId: string;
+          keySource: "gitdog" | "user";
+          changedFiles: number;
+          inspectedFiles: number;
+          uncoveredFiles: number;
+          discussionEntries: number;
+          findings: number;
+          openRequests: number;
+        }
+      | undefined;
+    const recordRun = async (outcome: "proposed" | "failed") => {
+      if (!run) return;
+      await ctx
+        .runMutation(internal.pullRequests.internalMutation.recordReview, {
+          actionId: args.actionId,
+          ...(batched ? { page, group } : {}),
+          outcome,
+          ...run,
+          ...summarizeReviewTrace(traceEvents),
+          durationMs: Date.now() - startedAt,
+        })
+        .catch(() => undefined);
+    };
     try {
       const initial = await ctx.runQuery(
         internal.pullRequests.internalQuery.get,
@@ -487,6 +517,17 @@ export const generate = internalAction({
         userId: initial.repository.userId,
         ticketActionId: args.actionId,
       });
+      run = {
+        providerId: rawAiProvider.providerId,
+        modelId: rawAiProvider.modelId,
+        keySource: usesUserKey(rawAiProvider) ? "user" : "gitdog",
+        changedFiles: selected.filter((f) => f.status !== "removed").length,
+        inspectedFiles: 0,
+        uncoveredFiles: 0,
+        discussionEntries: 0,
+        findings: 0,
+        openRequests: 0,
+      };
       if (batched && !previous && group === 0) {
         // Refuse up front instead of spending tokens on early batches and
         // stopping at the account limit with nothing published.
@@ -565,9 +606,11 @@ export const generate = internalAction({
         });
         let result: Awaited<ReturnType<typeof reviewWithContext>>;
         try {
+          if (discussion) run.discussionEntries = discussion.length;
           result = await reviewWithContext({
             startedAt,
             discussion,
+            trace: (event) => traceEvents.push(event),
             provider,
             batchGroup: batched,
             allowSuggestions:
@@ -619,6 +662,8 @@ export const generate = internalAction({
           };
         }
         openRequests = result.openRequests;
+        run.findings = result.findings.length;
+        run.openRequests = result.openRequests.length;
         // Each review group decides windowing for its own reads, so the way
         // each quoted file was seen travels with the evidence itself.
         findings.push(
@@ -638,9 +683,13 @@ export const generate = internalAction({
         for (const file of selected) {
           if (file.status === "removed") continue;
           // A diff dropped for size was not reviewed even if its source was read.
-          if (hasReviewablePatch(file) && inspected.has(file.filename))
+          if (hasReviewablePatch(file) && inspected.has(file.filename)) {
             inspectedFiles++;
-          else uncoveredFiles++;
+            run.inspectedFiles++;
+          } else {
+            uncoveredFiles++;
+            run.uncoveredFiles++;
+          }
         }
         for (const path of result.excludedPaths) excludedPaths.add(path);
         for (const read of result.reads)
@@ -732,7 +781,9 @@ export const generate = internalAction({
                 uncoveredFiles,
               },
       });
+      await recordRun("proposed");
     } catch (error) {
+      await recordRun("failed");
       // Do not persist provider bodies, source snippets or credentials in errors.
       if (batched)
         stage = `${stage} (review batch ${page}${group ? `, part ${group + 1}` : ""})`;
