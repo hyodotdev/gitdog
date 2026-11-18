@@ -19,7 +19,24 @@ type SavedKey = {
   readable: boolean;
   serviceUnavailable?: boolean;
   lastValidatedAt: number;
+  modelId: string;
+  effort: string;
 };
+
+type ModelOption = {
+  modelId: string;
+  name: string;
+  efforts: readonly string[];
+  defaultEffort: string;
+};
+
+const selectClass = cn(
+  "w-full px-3 py-2 text-sm",
+  "border border-gray-300 dark:border-gray-700",
+  "bg-white dark:bg-gray-900",
+  "focus:outline-hidden focus:border-black dark:focus:border-white",
+  "disabled:opacity-50",
+);
 
 const PROVIDERS: Record<
   KeyProvider,
@@ -86,6 +103,7 @@ const primaryButtonClass = cn(
 function ProviderKeyCard({
   provider,
   saved,
+  models,
   draft,
   onDraftChange,
   editing,
@@ -94,6 +112,7 @@ function ProviderKeyCard({
 }: {
   provider: KeyProvider;
   saved: SavedKey | undefined;
+  models: ModelOption[] | undefined;
   draft: string;
   onDraftChange: (value: string) => void;
   editing: boolean;
@@ -106,6 +125,8 @@ function ProviderKeyCard({
   const saveKey = useAction(api.providerApiKeys.action.save);
   const revalidateKey = useAction(api.providerApiKeys.action.revalidate);
   const removeKey = useMutation(api.providerApiKeys.mutation.remove);
+  const setModel = useAction(api.providerApiKeys.action.setModel);
+  const [modelSaved, setModelSaved] = useState(false);
   const [busy, setBusy] = useState(false);
   const [confirmingRemove, setConfirmingRemove] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -141,6 +162,8 @@ function ProviderKeyCard({
         return t("profile.providerKeys.errors.unavailable", {
           provider: label,
         });
+      case "unknown_model":
+        return t("profile.providerKeys.errors.unknownModel");
       default:
         return t("common.error");
     }
@@ -178,6 +201,12 @@ function ProviderKeyCard({
         : saved.status;
   const healthy = status === "active";
   const showForm = !saved || editing;
+  const chosen = models?.find((m) => m.modelId === saved?.modelId);
+  const chooseModel = async (modelId: string, effort?: string) => {
+    setModelSaved(false);
+    if (await run(() => setModel({ provider, modelId, effort })))
+      setModelSaved(true);
+  };
 
   return (
     <div
@@ -225,6 +254,51 @@ function ProviderKeyCard({
               time: relativeTime(saved.lastValidatedAt),
             })}
           </span>
+        </div>
+      )}
+
+      {saved?.readable && !saved.serviceUnavailable && models && !showForm && (
+        <div className={cn("grid grid-cols-2 gap-2")}>
+          <label className={cn("flex flex-col gap-1 text-sm font-medium")}>
+            {t("profile.providerKeys.modelLabel")}
+            <select
+              value={saved.modelId}
+              disabled={busy}
+              onChange={(event) => void chooseModel(event.target.value)}
+              className={selectClass}
+            >
+              {models.map((m) => (
+                <option key={m.modelId} value={m.modelId}>
+                  {m.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className={cn("flex flex-col gap-1 text-sm font-medium")}>
+            {t("profile.providerKeys.effortLabel")}
+            <select
+              value={saved.effort}
+              disabled={busy || !chosen}
+              onChange={(event) =>
+                void chooseModel(saved.modelId, event.target.value)
+              }
+              className={selectClass}
+            >
+              {(chosen?.efforts ?? [saved.effort]).map((effort) => (
+                <option key={effort} value={effort}>
+                  {effort}
+                </option>
+              ))}
+            </select>
+          </label>
+          <p
+            className={cn(
+              "col-span-2 text-xs text-gray-600 dark:text-gray-400",
+            )}
+          >
+            {t("profile.providerKeys.modelHint", { provider: label })}
+            {modelSaved && ` ${t("profile.providerKeys.modelSaved")}`}
+          </p>
         </div>
       )}
 
@@ -405,6 +479,7 @@ function ProviderKeyCard({
 export function ProviderKeysSection() {
   const { t } = useTranslation();
   const keys = useQuery(api.providerApiKeys.query.list);
+  const models = useQuery(api.providerApiKeys.query.models);
   const [drafts, setDrafts] = useState<Record<KeyProvider, string>>({
     anthropic: "",
     openai: "",
@@ -477,6 +552,7 @@ export function ProviderKeysSection() {
                 key={provider}
                 provider={provider}
                 saved={savedKey(provider)}
+                models={models?.[provider]}
                 draft={drafts[provider]}
                 onDraftChange={(value) =>
                   setDrafts((current) => ({ ...current, [provider]: value }))

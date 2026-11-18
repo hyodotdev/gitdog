@@ -1,3 +1,4 @@
+import { userKeyModel } from "./config";
 import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { ActionCtx } from "../_generated/server";
@@ -193,13 +194,18 @@ async function userKeyLeaf(
     }
     return "unreadable";
   }
+  // The owner's chosen model and effort; the provider bills this usage.
+  const model = userKeyModel(row.provider, row.modelId, row.effort);
   return new UserKeyProvider(
     ctx,
     row.userId,
     row.provider,
     row.provider === "anthropic"
-      ? new ClaudeProvider(apiKey, undefined, { enforceAccessDeadline: false })
-      : new OpenAIProvider(apiKey),
+      ? new ClaudeProvider(apiKey, undefined, {
+          enforceAccessDeadline: false,
+          model,
+        })
+      : new OpenAIProvider(apiKey, model),
     row.iv,
   );
 }

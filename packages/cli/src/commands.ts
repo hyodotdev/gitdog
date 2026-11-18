@@ -87,7 +87,9 @@ const PROVIDER_KEY_ERRORS: Record<string, string> = {
     "Gitdog can no longer read this saved key. Run provider-keys set to enter it again.",
   invalid_key: "The provider rejected this API key.",
   no_model_access:
-    "This API key has no access to the model Gitdog uses. Check the key's project or model permissions.",
+    "This API key has no access to the chosen model. Check the key's project or model permissions, or choose another with provider-keys model.",
+  unknown_model:
+    "That model or effort is not offered. Run provider-keys models to see the choices.",
   validation_unavailable:
     "The provider could not check this key right now. Try again shortly.",
 };
@@ -525,11 +527,15 @@ export function createProgram(
           serviceUnavailable?: boolean;
           lastValidatedAt: number;
           lastErrorCode: string | null;
+          modelId?: string;
+          effort?: string;
         }>
       >("query", "providerApiKeys/query:list");
       const rows = keys.map((key) => ({
         provider: key.provider,
         key: `…${key.last4}`,
+        model: key.modelId ?? null,
+        effort: key.effort ?? null,
         status: key.serviceUnavailable
           ? "checks_unavailable"
           : key.readable === false
@@ -545,11 +551,74 @@ export function createProgram(
         ui.table(rows, [
           "provider",
           "key",
+          "model",
+          "effort",
           "status",
           "lastChecked",
           "lastError",
         ]);
     },
+  );
+  command(
+    providerKeys,
+    "models",
+    "List the models and efforts you can choose for your own keys",
+    async ({ api, ui }) => {
+      const models = await api.call<
+        Record<
+          string,
+          Array<{
+            modelId: string;
+            name: string;
+            efforts: string[];
+            defaultEffort: string;
+          }>
+        >
+      >("query", "providerApiKeys/query:models");
+      const rows = Object.entries(models).flatMap(([provider, list]) =>
+        list.map((m, index) => ({
+          provider,
+          model: m.modelId,
+          name: m.name,
+          efforts: m.efforts.join(", "),
+          defaultEffort: m.defaultEffort,
+          default: index === 0,
+        })),
+      );
+      if (ui.json) ui.output(rows);
+      else
+        ui.table(rows, [
+          "provider",
+          "model",
+          "name",
+          "efforts",
+          "defaultEffort",
+          "default",
+        ]);
+    },
+  );
+  command(
+    providerKeys,
+    "model <provider> <model>",
+    "Choose the model (and --effort) generation uses on your own key",
+    async ({ api, ui }, args, opts) => {
+      const provider = keyProvider(args[0]);
+      ui.output(
+        await providerKeyCall(
+          api,
+          "action",
+          "providerApiKeys/action:setModel",
+          {
+            provider,
+            modelId: args[1],
+            ...(text(opts.effort) ? { effort: text(opts.effort) } : {}),
+          },
+        ),
+      );
+    },
+  ).option(
+    "--effort <effort>",
+    "Effort level, such as medium or high; defaults to the model's own",
   );
   command(
     providerKeys,

@@ -222,8 +222,20 @@ const CATCH_UP_WINDOW_MS = 30 * 24 * 60 * 60_000;
 const CATCH_UP_SPACING_MS = 12 * 60_000;
 
 export const reviewOpenPullRequests = internalAction({
-  args: { repositoryId: v.id("repositories") },
+  args: {
+    repositoryId: v.id("repositories"),
+    stampedAt: v.optional(v.number()),
+  },
   handler: async (ctx, args): Promise<void> => {
+    // A catch-up that schedules nothing frees the hourly allowance, so
+    // turning reviews on again after adding tokens works at once.
+    const release = async (): Promise<void> => {
+      if (args.stampedAt !== undefined)
+        await ctx.runMutation(
+          internal.pullRequests.internalMutation.releaseCatchUp,
+          { repositoryId: args.repositoryId, stampedAt: args.stampedAt },
+        );
+    };
     const repo = await ctx.runQuery(
       internal.repositories.internalQuery.getById,
       { repositoryId: args.repositoryId },
@@ -239,7 +251,7 @@ export const reviewOpenPullRequests = internalAction({
     const provider = await resolveGenerationProvider(ctx, {
       userId: repo.userId,
     }).catch(() => null);
-    if (!provider) return;
+    if (!provider) return await release();
     if (
       !usesUserKey(provider) &&
       !(await ctx.runQuery(
@@ -247,13 +259,16 @@ export const reviewOpenPullRequests = internalAction({
         { userId: repo.userId },
       ))
     )
-      return;
+      return await release();
     const access = await resolveVerifiedRepositoryAccess(
       ctx,
       args.repositoryId,
-    );
+    ).catch(() => null);
+    if (!access) return await release();
+    const open = await listOpenPullRequests(access).catch(() => null);
+    if (!open) return await release();
     const now = Date.now();
-    const candidates = (await listOpenPullRequests(access)).filter(
+    const candidates = open.filter(
       (pr) =>
         pr !== null &&
         typeof pr === "object" &&
@@ -272,6 +287,7 @@ export const reviewOpenPullRequests = internalAction({
     const recent = candidates
       .filter((pr) => !reviewed.has(pr.number))
       .slice(0, CATCH_UP_PULL_REQUESTS);
+    if (recent.length === 0) return await release();
     // observe reviews a pull request only until it has one finished review.
     for (const [index, pr] of recent.entries())
       await ctx.scheduler.runAfter(

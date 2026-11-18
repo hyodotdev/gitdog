@@ -1,4 +1,4 @@
-import { GENERATION_MODELS } from "../_ai/config";
+import { userKeyModel } from "../_ai/config";
 import type { KeyProvider } from "./crypto";
 
 const VALIDATION_TIMEOUT_MS = 10_000;
@@ -16,18 +16,19 @@ export type KeyValidationResult =
 export async function validateProviderKey(
   provider: KeyProvider,
   apiKey: string,
+  modelId: string = userKeyModel(provider).modelId,
 ): Promise<KeyValidationResult> {
   const request: { url: string; headers: Record<string, string> } =
     provider === "anthropic"
       ? {
-          url: `https://api.anthropic.com/v1/models/${GENERATION_MODELS.anthropic.modelId}`,
+          url: `https://api.anthropic.com/v1/models/${encodeURIComponent(modelId)}`,
           headers: {
             "x-api-key": apiKey,
             "anthropic-version": "2023-06-01",
           },
         }
       : {
-          url: `https://api.openai.com/v1/models/${GENERATION_MODELS.openai.modelId}`,
+          url: `https://api.openai.com/v1/models/${encodeURIComponent(modelId)}`,
           headers: { Authorization: `Bearer ${apiKey}` },
         };
   let response: Response;

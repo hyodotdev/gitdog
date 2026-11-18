@@ -124,6 +124,7 @@ describe("provider key management", () => {
       provider: "anthropic",
       last4: ANTHROPIC_KEY.slice(-4),
       status: "active",
+      modelId: "claude-opus-5-5",
     });
     const [url, init] = fetch.mock.calls[0];
     expect(String(url)).toContain("/v1/models/");
@@ -345,6 +346,142 @@ describe("provider key management", () => {
     await expect(as.query(api.providerApiKeys.query.list, {})).resolves.toEqual(
       [],
     );
+  });
+});
+
+describe("provider key model choice", () => {
+  it("checks the chosen model, stores it and lists it", async () => {
+    const t = convexTest(schema, modules);
+    const { as } = await signedIn(t);
+    const fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response("{}", { status: 200 }));
+    await as.action(api.providerApiKeys.action.save, {
+      provider: "anthropic",
+      apiKey: ANTHROPIC_KEY,
+    });
+    // The default model is checked first.
+    expect(String(fetch.mock.calls[0][0])).toContain(
+      "/v1/models/claude-opus-5-5",
+    );
+    expect(
+      (await as.query(api.providerApiKeys.query.list, {}))[0],
+    ).toMatchObject({ modelId: "claude-opus-5-5", effort: "medium" });
+
+    await expect(
+      as.action(api.providerApiKeys.action.setModel, {
+        provider: "anthropic",
+        modelId: "claude-sonnet-5-5",
+        effort: "high",
+      }),
+    ).resolves.toEqual({
+      provider: "anthropic",
+      modelId: "claude-sonnet-5-5",
+      effort: "high",
+    });
+    expect(String(fetch.mock.calls[1][0])).toContain(
+      "/v1/models/claude-sonnet-5-5",
+    );
+    expect(
+      (await as.query(api.providerApiKeys.query.list, {}))[0],
+    ).toMatchObject({
+      modelId: "claude-sonnet-5-5",
+      name: "Claude Sonnet 5.5",
+      effort: "high",
+    });
+    // Changing only the effort needs no new check.
+    await as.action(api.providerApiKeys.action.setModel, {
+      provider: "anthropic",
+      modelId: "claude-sonnet-5-5",
+      effort: "low",
+    });
+    expect(fetch).toHaveBeenCalledTimes(2);
+    // A re-saved key is checked against the chosen model.
+    await as.action(api.providerApiKeys.action.save, {
+      provider: "anthropic",
+      apiKey: ANTHROPIC_KEY,
+    });
+    expect(String(fetch.mock.calls[2][0])).toContain(
+      "/v1/models/claude-sonnet-5-5",
+    );
+    // A new key without access to the chosen model returns to the default.
+    fetch.mockResolvedValueOnce(new Response("{}", { status: 404 }));
+    await expect(
+      as.action(api.providerApiKeys.action.save, {
+        provider: "anthropic",
+        apiKey: ANTHROPIC_KEY,
+      }),
+    ).resolves.toMatchObject({ modelId: "claude-opus-5-5" });
+    expect(String(fetch.mock.calls[4][0])).toContain(
+      "/v1/models/claude-opus-5-5",
+    );
+    expect(
+      (await as.query(api.providerApiKeys.query.list, {}))[0],
+    ).toMatchObject({ modelId: "claude-opus-5-5", effort: "medium" });
+  });
+
+  it("reports a server encryption problem on a model change as unavailable checks", async () => {
+    const t = convexTest(schema, modules);
+    const { as } = await signedIn(t);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("{}", { status: 200 }),
+    );
+    await as.action(api.providerApiKeys.action.save, {
+      provider: "anthropic",
+      apiKey: ANTHROPIC_KEY,
+    });
+    process.env.BYOK_ENCRYPTION_KEY = btoa("short");
+    await expect(
+      as.action(api.providerApiKeys.action.setModel, {
+        provider: "anthropic",
+        modelId: "claude-sonnet-5-5",
+      }),
+    ).rejects.toMatchObject({ data: { reason: "not_configured" } });
+  });
+
+  it("refuses models that are not offered, missing keys and models the key cannot use", async () => {
+    const t = convexTest(schema, modules);
+    const { as } = await signedIn(t);
+    const fetch = vi.spyOn(globalThis, "fetch");
+    await expect(
+      as.action(api.providerApiKeys.action.setModel, {
+        provider: "openai",
+        modelId: "gpt-6.1-sol",
+      }),
+    ).rejects.toThrow("Save an API key");
+    fetch.mockResolvedValue(new Response("{}", { status: 200 }));
+    await as.action(api.providerApiKeys.action.save, {
+      provider: "openai",
+      apiKey: OPENAI_KEY,
+    });
+    await expect(
+      as.action(api.providerApiKeys.action.setModel, {
+        provider: "openai",
+        modelId: "gpt-4o",
+      }),
+    ).rejects.toThrow("Choose one of");
+    await expect(
+      as.action(api.providerApiKeys.action.setModel, {
+        provider: "openai",
+        modelId: "gpt-6.1-sol",
+        effort: "max",
+      }),
+    ).rejects.toThrow("Choose one of");
+    const { as: claude } = await signedIn(t);
+    await claude.action(api.providerApiKeys.action.save, {
+      provider: "anthropic",
+      apiKey: ANTHROPIC_KEY,
+    });
+    fetch.mockResolvedValueOnce(new Response("{}", { status: 404 }));
+    await expect(
+      claude.action(api.providerApiKeys.action.setModel, {
+        provider: "anthropic",
+        modelId: "claude-haiku-5-5",
+      }),
+    ).rejects.toThrow("no access to Claude Haiku 5.5");
+    expect(
+      (await claude.query(api.providerApiKeys.query.list, {}))[0],
+    ).toMatchObject({ modelId: "claude-opus-5-5" });
   });
 });
 

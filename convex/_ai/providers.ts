@@ -176,17 +176,29 @@ function parseTool(value: RecordValue, input: unknown): ToolUseContent {
   return { type: "tool_use", id: value.id, name: value.name, input };
 }
 
+/** The model and effort a provider runs with; Gitdog's own by default. */
+export type ProviderModel = { modelId: string; name: string; effort: string };
+
 export class ClaudeProvider implements AiProvider {
-  readonly name = GENERATION_MODELS.anthropic.name;
-  readonly modelId = GENERATION_MODELS.anthropic.modelId;
+  readonly name: string;
+  readonly modelId: string;
   readonly providerId = "anthropic";
+  private readonly effort: string;
   constructor(
     private readonly apiKey: string,
     private readonly authorize?: () => Promise<Record<string, string>>,
     // Gitdog's own Claude access ends at CLAUDE_API_ENDS_AT; a user's own
-    // key is not affected by that deadline.
-    private readonly routing: { enforceAccessDeadline?: boolean } = {},
-  ) {}
+    // key is not affected by that deadline, and may choose its model.
+    private readonly routing: {
+      enforceAccessDeadline?: boolean;
+      model?: ProviderModel;
+    } = {},
+  ) {
+    const model = routing.model ?? GENERATION_MODELS.anthropic;
+    this.name = model.name;
+    this.modelId = model.modelId;
+    this.effort = model.effort;
+  }
 
   private get enforceDeadline() {
     return this.routing.enforceAccessDeadline !== false;
@@ -244,7 +256,7 @@ export class ClaudeProvider implements AiProvider {
         max_tokens: options?.maxTokens ?? 4096,
         thinking: { type: "adaptive" },
         output_config: {
-          effort: GENERATION_MODELS.anthropic.effort,
+          effort: this.effort,
           ...(options?.responseFormat
             ? {
                 format: {
@@ -376,10 +388,18 @@ export class ClaudeProvider implements AiProvider {
 }
 
 export class OpenAIProvider implements AiProvider {
-  readonly name = GENERATION_MODELS.openai.name;
-  readonly modelId = GENERATION_MODELS.openai.modelId;
+  readonly name: string;
+  readonly modelId: string;
   readonly providerId = "openai";
-  constructor(private readonly apiKey: string) {}
+  private readonly effort: string;
+  constructor(
+    private readonly apiKey: string,
+    model: ProviderModel = GENERATION_MODELS.openai,
+  ) {
+    this.name = model.name;
+    this.modelId = model.modelId;
+    this.effort = model.effort;
+  }
 
   async chat(
     messages: ChatMessage[],
@@ -441,7 +461,7 @@ export class OpenAIProvider implements AiProvider {
         instructions: systemPrompt(messages),
         input,
         store: false,
-        reasoning: { effort: GENERATION_MODELS.openai.effort },
+        reasoning: { effort: this.effort },
         include: ["reasoning.encrypted_content"],
         max_output_tokens: options?.maxTokens ?? 4096,
         ...(options?.responseFormat

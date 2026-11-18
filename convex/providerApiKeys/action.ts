@@ -3,7 +3,7 @@ import { ConvexError, v } from "convex/values";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { action, type ActionCtx } from "../_generated/server";
-import { GENERATION_MODELS } from "../_ai/config";
+import { USER_KEY_MODELS, userKeyModel } from "../_ai/config";
 import type { ApiErrorCode } from "../apiKeys/security";
 import {
   decryptProviderKey,
@@ -32,6 +32,7 @@ export type ProviderKeyErrorReason =
   | "unreadable"
   | "invalid_key"
   | "no_model_access"
+  | "unknown_model"
   | "validation_unavailable";
 
 function keyError(
@@ -45,6 +46,7 @@ function keyError(
 function rejectValidation(
   provider: KeyProvider,
   result: Exclude<KeyValidationResult, { ok: true }>,
+  modelName: string,
 ): never {
   const name = PROVIDER_NAMES[provider];
   switch (result.code) {
@@ -58,7 +60,7 @@ function rejectValidation(
       return keyError(
         "BAD_REQUEST",
         "no_model_access",
-        `This ${name} API key has no access to ${GENERATION_MODELS[provider].name}.`,
+        `This ${name} API key has no access to ${modelName}.`,
       );
     default:
       return keyError(
@@ -87,7 +89,12 @@ export const save = action({
   handler: async (
     ctx,
     args,
-  ): Promise<{ provider: KeyProvider; last4: string; status: "active" }> => {
+  ): Promise<{
+    provider: KeyProvider;
+    last4: string;
+    status: "active";
+    modelId: string;
+  }> => {
     const userId = await getAuthUserId(ctx);
     if (!userId)
       keyError("UNAUTHORIZED", "unauthorized", "Sign in to save an API key.");
@@ -123,17 +130,46 @@ export const save = action({
         "Saving API keys is not available right now.",
       );
     }
+    // A new key is checked against the model its owner chose, if any.
+    const existing = await ctx.runQuery(
+      internal.providerApiKeys.internalQuery.getEncryptedKey,
+      { userId, provider: args.provider },
+    );
+    let model = userKeyModel(args.provider, existing?.modelId);
+    let choice = { modelId: existing?.modelId, effort: existing?.effort };
     await requireValidationSlot(ctx, userId);
-    const result = await validateProviderKey(args.provider, apiKey);
-    if (!result.ok) rejectValidation(args.provider, result);
+    let result = await validateProviderKey(
+      args.provider,
+      apiKey,
+      model.modelId,
+    );
+    // A new key without access to the chosen model returns to the default
+    // model, so replacing a revoked key never needs the key removed first.
+    const defaultModel = userKeyModel(args.provider);
+    if (
+      !result.ok &&
+      result.code === "no_model_access" &&
+      model.modelId !== defaultModel.modelId
+    ) {
+      model = defaultModel;
+      choice = { modelId: undefined, effort: undefined };
+      result = await validateProviderKey(args.provider, apiKey, model.modelId);
+    }
+    if (!result.ok) rejectValidation(args.provider, result, model.name);
     const last4 = apiKey.slice(-4);
     await ctx.runMutation(internal.providerApiKeys.internalMutation.upsert, {
       userId,
       provider: args.provider,
       ...encrypted,
       last4,
+      ...choice,
     });
-    return { provider: args.provider, last4, status: "active" };
+    return {
+      provider: args.provider,
+      last4,
+      status: "active",
+      modelId: model.modelId,
+    };
   },
 });
 
@@ -189,8 +225,13 @@ export const revalidate = action({
         "This API key can no longer be read. Enter it again.",
       );
     }
+    const model = userKeyModel(args.provider, row.modelId);
     await requireValidationSlot(ctx, userId);
-    const result = await validateProviderKey(args.provider, apiKey);
+    const result = await validateProviderKey(
+      args.provider,
+      apiKey,
+      model.modelId,
+    );
     if (!result.ok) {
       if (result.code !== "unavailable")
         await ctx.runMutation(
@@ -203,12 +244,96 @@ export const revalidate = action({
             keyIv: row.iv,
           },
         );
-      rejectValidation(args.provider, result);
+      rejectValidation(args.provider, result, model.name);
     }
     await ctx.runMutation(
       internal.providerApiKeys.internalMutation.markValidated,
       { userId, provider: args.provider, keyIv: row.iv },
     );
     return { provider: args.provider, status: "active" };
+  },
+});
+
+/**
+ * Choose the model and effort generation uses on the owner's own key. The
+ * key must have access to that model; the provider bills the usage.
+ */
+export const setModel = action({
+  args: {
+    provider: providerValidator,
+    modelId: v.string(),
+    effort: v.optional(v.string()),
+  },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ provider: KeyProvider; modelId: string; effort: string }> => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId)
+      keyError("UNAUTHORIZED", "unauthorized", "Sign in to choose a model.");
+    const offered = USER_KEY_MODELS[args.provider].find(
+      (m) => m.modelId === args.modelId,
+    );
+    if (
+      !offered ||
+      (args.effort !== undefined &&
+        !(offered.efforts as readonly string[]).includes(args.effort))
+    )
+      keyError(
+        "BAD_REQUEST",
+        "unknown_model",
+        `Choose one of: ${USER_KEY_MODELS[args.provider]
+          .map((m) => `${m.modelId} (${m.efforts.join(", ")})`)
+          .join("; ")}.`,
+      );
+    const row = await ctx.runQuery(
+      internal.providerApiKeys.internalQuery.getEncryptedKey,
+      { userId, provider: args.provider },
+    );
+    if (!row)
+      keyError(
+        "NOT_FOUND",
+        "not_found",
+        "Save an API key for this provider before choosing its model.",
+      );
+    const model = userKeyModel(args.provider, args.modelId, args.effort);
+    if (userKeyModel(args.provider, row.modelId).modelId !== model.modelId) {
+      let apiKey: string;
+      try {
+        apiKey = await decryptProviderKey(row);
+      } catch (error) {
+        if (!(error instanceof ProviderKeyEncryptionError)) throw error;
+        if (error.kind === "not_configured")
+          keyError(
+            "UNSUPPORTED_OPERATION",
+            "not_configured",
+            "Key checks are temporarily unavailable.",
+          );
+        keyError(
+          "BAD_REQUEST",
+          "unreadable",
+          "This API key can no longer be read. Enter it again.",
+        );
+      }
+      await requireValidationSlot(ctx, userId);
+      const result = await validateProviderKey(
+        args.provider,
+        apiKey,
+        model.modelId,
+      );
+      if (!result.ok) rejectValidation(args.provider, result, model.name);
+    }
+    await ctx.runMutation(internal.providerApiKeys.internalMutation.setModel, {
+      userId,
+      provider: args.provider,
+      keyIv: row.iv,
+      modelId: model.modelId,
+      effort: model.effort,
+    });
+    return {
+      provider: args.provider,
+      modelId: model.modelId,
+      effort: model.effort,
+    };
   },
 });

@@ -79,6 +79,9 @@ export const upsert = internalMutation({
     iv: v.string(),
     encryptionKeyId: v.string(),
     last4: v.string(),
+    // The model the new key was checked against; unset means the default.
+    modelId: v.optional(v.string()),
+    effort: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const now = Date.now();
@@ -93,6 +96,8 @@ export const upsert = internalMutation({
       iv: args.iv,
       encryptionKeyId: args.encryptionKeyId,
       last4: args.last4,
+      modelId: args.modelId,
+      effort: args.effort,
       status: "active" as const,
       lastValidatedAt: now,
       lastError: undefined,
@@ -282,5 +287,32 @@ export const setExpectedEncryptionKeyId = internalMutation({
         createdAt: Date.now(),
       });
     return { expectedKeyId: args.keyId };
+  },
+});
+
+/** Records the owner's model choice on the key that was checked for it. */
+export const setModel = internalMutation({
+  args: {
+    userId: v.id("users"),
+    provider: providerValidator,
+    keyIv: v.string(),
+    modelId: v.string(),
+    effort: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const row = await ctx.db
+      .query("providerApiKeys")
+      .withIndex("by_user_and_provider", (q) =>
+        q.eq("userId", args.userId).eq("provider", args.provider),
+      )
+      .unique();
+    // A key replaced meanwhile was not checked for this model.
+    if (!row || row.iv !== args.keyIv)
+      throw new Error("The API key changed; choose the model again.");
+    await ctx.db.patch(row._id, {
+      modelId: args.modelId,
+      effort: args.effort,
+      updatedAt: Date.now(),
+    });
   },
 });

@@ -82,6 +82,18 @@ export const CHAT_MODELS: Record<
     outputPer1M: 10,
     quotaWeight: 1,
   },
+  // Available on an owner's own key only; priced for recorded cost.
+  "claude-haiku-5-5": {
+    provider: "anthropic",
+    inputPer1M: 0.1,
+    outputPer1M: 0.5,
+    quotaWeight: 0.05,
+    longContext: {
+      inputTokens: 100_000,
+      inputMultiplier: 5,
+      outputMultiplier: 5,
+    },
+  },
   "gpt-6.1-sol": {
     provider: "openai",
     inputPer1M: 2,
@@ -110,6 +122,71 @@ export function getChatModel(model: string, provider: string) {
       `Unsupported chat pricing: ${provider}/${model}. Add explicit pricing before enabling it.`,
     );
   return entry;
+}
+
+export type ModelEffort = "low" | "medium" | "high";
+export type UserKeyModel = {
+  modelId: string;
+  name: string;
+  efforts: readonly ModelEffort[];
+  defaultEffort: ModelEffort;
+};
+
+/**
+ * Models an owner can choose for their own provider key, the default first.
+ * The provider bills that usage, so it never counts against Gitdog tokens.
+ * Requests are not streamed and stop after two minutes, so settings that can
+ * think for longer, such as Fable 5.1 or xhigh and max effort, are left out.
+ */
+export const USER_KEY_MODELS: Record<"anthropic" | "openai", UserKeyModel[]> = {
+  anthropic: [
+    {
+      modelId: "claude-opus-5-5",
+      name: "Claude Opus 5.5",
+      efforts: ["low", "medium", "high"],
+      defaultEffort: "medium",
+    },
+    {
+      modelId: "claude-sonnet-5-5",
+      name: "Claude Sonnet 5.5",
+      efforts: ["low", "medium", "high"],
+      defaultEffort: "high",
+    },
+    {
+      modelId: "claude-haiku-5-5",
+      name: "Claude Haiku 5.5",
+      efforts: ["low", "medium", "high"],
+      defaultEffort: "medium",
+    },
+  ],
+  openai: [
+    {
+      modelId: "gpt-6.1-sol",
+      name: "GPT-6.1 Sol",
+      efforts: ["low", "medium", "high"],
+      defaultEffort: "high",
+    },
+  ],
+};
+
+/**
+ * The model and effort an owner's key runs with. A choice that is no longer
+ * offered falls back to the default, so a key never stops working.
+ */
+export function userKeyModel(
+  provider: "anthropic" | "openai",
+  modelId?: string,
+  effort?: string,
+): { modelId: string; name: string; effort: ModelEffort } {
+  const models = USER_KEY_MODELS[provider];
+  const model = models.find((m) => m.modelId === modelId) ?? models[0];
+  return {
+    modelId: model.modelId,
+    name: model.name,
+    effort: model.efforts.includes(effort as ModelEffort)
+      ? (effort as ModelEffort)
+      : model.defaultEffort,
+  };
 }
 
 /**

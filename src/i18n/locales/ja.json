@@ -599,12 +599,13 @@
       "errors": {
         "format": "{{provider}} の API キーの形式ではありません。",
         "rejected": "{{provider}} がこの API キーを拒否しました。",
-        "noModelAccess": "この {{provider}} API キーでは Gitdog が使うモデルにアクセスできません。",
+        "noModelAccess": "この {{provider}} API キーでは選んだモデルにアクセスできません。",
         "reenter": "この API キーは読み取れなくなりました。もう一度入力してください。",
         "unavailable": "{{provider}} が現在この API キーを確認できません。しばらくしてからお試しください。",
         "rateLimited": "API キーの確認が多すぎます。数分後にもう一度お試しください。",
         "notConfigured": "現在キーを確認できません。しばらくしてからお試しください。",
-        "wrongProvider": "{{other}}のキーのようです。{{other}}のカードに貼り付けてください。"
+        "wrongProvider": "{{other}}のキーのようです。{{other}}のカードに貼り付けてください。",
+        "unknownModel": "一覧のモデルと推論の強さから選んでください。"
       },
       "valueProp": "自分のAnthropicまたはOpenAIキーでGitdogを実行 — その利用分はGitdogのトークンを使いません。",
       "bullets": {
@@ -615,7 +616,11 @@
       "getKey": "キーを取得",
       "checked": "{{time}}に確認",
       "confirmRemove": "{{provider}}キーを削除しますか？以後はGitdogのトークンを使います。",
-      "moveTo": "{{provider}}に移動"
+      "moveTo": "{{provider}}に移動",
+      "modelLabel": "モデル",
+      "effortLabel": "推論の強さ",
+      "modelHint": "このキーで実行され、{{provider}} から請求されます。Gitdog のトークンは使いません。",
+      "modelSaved": "保存しました"
     }
   },
   "footer": {
