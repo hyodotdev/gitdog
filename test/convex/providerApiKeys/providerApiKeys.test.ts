@@ -420,6 +420,25 @@ describe("provider key model choice", () => {
     ).toMatchObject({ modelId: "claude-opus-5-5", effort: "medium" });
   });
 
+  it("reports a server encryption problem on a model change as unavailable checks", async () => {
+    const t = convexTest(schema, modules);
+    const { as } = await signedIn(t);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("{}", { status: 200 }),
+    );
+    await as.action(api.providerApiKeys.action.save, {
+      provider: "anthropic",
+      apiKey: ANTHROPIC_KEY,
+    });
+    process.env.BYOK_ENCRYPTION_KEY = btoa("short");
+    await expect(
+      as.action(api.providerApiKeys.action.setModel, {
+        provider: "anthropic",
+        modelId: "claude-sonnet-5-5",
+      }),
+    ).rejects.toMatchObject({ data: { reason: "not_configured" } });
+  });
+
   it("refuses models that are not offered, missing keys and models the key cannot use", async () => {
     const t = convexTest(schema, modules);
     const { as } = await signedIn(t);

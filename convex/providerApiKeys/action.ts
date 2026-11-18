@@ -303,6 +303,12 @@ export const setModel = action({
         apiKey = await decryptProviderKey(row);
       } catch (error) {
         if (!(error instanceof ProviderKeyEncryptionError)) throw error;
+        if (error.kind === "not_configured")
+          keyError(
+            "UNSUPPORTED_OPERATION",
+            "not_configured",
+            "Key checks are temporarily unavailable.",
+          );
         keyError(
           "BAD_REQUEST",
           "unreadable",
