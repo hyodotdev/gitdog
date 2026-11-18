@@ -76,6 +76,8 @@ export type ChatCompletionOptions = {
   topP?: number;
   tools?: ToolDefinition[];
   billingLabel?: string;
+  // How long the provider may take; the provider's default when unset.
+  timeoutMs?: number;
   responseFormat?: {
     name: string;
     schema: Record<string, unknown>;

@@ -556,6 +556,22 @@ it.each([
   },
 );
 
+it("waits as long as a request asks before giving up", async () => {
+  const timeout = vi.spyOn(AbortSignal, "timeout");
+  vi.spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(openai())
+    .mockResolvedValueOnce(openai())
+    .mockResolvedValueOnce(claude());
+  await new OpenAIProvider("test").chat(messages);
+  await new OpenAIProvider("test").chat(messages, { timeoutMs: 240_000 });
+  await new ClaudeProvider("fixture-key").chat(messages, {
+    timeoutMs: 240_000,
+  });
+  expect(timeout.mock.calls.map(([ms]) => ms)).toEqual([
+    120_000, 240_000, 240_000,
+  ]);
+});
+
 it("bills OpenAI cache usage as the input it costs", async () => {
   vi.spyOn(globalThis, "fetch").mockResolvedValue(
     openai({

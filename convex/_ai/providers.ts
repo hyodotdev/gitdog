@@ -54,6 +54,7 @@ async function request(
   headers: Record<string, string>,
   body: RecordValue,
   deadline?: number,
+  timeoutMs = REQUEST_TIMEOUT_MS,
 ): Promise<{ data: RecordValue; requestId?: string }> {
   let started = false;
   let requestId: string | undefined;
@@ -66,7 +67,7 @@ async function request(
       method: "POST",
       headers: { "Content-Type": "application/json", ...headers },
       body: serialized,
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     requestId =
       response.headers.get("request-id") ??
@@ -291,6 +292,7 @@ export class ClaudeProvider implements AiProvider {
         ...(options?.tools?.length ? { tools: options.tools } : {}),
       },
       this.enforceDeadline ? CLAUDE_API_ENDS_AT : undefined,
+      options?.timeoutMs,
     );
     const counts = record(data.usage) ? data.usage : {};
     // With fallbacks, top-level usage covers the attempt that produced the
@@ -521,6 +523,8 @@ export class OpenAIProvider implements AiProvider {
             }
           : {}),
       },
+      undefined,
+      options?.timeoutMs,
     );
     const counts = record(data.usage) ? data.usage : {};
     const details = record(counts.input_tokens_details)

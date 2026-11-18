@@ -194,6 +194,11 @@ const MAX_COVERAGE_PASSES = 8;
 // up to 120. A coverage request starts only within 4 minutes of the action's
 // start, so even the slowest one ends before the action is stopped.
 const COVERAGE_REQUEST_CUTOFF_MS = 4 * 60_000;
+// The closing synthesis reads the whole review and can take a reasoning model
+// past the usual two minutes. It may run until this long after the action
+// started (never less than two minutes nor more than five), which still leaves
+// room for verification before Convex stops the action.
+const FINAL_REQUEST_END_MS = 7 * 60_000;
 // After the main review, focused second looks at the same source. Each one
 // resends the main review's last request with only its closing state
 // replaced, so the repository context and sources are read from the prompt
@@ -1610,6 +1615,13 @@ export async function reviewWithContext(args: {
         maxTokens: REVIEW_OUTPUT_TOKENS,
         billingLabel: "pr-review/final",
         responseFormat: REVIEW_RESPONSE_FORMAT,
+        timeoutMs: Math.min(
+          5 * 60_000,
+          Math.max(
+            2 * 60_000,
+            actionStarted + FINAL_REQUEST_END_MS - Date.now(),
+          ),
+        ),
       },
     );
   let final: Awaited<ReturnType<typeof chat>>;
