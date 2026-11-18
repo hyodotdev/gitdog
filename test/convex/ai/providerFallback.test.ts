@@ -183,7 +183,7 @@ describe("credit fallback and exclusive Claude deadline", () => {
       expect(provider.providerId).toBe("openai");
       const body = JSON.parse(fetch.mock.calls[1][1]!.body as string);
       expect(body).toMatchObject({
-        model: "gpt-6.1-sol",
+        model: "gpt-6.2-sol",
         store: false,
         reasoning: { effort: "high" },
         include: ["reasoning.encrypted_content"],
@@ -538,16 +538,16 @@ it.each([
     input_tokens: 11,
     output_tokens: 3,
     total_tokens: 14,
-    input_tokens_details: { cached_tokens: 2 },
+    input_tokens_details: { cached_tokens: 8, cache_write_tokens: 4 },
   },
   {
     input_tokens: 11,
     output_tokens: 3,
     total_tokens: 14,
-    input_tokens_details: { cache_write_tokens: 2 },
+    input_tokens_details: { cached_tokens: -1 },
   },
 ])(
-  "holds inconsistent or unexpected cached usage instead of charging the wrong amount",
+  "holds inconsistent cached usage instead of charging the wrong amount",
   async (counts) => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(openai({ usage: counts }));
     await expect(
@@ -555,6 +555,26 @@ it.each([
     ).rejects.toMatchObject({ billingOutcome: "ambiguous" });
   },
 );
+
+it("bills OpenAI cache usage as the input it costs", async () => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    openai({
+      usage: {
+        input_tokens: 3_000,
+        output_tokens: 10,
+        total_tokens: 3_010,
+        input_tokens_details: {
+          cache_write_tokens: 1_000,
+          cached_tokens: 1_000,
+        },
+      },
+    }),
+  );
+  // 1,000 uncached, 1,000 written at 1.25x and 1,000 read at 0.05x.
+  expect(await new OpenAIProvider("test").chat(messages)).toMatchObject({
+    usage: { promptTokens: 2_300, completionTokens: 10, totalTokens: 2_310 },
+  });
+});
 
 it("counts reasoning-effort reasoning inside output usage exactly once", async () => {
   const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(

@@ -27,8 +27,8 @@ export const GENERATION_MODELS = {
     effort: "medium",
   },
   openai: {
-    modelId: "gpt-6.1-sol",
-    name: "GPT-6.1 Sol",
+    modelId: "gpt-6.2-sol",
+    name: "GPT-6.2 Sol",
     effort: "high",
   },
 } as const;
@@ -95,6 +95,18 @@ export const CHAT_MODELS: Record<
       inputTokens: 100_000,
       inputMultiplier: 5,
       outputMultiplier: 5,
+    },
+  },
+  "gpt-6.2-sol": {
+    provider: "openai",
+    inputPer1M: 2,
+    outputPer1M: 10,
+    quotaWeight: 1,
+    cacheReadMultiplier: 0.05,
+    longContext: {
+      inputTokens: 272_000,
+      inputMultiplier: 2,
+      outputMultiplier: 1.5,
     },
   },
   "gpt-6.1-sol": {
@@ -191,6 +203,12 @@ export const USER_KEY_MODELS: Record<"anthropic" | "openai", UserKeyModel[]> = {
     },
   ],
   openai: [
+    {
+      modelId: "gpt-6.2-sol",
+      name: "GPT-6.2 Sol",
+      efforts: ["low", "medium", "high"],
+      defaultEffort: "high",
+    },
     {
       modelId: "gpt-6.1-sol",
       name: "GPT-6.1 Sol",

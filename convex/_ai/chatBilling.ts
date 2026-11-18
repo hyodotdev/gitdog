@@ -378,8 +378,10 @@ export function getChatReservationLimits(
   messages: ChatMessage[],
   options?: ChatCompletionOptions,
 ): { inputTokenLimit: number; outputTokenLimit: number } {
-  // Every token is at least one byte, so the request size bounds its input
-  // tokens, and the cacheable prefix bounds the extra a cache write costs.
+  // The request size bounds its input tokens, and the cacheable prefix bounds
+  // the extra a Claude cache write costs. OpenAI may write a whole prompt to
+  // its cache, which a serialized request still covers: a token there costs
+  // 1.25x but always spans well over 1.25 bytes.
   const inputTokenLimit =
     chatRequestBytes(messages, options) +
     Math.ceil(

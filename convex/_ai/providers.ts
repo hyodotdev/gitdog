@@ -523,26 +523,36 @@ export class OpenAIProvider implements AiProvider {
       },
     );
     const counts = record(data.usage) ? data.usage : {};
-    const billed = usage(counts.input_tokens, counts.output_tokens, requestId);
     const details = record(counts.input_tokens_details)
       ? counts.input_tokens_details
       : {};
+    // OpenAI caches prompts on its own. Cache writes and reads are part of
+    // input_tokens, and count as the input they cost on this model.
+    const cacheWrite = details.cache_write_tokens ?? 0;
+    const cacheRead = details.cached_tokens ?? 0;
     if (
-      (details.cached_tokens ?? 0) !== 0 ||
-      (details.cache_write_tokens ?? 0) !== 0
-    ) {
-      throw new ChatProviderRequestError(
-        "OpenAI returned unexpected prompt cache usage",
-        "ambiguous",
-        { providerRequestId: requestId },
-      );
-    }
-    if (counts.total_tokens !== billed.totalTokens)
+      !tokens(counts.input_tokens) ||
+      !tokens(counts.output_tokens) ||
+      !tokens(cacheWrite) ||
+      !tokens(cacheRead) ||
+      cacheWrite + cacheRead > counts.input_tokens ||
+      counts.total_tokens !== counts.input_tokens + counts.output_tokens
+    )
       throw new ChatProviderRequestError(
         "OpenAI returned inconsistent usage metadata",
         "ambiguous",
         { providerRequestId: requestId },
       );
+    const billed = usage(
+      cacheAdjustedInputTokens(
+        this.modelId,
+        counts.input_tokens - cacheWrite - cacheRead,
+        cacheWrite,
+        cacheRead,
+      ),
+      counts.output_tokens,
+      requestId,
+    );
     try {
       if (!Array.isArray(data.output)) throw new Error("Invalid output");
       const history: Array<

@@ -617,6 +617,8 @@ export const generate = internalAction({
           beforeProviderStart: ensureCurrent,
           activeProviderWaitMs: REVIEW_ACTIVE_PROVIDER_WAIT_MS,
         });
+        // The metered route is the one that switches to the fallback provider.
+        runProvider = provider;
         let result: Awaited<ReturnType<typeof reviewWithContext>>;
         try {
           if (discussion) run.discussionEntries = discussion.length;
