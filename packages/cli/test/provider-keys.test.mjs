@@ -70,6 +70,8 @@ test("provider-keys list shows metadata and flags unreadable keys", async () => 
     {
       provider: "anthropic",
       key: "…abcd",
+      model: null,
+      effort: null,
       status: "unreadable",
       lastChecked: "2026-11-01T00:00:00.000Z",
       lastError: null,
@@ -77,6 +79,8 @@ test("provider-keys list shows metadata and flags unreadable keys", async () => 
     {
       provider: "openai",
       key: "…wxyz",
+      model: null,
+      effort: null,
       status: "out_of_credit",
       lastChecked: "2026-11-02T00:00:00.000Z",
       lastError: "out_of_credit",
@@ -149,7 +153,8 @@ test("provider-keys maps server reasons to clear messages", async () => {
     ["wrong_provider", /other provider/],
     ["rate_limited", /few minutes/],
     ["not_configured", /cannot store API keys/],
-    ["no_model_access", /no access to the model/],
+    ["no_model_access", /no access to the chosen model/],
+    ["unknown_model", /provider-keys models/],
     ["unreadable", /enter it again/],
   ]) {
     const api = recordingApi(() => {
@@ -246,11 +251,21 @@ test("provider-keys list prints every column for people", async () => {
   await run(api, ui, ["provider-keys", "list"]);
   assert.deepEqual(ui.tables, [
     {
-      keys: ["provider", "key", "status", "lastChecked", "lastError"],
+      keys: [
+        "provider",
+        "key",
+        "model",
+        "effort",
+        "status",
+        "lastChecked",
+        "lastError",
+      ],
       rows: [
         {
           provider: "openai",
           key: "…wxyz",
+          model: null,
+          effort: null,
           status: "checks_unavailable",
           lastChecked: "2026-11-02T00:00:00.000Z",
           lastError: null,
@@ -298,4 +313,37 @@ test("output never shows an Anthropic or OpenAI key", () => {
     "sk-feature-login-refactor-2",
   ])
     assert.equal(redactSecrets(name), name);
+});
+
+test("provider-keys models and model choose the model for your own key", async () => {
+  const ui = new KeyUi();
+  const api = recordingApi(({ path }) =>
+    path.endsWith("query:models")
+      ? {
+          anthropic: [
+            {
+              modelId: "claude-opus-5-5",
+              name: "Claude Opus 5.5",
+              efforts: ["low", "medium"],
+              defaultEffort: "medium",
+            },
+          ],
+          openai: [],
+        }
+      : { provider: "anthropic", modelId: "claude-opus-5-5", effort: "low" },
+  );
+  await run(api, ui, ["provider-keys", "models"]);
+  await run(api, ui, [
+    "provider-keys",
+    "model",
+    "anthropic",
+    "claude-opus-5-5",
+    "--effort",
+    "low",
+  ]);
+  assert.deepEqual(api.calls.at(-1), {
+    kind: "action",
+    path: "providerApiKeys/action:setModel",
+    args: { provider: "anthropic", modelId: "claude-opus-5-5", effort: "low" },
+  });
 });

@@ -628,6 +628,26 @@ describe("Claude safety refusals", () => {
       totalTokens: 14,
     });
   });
+  it("runs an owner's own key on the model and effort they chose", async () => {
+    const fetch = vi.spyOn(globalThis, "fetch");
+    fetch.mockResolvedValueOnce(
+      claude({ content: [{ type: "text", text: "ok" }] }),
+    );
+    const provider = new ClaudeProvider("fixture-key", undefined, {
+      enforceAccessDeadline: false,
+      model: {
+        modelId: "claude-haiku-5-5",
+        name: "Claude Haiku 5.5",
+        effort: "low",
+      },
+    });
+    expect(provider.modelId).toBe("claude-haiku-5-5");
+    await provider.chat(messages);
+    expect(JSON.parse(fetch.mock.calls[0][1]!.body as string)).toMatchObject({
+      model: "claude-haiku-5-5",
+      output_config: { effort: "low" },
+    });
+  });
   it("reports the serving model of a sticky fallback turn", async () => {
     const fetch = vi.spyOn(globalThis, "fetch");
     fetch.mockResolvedValueOnce(

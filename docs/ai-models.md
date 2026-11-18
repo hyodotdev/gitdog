@@ -28,6 +28,13 @@ AI provider keys**. Generation for repositories they own (issue and discussion
 replies, follow-ups, pull request reviews and learning extraction) then runs on
 those keys instead of Gitdog's:
 
+- Each key runs the model and effort its owner chooses (web settings or
+  `gitdog provider-keys model`), checked against the key when chosen and when
+  the key is saved again. Anthropic: Claude Opus 5.5 (default, `medium`),
+  Sonnet 5.5 (`high`), Fable 5.1 (`high`) or Haiku 5.5 (`medium`); OpenAI:
+  GPT-6.1 Sol (`high`). Fable 5.1 is unavailable to zero-data-retention
+  organizations, and Haiku 5.5 bills prompts over 100K tokens at a higher
+  rate. A model no longer offered falls back to the default.
 - Claude runs on the user's Anthropic key and is not affected by Gitdog's
   Claude deadline. The user's OpenAI key is used if only it is saved, if the
   Anthropic key is rejected, or if Claude reports exhausted credit.

@@ -284,3 +284,30 @@ export const setExpectedEncryptionKeyId = internalMutation({
     return { expectedKeyId: args.keyId };
   },
 });
+
+/** Records the owner's model choice on the key that was checked for it. */
+export const setModel = internalMutation({
+  args: {
+    userId: v.id("users"),
+    provider: providerValidator,
+    keyIv: v.string(),
+    modelId: v.string(),
+    effort: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const row = await ctx.db
+      .query("providerApiKeys")
+      .withIndex("by_user_and_provider", (q) =>
+        q.eq("userId", args.userId).eq("provider", args.provider),
+      )
+      .unique();
+    // A key replaced meanwhile was not checked for this model.
+    if (!row || row.iv !== args.keyIv)
+      throw new Error("The API key changed; choose the model again.");
+    await ctx.db.patch(row._id, {
+      modelId: args.modelId,
+      effort: args.effort,
+      updatedAt: Date.now(),
+    });
+  },
+});

@@ -1430,6 +1430,16 @@ export const stampAutomaticNotice = internalMutation({
 });
 
 /** Remember the status comment posted for a review, once. */
+/** Frees the hourly catch-up allowance a catch-up that did nothing took. */
+export const releaseCatchUp = internalMutation({
+  args: { repositoryId: v.id("repositories"), stampedAt: v.number() },
+  handler: async (ctx, args) => {
+    const repo = await ctx.db.get(args.repositoryId);
+    if (repo?.pullRequestCatchUpAt === args.stampedAt)
+      await ctx.db.patch(repo._id, { pullRequestCatchUpAt: undefined });
+  },
+});
+
 /** The status comment was deleted because the review it described was posted. */
 export const forgetStatusComment = internalMutation({
   args: { actionId: v.id("ticketActions"), commentId: v.number() },

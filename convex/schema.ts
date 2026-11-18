@@ -34,6 +34,9 @@ const applicationTables = {
       v.literal("invalid"),
       v.literal("out_of_credit"),
     ),
+    // The owner's model and effort for this key; unset means the default.
+    modelId: v.optional(v.string()),
+    effort: v.optional(v.string()),
     lastValidatedAt: v.number(),
     // Set when this key failed to decrypt (the owner is told once); cleared
     // when the key is saved or checked again.

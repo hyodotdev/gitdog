@@ -225,12 +225,22 @@
     "args": "{ provider: v.union(v.literal(\"anthropic\"), v.literal(\"openai\")), apiKey: v.string() }"
   },
   {
+    "path": "providerApiKeys/action:setModel",
+    "kind": "action",
+    "args": "{\n    provider: v.union(v.literal(\"anthropic\"), v.literal(\"openai\")),\n    modelId: v.string(),\n    effort: v.optional(v.string()),\n  }"
+  },
+  {
     "path": "providerApiKeys/mutation:remove",
     "kind": "mutation",
     "args": "{\n    provider: v.union(v.literal(\"anthropic\"), v.literal(\"openai\")),\n  }"
   },
   {
     "path": "providerApiKeys/query:list",
+    "kind": "query",
+    "args": "{}"
+  },
+  {
+    "path": "providerApiKeys/query:models",
     "kind": "query",
     "args": "{}"
   },

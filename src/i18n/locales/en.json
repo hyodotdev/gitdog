@@ -600,12 +600,13 @@
       "errors": {
         "format": "This does not look like an {{provider}} API key.",
         "rejected": "{{provider}} rejected this API key.",
-        "noModelAccess": "This {{provider}} API key has no access to the model Gitdog uses.",
+        "noModelAccess": "This {{provider}} API key has no access to the chosen model.",
         "reenter": "This API key can no longer be read. Enter it again.",
         "unavailable": "{{provider}} could not check this API key right now. Try again shortly.",
         "rateLimited": "Too many API key checks. Try again in a few minutes.",
         "notConfigured": "Key checks are temporarily unavailable. Try again later.",
-        "wrongProvider": "This looks like an {{other}} key. Paste it into the {{other}} card."
+        "wrongProvider": "This looks like an {{other}} key. Paste it into the {{other}} card.",
+        "unknownModel": "Choose one of the listed models and efforts."
       },
       "valueProp": "Run Gitdog on your own Anthropic or OpenAI key — that usage never touches your Gitdog tokens.",
       "bullets": {
@@ -616,7 +617,11 @@
       "getKey": "Get a key",
       "checked": "Checked {{time}}",
       "confirmRemove": "Remove your {{provider}} key? Gitdog will use its own tokens again.",
-      "moveTo": "Move to {{provider}}"
+      "moveTo": "Move to {{provider}}",
+      "modelLabel": "Model",
+      "effortLabel": "Effort",
+      "modelHint": "Runs on this key and is billed by {{provider}}. It never uses Gitdog tokens.",
+      "modelSaved": "Saved"
     }
   },
   "footer": {

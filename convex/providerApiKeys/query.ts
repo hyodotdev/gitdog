@@ -1,6 +1,7 @@
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { query } from "../_generated/server";
 import { readEncryptionState } from "./encryptionState";
+import { USER_KEY_MODELS, userKeyModel } from "../_ai/config";
 
 export const list = query({
   args: {},
@@ -24,6 +25,7 @@ export const list = query({
           row.encryptionKeyId === state.keyId &&
           row.unreadableAt === undefined),
       provider: row.provider,
+      ...userKeyModel(row.provider, row.modelId, row.effort),
       last4: row.last4,
       status: row.status,
       lastValidatedAt: row.lastValidatedAt,
@@ -32,4 +34,10 @@ export const list = query({
       updatedAt: row.updatedAt,
     }));
   },
+});
+
+/** The models and efforts an owner can choose for their own keys. */
+export const models = query({
+  args: {},
+  handler: async () => USER_KEY_MODELS,
 });

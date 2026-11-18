@@ -24,7 +24,7 @@ export async function reviewOpenPullRequests(
   await ctx.scheduler.runAfter(
     0,
     internal.pullRequests.internalAction.reviewOpenPullRequests,
-    { repositoryId: repository._id },
+    { repositoryId: repository._id, stampedAt: now },
   );
 }
 
