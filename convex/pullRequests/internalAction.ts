@@ -18,6 +18,7 @@ import {
   BATCH_REVIEW_THRESHOLD,
   changedSince,
   getPullRequest,
+  listOpenPullRequests,
   hasUnresolvedOwnThreads,
   resolveOwnThreads,
   isBotPullRequestAuthor,
@@ -205,6 +206,50 @@ export const observe = internalAction({
         "PR observation failed after bounded retries. Check GitHub App permissions and installation access.",
       );
     }
+  },
+});
+
+// Reviews start on pull request events, so pull requests opened before reviews
+// were on never get one. When reviews turn on, a few recently updated ones are
+// reviewed once, spaced out because an account runs one review at a time.
+const CATCH_UP_PULL_REQUESTS = 5;
+const CATCH_UP_WINDOW_MS = 30 * 24 * 60 * 60_000;
+const CATCH_UP_SPACING_MS = 10 * 60_000;
+
+export const reviewOpenPullRequests = internalAction({
+  args: { repositoryId: v.id("repositories") },
+  handler: async (ctx, args): Promise<void> => {
+    const repo = await ctx.runQuery(
+      internal.repositories.internalQuery.getById,
+      { repositoryId: args.repositoryId },
+    );
+    if (
+      !repo ||
+      repo.isActive !== true ||
+      repo.settings.pullRequestReviewsEnabled !== true
+    )
+      return;
+    const access = await resolveVerifiedRepositoryAccess(
+      ctx,
+      args.repositoryId,
+    );
+    const now = Date.now();
+    const recent = (await listOpenPullRequests(access))
+      .filter(
+        (pr) =>
+          Number.isSafeInteger(pr.number) &&
+          !pr.draft &&
+          !isBotPullRequestAuthor(pr.user) &&
+          now - Date.parse(pr.updated_at) <= CATCH_UP_WINDOW_MS,
+      )
+      .slice(0, CATCH_UP_PULL_REQUESTS);
+    // observe reviews a pull request only until it has one finished review.
+    for (const [index, pr] of recent.entries())
+      await ctx.scheduler.runAfter(
+        index * CATCH_UP_SPACING_MS,
+        internal.pullRequests.internalAction.observe,
+        { repositoryId: args.repositoryId, number: pr.number },
+      );
   },
 });
 

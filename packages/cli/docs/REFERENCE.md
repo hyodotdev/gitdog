@@ -384,7 +384,8 @@ npx gitdog@latest reviews recheck ACTION_ID
 ```
 
 Gitdog reviews a pull request once, when it is opened or marked ready for
-review. The `reviews` commands match the pull request comments
+review, and turning `pullRequestReviewsEnabled` on also reviews up to five open
+pull requests updated in the last 30 days. The `reviews` commands match the pull request comments
 `@gitdogai review` (commits since the last review), `@gitdogai full review`
 and `@gitdogai resolve` (resolves Gitdog's threads); the CLI prints the result
 instead of replying on GitHub. On GitHub, commands go in the pull request

@@ -90,7 +90,10 @@ dropped in verification only when the verifier quotes source that refutes it.
 found there; `bun run test:e2e:recall` replays the reviewer on them.
 
 Gitdog reviews a pull request once, when it is opened or marked ready for
-review. Later reviews run when the author or a collaborator comments
+review. When pull request reviews are turned on, or a repository is reactivated
+or reconnected with them on, it also reviews up to five open pull requests
+updated in the last 30 days, ten minutes apart; drafts and bot pull requests
+are skipped. Later reviews run when the author or a collaborator comments
 `@<app-slug> review` (changes since the last review) or `@<app-slug> full
 review`; `@<app-slug> resolve` resolves Gitdog's threads and `@<app-slug> help`
 lists the commands; `gitdog reviews request|resolve` runs the same from the CLI.

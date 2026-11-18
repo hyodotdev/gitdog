@@ -81,6 +81,20 @@ export async function getPullRequest(
     throw new Error("Pull request identity is invalid");
   return pr;
 }
+/** Open pull requests, the most recently updated first. */
+export async function listOpenPullRequests(
+  access: VerifiedRepositoryAccess,
+): Promise<Array<PullRequest & { updated_at: string }>> {
+  const pulls = await readReviewJson<
+    Array<PullRequest & { updated_at: string }>
+  >(
+    access,
+    "/pulls?state=open&sort=updated&direction=desc&per_page=30",
+    "List open pull requests",
+  );
+  if (!Array.isArray(pulls)) throw new Error("Open pull requests are invalid");
+  return pulls;
+}
 // Every group is a full model review, so bound the total before any spend.
 const MAX_REVIEW_FILES = 300;
 export const BATCH_REVIEW_THRESHOLD = 60;

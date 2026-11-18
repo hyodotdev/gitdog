@@ -1273,6 +1273,107 @@ describe("PR review durable lifecycle", () => {
   });
 });
 
+describe("open pull requests when reviews turn on", () => {
+  const scheduled = (f: Awaited<ReturnType<typeof fixture>>, name: string) =>
+    f.t.run(async (ctx) =>
+      (await ctx.db.system.query("_scheduled_functions").collect()).filter(
+        (job) => job.name.includes(name),
+      ),
+    );
+  it("starts reviews of open pull requests once, when reviews turn on", async () => {
+    const f = await fixture();
+    await f.t.run((ctx) =>
+      ctx.db.patch(f.repositoryId, {
+        settings: { ...settings, pullRequestReviewsEnabled: false },
+      }),
+    );
+    const owner = f.t.withIdentity({ subject: f.userId });
+    for (let i = 0; i < 2; i++)
+      await owner.mutation(api.repositories.mutation.updateSettings, {
+        repositoryId: f.repositoryId,
+        settings,
+      });
+    expect(await scheduled(f, "reviewOpenPullRequests")).toHaveLength(1);
+  });
+  it("reviews only a few recently updated pull requests by people, spaced out", async () => {
+    const f = await fixture();
+    const github = await import("../../../convex/pullRequests/github");
+    const repository = (await f.t.run((ctx) => ctx.db.get(f.repositoryId)))!;
+    vi.spyOn(
+      repositoryIdentity,
+      "resolveVerifiedRepositoryAccess",
+    ).mockResolvedValue({
+      repository,
+      installation: {} as never,
+      githubRepositoryId: 123,
+      githubRepo: "owner/repo",
+      owner: "owner",
+      repo: "repo",
+      token: "fixture-token",
+    });
+    const day = 24 * 60 * 60_000;
+    const pull = (
+      number: number,
+      extra: { draft?: boolean; login?: string; daysAgo?: number } = {},
+    ) => ({
+      id: number,
+      number,
+      state: "open",
+      draft: extra.draft ?? false,
+      title: `PR ${number}`,
+      body: null,
+      user: { login: extra.login ?? "person" },
+      head: { sha: "a".repeat(40) },
+      base: { sha: "b".repeat(40), repo: { id: 123 } },
+      changed_files: 1,
+      updated_at: new Date(
+        Date.now() - (extra.daysAgo ?? 1) * day,
+      ).toISOString(),
+    });
+    vi.spyOn(github, "listOpenPullRequests").mockResolvedValue([
+      pull(1, { draft: true }),
+      pull(2, { login: "dependabot[bot]" }),
+      pull(3),
+      pull(4),
+      pull(5),
+      pull(6),
+      pull(7),
+      pull(8),
+      pull(9, { daysAgo: 40 }),
+    ]);
+    await f.t.action(
+      internal.pullRequests.internalAction.reviewOpenPullRequests,
+      { repositoryId: f.repositoryId },
+    );
+    const jobs = (await scheduled(f, "internalAction:observe")).sort(
+      (a, b) => a.scheduledTime - b.scheduledTime,
+    );
+    expect(
+      jobs.map((job) => (job.args[0] as { number: number }).number),
+    ).toEqual([3, 4, 5, 6, 7]);
+    // An account runs one review at a time.
+    expect(
+      jobs[1].scheduledTime - jobs[0].scheduledTime,
+    ).toBeGreaterThanOrEqual(10 * 60_000 - 1_000);
+  });
+  it("does nothing for a repository with reviews off", async () => {
+    const f = await fixture();
+    const github = await import("../../../convex/pullRequests/github");
+    const list = vi.spyOn(github, "listOpenPullRequests");
+    await f.t.run((ctx) =>
+      ctx.db.patch(f.repositoryId, {
+        settings: { ...settings, pullRequestReviewsEnabled: false },
+      }),
+    );
+    await f.t.action(
+      internal.pullRequests.internalAction.reviewOpenPullRequests,
+      { repositoryId: f.repositoryId },
+    );
+    expect(list).not.toHaveBeenCalled();
+    expect(await scheduled(f, "internalAction:observe")).toHaveLength(0);
+  });
+});
+
 describe("bot review quota protection at the live GitHub boundary", () => {
   async function liveFixture(author: { login: string; type?: string }) {
     const f = await fixture();

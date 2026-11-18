@@ -31,6 +31,19 @@ import {
   DISCONNECT_EXECUTION_RECONCILIATION_TTL_MS,
 } from "../ticketActions/executionRecovery";
 
+// Reviews start on pull request events, so when they turn on, open pull
+// requests from before get their first review too.
+async function reviewOpenPullRequests(
+  ctx: MutationCtx,
+  repositoryId: Id<"repositories">,
+) {
+  await ctx.scheduler.runAfter(
+    0,
+    internal.pullRequests.internalAction.reviewOpenPullRequests,
+    { repositoryId },
+  );
+}
+
 async function reactivateInstallationReconnect(
   ctx: MutationCtx,
   repository: Doc<"repositories">,
@@ -152,6 +165,8 @@ async function reactivateInstallationReconnect(
       internal.repoIndexing.action.indexRepository,
       { repositoryId: repository._id, expectedIndexVersion: indexVersion },
     );
+    if (repository.settings.pullRequestReviewsEnabled === true)
+      await reviewOpenPullRequests(ctx, repository._id);
   }
   return repository._id;
 }
@@ -392,10 +407,17 @@ export const updateSettings = mutation({
       throw new Error("repository disconnect cleanup is still in progress");
     }
 
+    const settings = { ...repo.settings, ...args.settings };
     await ctx.db.patch(args.repositoryId, {
-      settings: { ...repo.settings, ...args.settings },
+      settings,
       updatedAt: Date.now(),
     });
+    if (
+      repo.isActive &&
+      repo.settings.pullRequestReviewsEnabled !== true &&
+      settings.pullRequestReviewsEnabled === true
+    )
+      await reviewOpenPullRequests(ctx, args.repositoryId);
 
     return args.repositoryId;
   },
@@ -547,6 +569,8 @@ export const toggleActive = mutation({
           expectedIndexVersion: activationVersion,
         },
       );
+      if (repo.settings.pullRequestReviewsEnabled === true)
+        await reviewOpenPullRequests(ctx, args.repositoryId);
     }
 
     return args.repositoryId;
