@@ -515,6 +515,11 @@ describe("uncertain review candidates", () => {
     );
     expect((await promise).findings).toEqual([confident]);
     expect(requestOptions[8].billingLabel).toBe("pr-review/final");
+    // Each turn after the first shows how many are left, and the last ones
+    // ask for an answer.
+    expect(state(requests[1]).turnsLeft).toBe(7);
+    expect(state(requests[5]).turnWarning).toBeUndefined();
+    expect(state(requests[6]).turnWarning).toContain("last turns");
     // The closing synthesis may run past the usual two minutes.
     expect(requestOptions[8].timeoutMs).toBeGreaterThan(120_000);
     expect(requestOptions[8].timeoutMs).toBeLessThanOrEqual(300_000);
@@ -1106,5 +1111,57 @@ describe("second looks after the main review", () => {
       await promise;
       expect(labels(requestOptions)).toEqual(["pr-review/0"]);
     }
+  });
+});
+
+describe("models that keep asking for the same source", () => {
+  it("answers a repeated read without showing the file again", async () => {
+    const { promise, requests } = fixture([
+      tool("read_file", { path: file.filename, ref: "head" }),
+      stop(),
+    ]);
+    await promise;
+    const results = state(requests[1]).recentToolResults as Array<
+      Record<string, unknown>
+    >;
+    expect(results.at(-1)).toMatchObject({
+      tool: "read_file",
+      path: file.filename,
+      status: "already shown in SOURCE blocks; nothing more to show",
+    });
+    expect(
+      state(requests[1]).inspectedSource.filter(
+        (s: { path: string; ref: string }) =>
+          s.path === file.filename && s.ref === "head",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("drops an unverifiable finding from the closing synthesis instead of failing", async () => {
+    const unverifiable: Finding = {
+      ...finding,
+      title: "A claim quoting code that is not in the source",
+      evidence: [
+        {
+          path: file.filename,
+          ref: "head",
+          quote: "return cache.lookup(unrelatedKey);",
+        },
+      ],
+    };
+    const { promise } = fixture([
+      ...Array.from({ length: 8 }, () =>
+        tool("search_paths", { query: "service" }),
+      ),
+      stop([finding, unverifiable]),
+      verified(),
+    ]);
+    const result = await promise;
+    expect(result.findings).toEqual([finding]);
+    expect(result.excludedPaths).toContain(file.filename);
+    // The file counts as not reviewed, so the review cannot approve.
+    expect(
+      result.reads.some((r) => r.ref === "head" && r.path === file.filename),
+    ).toBe(false);
   });
 });
