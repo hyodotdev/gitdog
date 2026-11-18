@@ -9,7 +9,7 @@ and CLI never store provider keys.
 
 - Primary: **Claude Opus 5.5** (`claude-opus-5-5`) at `medium` effort, with
   Anthropic's server-side refusal fallback.
-- Fallback: **GPT-6.1 Sol** (`gpt-6.1-sol`) at `high` reasoning effort through
+- Fallback: **GPT-6.2 Sol** (`gpt-6.2-sol`) at `high` reasoning effort through
   the OpenAI Responses API.
 - Claude is used strictly before **2027-01-18 00:00 Asia/Seoul**
   (`2027-01-17T15:00:00Z`); after that, new requests go to OpenAI.
@@ -31,7 +31,9 @@ those keys instead of Gitdog's:
 - Each key runs the model and effort its owner chooses (web settings or
   `gitdog provider-keys model`), checked against the key when chosen and when
   the key is saved again. Anthropic: Claude Opus 5.5 (default, `medium`),
-  Sonnet 5.5 (`high`) or Haiku 5.5 (`medium`); OpenAI: GPT-6.1 Sol (`high`).
+  Sonnet 5.5 (`high`) or Haiku 5.5 (`medium`); OpenAI: GPT-6.1 Sol (default,
+  `high`; keys saved before 6.2 were checked against it) or GPT-6.2 Sol
+  (`high`).
   Efforts are `low`, `medium` or `high`: requests are not streamed and stop
   after two minutes, so Fable 5.1 and `xhigh`/`max` are not offered. Haiku
   5.5 bills prompts over 100K tokens at 5x and has no server-side refusal
@@ -93,6 +95,7 @@ indexing costs no AI tokens.
 | Model             | Input per 1M tokens | Output per 1M tokens | Quota weight |
 | ----------------- | ------------------- | -------------------- | ------------ |
 | Claude Opus 5.5   | $4.00               | $20.00               | 2            |
+| GPT-6.2 Sol       | $2.00               | $10.00               | 1            |
 | GPT-6.1 Sol       | $2.00               | $10.00               | 1            |
 | Claude Sonnet 5.5 | $2.00               | $10.00               | 1 (own keys) |
 | Claude Haiku 5.5  | $0.10               | $0.50                | own keys     |
@@ -129,10 +132,12 @@ the serving model as `servedModel`, and records its cost at that model's
 price.
 
 Sol prompts above 272K input tokens use 2x input and 1.5x output pricing.
-Prompt caching is disabled, so recorded token counts map directly to the listed
-uncached prices. Thinking tokens are included in the provider's output usage.
+OpenAI prompt caching is turned off (explicit mode with no breakpoint), since
+its automatic mode writes the whole prompt again whenever its end changes. If
+OpenAI still reports cache usage, it is recorded like Claude's: a write at
+1.25x and a read at 0.05x on GPT-6.2 Sol (0.1x on 6.1). Thinking tokens are included in the provider's output usage.
 See [Claude pricing](https://platform.claude.com/docs/en/about-claude/pricing)
-and [Sol pricing](https://developers.openai.com/api/docs/models/gpt-6.1-sol).
+and [Sol pricing](https://developers.openai.com/api/docs/models/gpt-6.2-sol).
 
 ## Plans and token packs
 

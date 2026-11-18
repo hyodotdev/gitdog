@@ -14,6 +14,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import assert from "node:assert/strict";
+import { GENERATION_MODELS } from "../convex/_ai/config";
 const deployment = "fortunate-chihuahua-679";
 const root = path.resolve(import.meta.dirname, "..");
 const logRoot = path.resolve(
@@ -171,7 +172,9 @@ try {
     assert(["anthropic", "openai"].includes(row.provider));
     assert.equal(
       row.model,
-      row.provider === "anthropic" ? "claude-opus-5-5" : "gpt-6.1-sol",
+      row.provider === "anthropic"
+        ? GENERATION_MODELS.anthropic.modelId
+        : GENERATION_MODELS.openai.modelId,
     );
     // Opus 5.5 counts twice against quota on Gitdog's key.
     assert.equal(
@@ -183,6 +186,7 @@ try {
       "claude-opus-5-5": [4, 20],
       "claude-opus-5": [5, 25],
       "claude-opus-4-8": [5, 25],
+      "gpt-6.2-sol": [2, 10],
       "gpt-6.1-sol": [2, 10],
     };
     const [inputPer1M, outputPer1M] =

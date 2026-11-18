@@ -3235,8 +3235,9 @@ describe("batched PR reviews", () => {
     expect(record).toMatchObject({
       kind: "full",
       outcome: "proposed",
-      providerId: "anthropic",
-      modelId: "claude-opus-5-5",
+      // The provider that answered, as the metered route reports it.
+      providerId: "openai",
+      modelId: "fixture",
       page: 1,
       group: 0,
       keySource: "gitdog",

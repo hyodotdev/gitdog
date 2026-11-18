@@ -54,6 +54,7 @@ async function request(
   headers: Record<string, string>,
   body: RecordValue,
   deadline?: number,
+  timeoutMs = REQUEST_TIMEOUT_MS,
 ): Promise<{ data: RecordValue; requestId?: string }> {
   let started = false;
   let requestId: string | undefined;
@@ -66,7 +67,7 @@ async function request(
       method: "POST",
       headers: { "Content-Type": "application/json", ...headers },
       body: serialized,
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     requestId =
       response.headers.get("request-id") ??
@@ -291,6 +292,7 @@ export class ClaudeProvider implements AiProvider {
         ...(options?.tools?.length ? { tools: options.tools } : {}),
       },
       this.enforceDeadline ? CLAUDE_API_ENDS_AT : undefined,
+      options?.timeoutMs,
     );
     const counts = record(data.usage) ? data.usage : {};
     // With fallbacks, top-level usage covers the attempt that produced the
@@ -521,28 +523,40 @@ export class OpenAIProvider implements AiProvider {
             }
           : {}),
       },
+      undefined,
+      options?.timeoutMs,
     );
     const counts = record(data.usage) ? data.usage : {};
-    const billed = usage(counts.input_tokens, counts.output_tokens, requestId);
     const details = record(counts.input_tokens_details)
       ? counts.input_tokens_details
       : {};
+    // Should OpenAI still report cache usage, its writes and reads are part
+    // of input_tokens and count as the input they cost on this model.
+    const cacheWrite = details.cache_write_tokens ?? 0;
+    const cacheRead = details.cached_tokens ?? 0;
     if (
-      (details.cached_tokens ?? 0) !== 0 ||
-      (details.cache_write_tokens ?? 0) !== 0
-    ) {
-      throw new ChatProviderRequestError(
-        "OpenAI returned unexpected prompt cache usage",
-        "ambiguous",
-        { providerRequestId: requestId },
-      );
-    }
-    if (counts.total_tokens !== billed.totalTokens)
+      !tokens(counts.input_tokens) ||
+      !tokens(counts.output_tokens) ||
+      !tokens(cacheWrite) ||
+      !tokens(cacheRead) ||
+      cacheWrite + cacheRead > counts.input_tokens ||
+      counts.total_tokens !== counts.input_tokens + counts.output_tokens
+    )
       throw new ChatProviderRequestError(
         "OpenAI returned inconsistent usage metadata",
         "ambiguous",
         { providerRequestId: requestId },
       );
+    const billed = usage(
+      cacheAdjustedInputTokens(
+        this.modelId,
+        counts.input_tokens - cacheWrite - cacheRead,
+        cacheWrite,
+        cacheRead,
+      ),
+      counts.output_tokens,
+      requestId,
+    );
     try {
       if (!Array.isArray(data.output)) throw new Error("Invalid output");
       const history: Array<

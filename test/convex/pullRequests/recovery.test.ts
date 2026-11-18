@@ -515,6 +515,10 @@ describe("uncertain review candidates", () => {
     );
     expect((await promise).findings).toEqual([confident]);
     expect(requestOptions[8].billingLabel).toBe("pr-review/final");
+    // The closing synthesis may run past the usual two minutes.
+    expect(requestOptions[8].timeoutMs).toBeGreaterThan(120_000);
+    expect(requestOptions[8].timeoutMs).toBeLessThanOrEqual(300_000);
+    expect(requestOptions[7]).not.toHaveProperty("timeoutMs");
     expect(requests[8][0].content).toContain("Commit suggestions are disabled");
   });
 
