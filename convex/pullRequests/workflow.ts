@@ -23,6 +23,7 @@ import {
   validOpenRequests,
   type OpenRequest,
   MIN_FINDING_CONFIDENCE,
+  OMITTED_SOURCE_MARKER,
   REVIEW_PROMPT,
   REVIEW_RESPONSE_FORMAT,
   addedLines,
@@ -199,6 +200,23 @@ const COVERAGE_REQUEST_CUTOFF_MS = 4 * 60_000;
 // started (never less than two minutes nor more than five), which still leaves
 // room for verification before Convex stops the action.
 const FINAL_REQUEST_END_MS = 7 * 60_000;
+// The main review's turns. The state each turn shows how many are left, so a
+// model that keeps exploring answers before the slower closing synthesis.
+const REVIEW_TURNS = 8;
+// Requests after the main review get a timeout that aims to end them by this
+// long after the action started (two to four minutes each), so a slower
+// reasoning model finishes instead of being cut off with its usage unknown.
+// The hard limit is ACTION_REQUEST_END_MS, enforced when a request is sent,
+// however long it waited to start; one that would get less than
+// SLOW_REQUEST_MIN_MS is not sent, since it would likely be cut off.
+const LATE_REQUEST_END_MS = 8 * 60_000;
+const SLOW_REQUEST_MIN_MS = 90_000;
+// A reasoning model can spend over two minutes on the turn that writes its
+// findings. Cutting it off leaves its usage unknown and blocks the account's
+// AI work for 30 minutes, so review requests wait this long by default,
+// still never past ACTION_REQUEST_END_MS.
+const REVIEW_REQUEST_TIMEOUT_MS = 4 * 60_000;
+const ACTION_REQUEST_END_MS = 9 * 60_000;
 // After the main review, focused second looks at the same source. Each one
 // resends the main review's last request with only its closing state
 // replaced, so the repository context and sources are read from the prompt
@@ -275,6 +293,9 @@ export async function reviewWithContext(args: {
   openRequests: OpenRequest[];
 }> {
   const actionStarted = args.startedAt ?? Date.now();
+  // No request runs past this, however long it waited to start, which leaves
+  // the action time to save the review.
+  const endBy = actionStarted + ACTION_REQUEST_END_MS;
   const discussion = args.discussion ?? [];
   // The latest answer's unaddressed reviewer requests.
   let openRequests: OpenRequest[] = [];
@@ -340,10 +361,24 @@ export async function reviewWithContext(args: {
       {
         operation: `Request AI review (${options.billingLabel ?? "generation"})`,
       },
-      () => args.provider.chat(messages, options),
+      () =>
+        args.provider.chat(messages, {
+          endBy,
+          timeoutMs: REVIEW_REQUEST_TIMEOUT_MS,
+          ...options,
+        }),
     );
   };
   let readBudget = 0;
+  // Files a dropped closing finding pointed at: they count as not reviewed,
+  // so a review that lost a finding there can never approve.
+  const doubtfulPaths = new Set<string>();
+  let turnsLeft: number | undefined;
+  const lateRequestTimeout = () =>
+    Math.min(
+      4 * 60_000,
+      Math.max(2 * 60_000, actionStarted + LATE_REQUEST_END_MS - Date.now()),
+    );
   // A review's own changed files are bounded by its file count and the source
   // budget, so they do not use up the reads that guides and tools share.
   const groupSources = new Set(args.files.map((f) => `head:${f.filename}`));
@@ -676,6 +711,13 @@ export async function reviewWithContext(args: {
           unavailableContextPaths: [...unavailablePaths],
           recentToolResults: observations,
           omittedToolResultCount: omittedObservations,
+          ...(turnsLeft === undefined ? {} : { turnsLeft }),
+          ...(turnsLeft !== undefined && turnsLeft <= 2
+            ? {
+                turnWarning:
+                  "This is one of the last turns. Return findings from the source shown now; a turn without findings may end the review with less.",
+              }
+            : {}),
           ...(validationFeedback ? { validationFeedback } : {}),
         },
         reads.map((r) => ({
@@ -793,6 +835,7 @@ export async function reviewWithContext(args: {
     files: ChangedFile[],
     sources: ReadEvidence[],
     billingLabel: string,
+    timeoutMs?: number,
   ) => {
     const critique = await chat(
       [
@@ -811,6 +854,8 @@ export async function reviewWithContext(args: {
       {
         maxTokens: REVIEW_OUTPUT_TOKENS,
         billingLabel,
+        timeoutMs: timeoutMs ?? lateRequestTimeout(),
+        minTimeMs: SLOW_REQUEST_MIN_MS,
         responseFormat: {
           name: "pull_request_verification",
           schema: {
@@ -913,6 +958,7 @@ export async function reviewWithContext(args: {
     files: ChangedFile[],
     sources: ReadEvidence[],
     billingLabel: string,
+    timeoutMs?: number,
   ): Promise<Finding[]> => {
     if (findings.length === 0) return findings;
     await args.guard();
@@ -926,6 +972,7 @@ export async function reviewWithContext(args: {
       files,
       sources,
       billingLabel,
+      timeoutMs,
     );
     const trace = (step: string, checked: VerificationCandidate[]) =>
       args.trace?.({
@@ -954,6 +1001,7 @@ export async function reviewWithContext(args: {
           files,
           sources,
           `${billingLabel}/appeal`,
+          timeoutMs,
         );
         trace(`${billingLabel}/appeal`, appealed);
       } catch (error) {
@@ -1082,6 +1130,8 @@ export async function reviewWithContext(args: {
         const response = await chat(coverageMessages(files, sources), {
           maxTokens: REVIEW_OUTPUT_TOKENS,
           billingLabel: `pr-review/coverage/${pass}`,
+          timeoutMs: lateRequestTimeout(),
+          minTimeMs: SLOW_REQUEST_MIN_MS,
           responseFormat: REVIEW_RESPONSE_FORMAT,
         });
         if (response.finishReason !== "stop")
@@ -1141,6 +1191,7 @@ export async function reviewWithContext(args: {
               files,
               passReads,
               `pr-review/coverage/${pass}/critique`,
+              lateRequestTimeout(),
             )),
           );
         }
@@ -1236,6 +1287,8 @@ export async function reviewWithContext(args: {
             maxTokens: REVIEW_OUTPUT_TOKENS,
             tools: reviewTools,
             billingLabel: `pr-review/look/${look.name}`,
+            timeoutMs: lateRequestTimeout(),
+            minTimeMs: SLOW_REQUEST_MIN_MS,
             responseFormat: REVIEW_RESPONSE_FORMAT,
           },
         );
@@ -1290,6 +1343,7 @@ export async function reviewWithContext(args: {
             args.files,
             sources,
             `pr-review/look/${look.name}/critique`,
+            lateRequestTimeout(),
           )),
         );
       } catch (error) {
@@ -1345,7 +1399,9 @@ export async function reviewWithContext(args: {
         (a, b) =>
           a.priority.localeCompare(b.priority) || b.confidence - a.confidence,
       ),
-      reads,
+      reads: reads.filter(
+        (r) => !(r.ref === "head" && doubtfulPaths.has(r.path)),
+      ),
       excludedPaths: coverage,
     };
   };
@@ -1411,8 +1467,17 @@ export async function reviewWithContext(args: {
   // The answer given before the one-time source pass, kept in case the
   // account cannot afford the larger request that pass makes.
   let beforeSourcePass: { readCount: number; findings: Finding[] } | undefined;
-  for (let turn = 0; turn < 8; turn++) {
+  for (let turn = 0; turn < REVIEW_TURNS; turn++) {
     await args.guard();
+    if (turn > 0 && turnsLeft !== REVIEW_TURNS - turn) {
+      turnsLeft = REVIEW_TURNS - turn;
+      rebuildMessages();
+      while (observations.length && requestBytes() > 180_000) {
+        observations.shift();
+        omittedObservations++;
+        rebuildMessages();
+      }
+    }
     if (JSON.stringify(messages).length > 180_000)
       throw new Error("Review conversation exceeds the context budget");
     let response: Awaited<ReturnType<typeof chat>>;
@@ -1475,6 +1540,21 @@ export async function reviewWithContext(args: {
             continue;
           }
           const source = await readOptionalContext(path, ref);
+          const before = reads.find((r) => r.path === path && r.ref === ref);
+          // Some models ask again for a file they were already shown in part,
+          // hoping for the rest, and spend every turn doing so.
+          if (source !== null && before?.content === source) {
+            addObservation({
+              tool: tool.name,
+              path,
+              ref,
+              status: "already shown in SOURCE blocks; nothing more to show",
+              note: source.includes(OMITTED_SOURCE_MARKER)
+                ? "This is all of this file that can be shown at head: lines far from the diff are blank after the omitted-lines marker. Do not request it again. Read the file at base for the code around the change, read other files, or answer from what is shown."
+                : "This file is shown in full already. Do not request it again; read other files or answer.",
+            });
+            continue;
+          }
           const shown = source !== null && showRead(path, ref, source);
           addObservation({
             tool: tool.name,
@@ -1643,6 +1723,8 @@ export async function reviewWithContext(args: {
   const readsBeforePass = reads.length;
   const passShown =
     needsSource() && !sourceRetried ? await showUninspected() : false;
+  // Exploration is over, so the turn countdown no longer applies.
+  turnsLeft = undefined;
   rebuildMessages();
   const synthesize = () =>
     chat(
@@ -1659,6 +1741,7 @@ export async function reviewWithContext(args: {
         maxTokens: REVIEW_OUTPUT_TOKENS,
         billingLabel: "pr-review/final",
         responseFormat: REVIEW_RESPONSE_FORMAT,
+        minTimeMs: SLOW_REQUEST_MIN_MS,
         timeoutMs: Math.min(
           5 * 60_000,
           Math.max(
@@ -1688,15 +1771,36 @@ export async function reviewWithContext(args: {
   }
   if (final.finishReason !== "stop")
     throw new Error("Review final synthesis did not complete");
-  return await finalize(
-    validateFindings(
-      confidentCandidates(
-        recordOpenRequests(proposed("final", await parse(final.content))),
-        args.allowSuggestions,
-        groupPaths,
-      ),
-      args.files,
-      reads,
-    ),
-  );
+  const synthesized = confidentCandidates(
+    recordOpenRequests(proposed("final", await parse(final.content))),
+    args.allowSuggestions,
+    groupPaths,
+  ) as { findings?: unknown };
+  // There is no turn left to correct evidence, so a finding whose quotes do
+  // not match the source is dropped, and its file is reported as not fully
+  // reviewed, instead of failing a review that has other findings.
+  // A malformed answer still fails as before.
+  if (!Array.isArray(synthesized.findings))
+    return await finalize(validateFindings(synthesized, args.files, reads));
+  let kept: Finding[] = [];
+  for (const item of synthesized.findings) {
+    try {
+      kept = validateFindings({ findings: [...kept, item] }, args.files, reads);
+    } catch (error) {
+      if (!isReviewGroupModelFailure(error)) throw error;
+      const path =
+        item !== null && typeof item === "object" && "path" in item
+          ? item.path
+          : undefined;
+      const doubtful =
+        typeof path === "string" && args.files.some((f) => f.filename === path)
+          ? [path]
+          : args.files.map((f) => f.filename);
+      for (const file of doubtful) {
+        doubtfulPaths.add(file);
+        if (!excludedPaths.includes(file)) excludedPaths.push(file);
+      }
+    }
+  }
+  return await finalize(kept);
 }

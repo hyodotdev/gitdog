@@ -13,6 +13,8 @@ const TURN_STATE_KEYS = new Set([
   "recentToolResults",
   "omittedToolResultCount",
   "validationFeedback",
+  "turnsLeft",
+  "turnWarning",
 ]);
 
 function sourceBlock(source: ReviewSource) {
