@@ -408,6 +408,33 @@ describe("project API key lifecycle and isolation", () => {
     ).toMatchObject({ _id: f.ids.ticketId });
   });
 
+  it("reviews open pull requests when a project key turns reviews on", async () => {
+    const f = await fixture();
+    const writer = await f.create(["read", "write"]);
+    await f.t.run(async (ctx) => {
+      const repo = await ctx.db.get(f.ids.repositoryId);
+      await ctx.db.patch(f.ids.repositoryId, {
+        isActive: true,
+        settings: { ...repo!.settings, pullRequestReviewsEnabled: false },
+      });
+    });
+    await f.execute(
+      writer.key,
+      "repositories/mutation:updateSettings",
+      {
+        repositoryId: f.ids.repositoryId,
+        settings: { pullRequestReviewsEnabled: true },
+      },
+      "mutation",
+    );
+    const jobs = await f.t.run(async (ctx) =>
+      (await ctx.db.system.query("_scheduled_functions").collect()).filter(
+        (job) => job.name.includes("reviewOpenPullRequests"),
+      ),
+    );
+    expect(jobs).toHaveLength(1);
+  });
+
   it("enforces read/write scopes and preserves omitted settings", async () => {
     const f = await fixture();
     const reader = await f.create();

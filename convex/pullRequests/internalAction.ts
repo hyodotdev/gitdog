@@ -210,11 +210,12 @@ export const observe = internalAction({
 });
 
 // Reviews start on pull request events, so pull requests opened before reviews
-// were on never get one. When reviews turn on, a few recently updated ones are
-// reviewed once, spaced out because an account runs one review at a time.
+// were on never get one. When reviews turn on, a few recently updated ones that
+// were never reviewed get their first review, spaced further apart than one
+// review action can run, because an account runs one review at a time.
 const CATCH_UP_PULL_REQUESTS = 5;
 const CATCH_UP_WINDOW_MS = 30 * 24 * 60 * 60_000;
-const CATCH_UP_SPACING_MS = 10 * 60_000;
+const CATCH_UP_SPACING_MS = 12 * 60_000;
 
 export const reviewOpenPullRequests = internalAction({
   args: { repositoryId: v.id("repositories") },
@@ -229,19 +230,43 @@ export const reviewOpenPullRequests = internalAction({
       repo.settings.pullRequestReviewsEnabled !== true
     )
       return;
+    // Reviews the account cannot pay for would only post failure comments on
+    // old pull requests; the owner can still ask for one with a command.
+    const provider = await resolveGenerationProvider(ctx, {
+      userId: repo.userId,
+    }).catch(() => null);
+    if (!provider) return;
+    if (
+      !usesUserKey(provider) &&
+      !(await ctx.runQuery(
+        internal.pullRequests.internalQuery.hasReviewAllowance,
+        { userId: repo.userId },
+      ))
+    )
+      return;
     const access = await resolveVerifiedRepositoryAccess(
       ctx,
       args.repositoryId,
     );
     const now = Date.now();
-    const recent = (await listOpenPullRequests(access))
-      .filter(
-        (pr) =>
-          Number.isSafeInteger(pr.number) &&
-          !pr.draft &&
-          !isBotPullRequestAuthor(pr.user) &&
-          now - Date.parse(pr.updated_at) <= CATCH_UP_WINDOW_MS,
-      )
+    const candidates = (await listOpenPullRequests(access)).filter(
+      (pr) =>
+        pr !== null &&
+        typeof pr === "object" &&
+        Number.isSafeInteger(pr.number) &&
+        pr.draft !== true &&
+        typeof pr.user?.login === "string" &&
+        !isBotPullRequestAuthor(pr.user) &&
+        now - Date.parse(pr.updated_at) <= CATCH_UP_WINDOW_MS,
+    );
+    const reviewed = new Set(
+      await ctx.runQuery(internal.pullRequests.internalQuery.reviewedNumbers, {
+        repositoryId: args.repositoryId,
+        numbers: candidates.map((pr) => pr.number),
+      }),
+    );
+    const recent = candidates
+      .filter((pr) => !reviewed.has(pr.number))
       .slice(0, CATCH_UP_PULL_REQUESTS);
     // observe reviews a pull request only until it has one finished review.
     for (const [index, pr] of recent.entries())

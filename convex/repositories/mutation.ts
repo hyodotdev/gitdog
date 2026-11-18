@@ -20,6 +20,10 @@ import {
 import { getCanonicalGitHubRepositoryFullNameKey } from "../github/repositoryIdentity";
 import { pauseRepositoryForAccessRemoval } from "./accessLifecycle";
 import {
+  reviewOpenPullRequests,
+  turnsReviewsOn,
+} from "../pullRequests/catchUp";
+import {
   getRepositoryNameQuarantineFullName,
   readCanonicalRepositoryNameMatches,
 } from "./nameIdentity";
@@ -30,19 +34,6 @@ import {
   CLAIMED_EXECUTION_RECOVERY_TTL_MS,
   DISCONNECT_EXECUTION_RECONCILIATION_TTL_MS,
 } from "../ticketActions/executionRecovery";
-
-// Reviews start on pull request events, so when they turn on, open pull
-// requests from before get their first review too.
-async function reviewOpenPullRequests(
-  ctx: MutationCtx,
-  repositoryId: Id<"repositories">,
-) {
-  await ctx.scheduler.runAfter(
-    0,
-    internal.pullRequests.internalAction.reviewOpenPullRequests,
-    { repositoryId },
-  );
-}
 
 async function reactivateInstallationReconnect(
   ctx: MutationCtx,
@@ -166,7 +157,7 @@ async function reactivateInstallationReconnect(
       { repositoryId: repository._id, expectedIndexVersion: indexVersion },
     );
     if (repository.settings.pullRequestReviewsEnabled === true)
-      await reviewOpenPullRequests(ctx, repository._id);
+      await reviewOpenPullRequests(ctx, repository);
   }
   return repository._id;
 }
@@ -412,12 +403,8 @@ export const updateSettings = mutation({
       settings,
       updatedAt: Date.now(),
     });
-    if (
-      repo.isActive &&
-      repo.settings.pullRequestReviewsEnabled !== true &&
-      settings.pullRequestReviewsEnabled === true
-    )
-      await reviewOpenPullRequests(ctx, args.repositoryId);
+    if (repo.isActive && turnsReviewsOn(repo.settings, settings))
+      await reviewOpenPullRequests(ctx, repo);
 
     return args.repositoryId;
   },
@@ -570,7 +557,7 @@ export const toggleActive = mutation({
         },
       );
       if (repo.settings.pullRequestReviewsEnabled === true)
-        await reviewOpenPullRequests(ctx, args.repositoryId);
+        await reviewOpenPullRequests(ctx, repo);
     }
 
     return args.repositoryId;

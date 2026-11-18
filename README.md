@@ -99,9 +99,9 @@ approval until the new commits are reviewed.
 ## Pull request commands
 
 Gitdog reviews a pull request once, when it is opened or marked ready for
-review. When you turn pull request reviews on, it also reviews up to five open
-pull requests updated in the last 30 days, one about every ten minutes. After
-that, ask for more in a pull request comment or from the CLI:
+review. When pull request reviews turn on, it also gives up to five open pull
+requests from the last 30 days their first review, skipping drafts and bots.
+After that, ask for more in a pull request comment or from the CLI:
 
 | Pull request comment    | CLI                                         | What it does                                     |
 | ----------------------- | ------------------------------------------- | ------------------------------------------------ |

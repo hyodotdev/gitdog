@@ -1,3 +1,4 @@
+import { reviewOpenPullRequests } from "../pullRequests/catchUp";
 import { paginationOptsValidator } from "convex/server";
 import { v } from "convex/values";
 import { internal } from "../_generated/api";
@@ -475,6 +476,11 @@ async function restoreRepositoryFromLiveAccess(
     indexIdentityVerifiedGithubRepo: undefined,
     updatedAt: now,
   });
+  if (
+    shouldReactivate &&
+    repository.settings.pullRequestReviewsEnabled === true
+  )
+    await reviewOpenPullRequests(ctx, repository);
   return shouldReactivate;
 }
 

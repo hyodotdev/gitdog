@@ -1356,6 +1356,81 @@ describe("open pull requests when reviews turn on", () => {
       jobs[1].scheduledTime - jobs[0].scheduledTime,
     ).toBeGreaterThanOrEqual(10 * 60_000 - 1_000);
   });
+  it("starts at most one catch-up an hour, however often reviews toggle", async () => {
+    const f = await fixture();
+    const owner = f.t.withIdentity({ subject: f.userId });
+    for (const enabled of [false, true, false, true])
+      await owner.mutation(api.repositories.mutation.updateSettings, {
+        repositoryId: f.repositoryId,
+        settings: { ...settings, pullRequestReviewsEnabled: enabled },
+      });
+    expect(await scheduled(f, "reviewOpenPullRequests")).toHaveLength(1);
+  });
+  it("starts a catch-up when a repository with reviews on is reactivated", async () => {
+    const f = await fixture();
+    const owner = f.t.withIdentity({ subject: f.userId });
+    await owner.mutation(api.repositories.mutation.toggleActive, {
+      repositoryId: f.repositoryId,
+      isActive: false,
+    });
+    await owner.mutation(api.repositories.mutation.toggleActive, {
+      repositoryId: f.repositoryId,
+      isActive: true,
+    });
+    expect(await scheduled(f, "reviewOpenPullRequests")).toHaveLength(1);
+  });
+  it("skips reviewed and malformed pull requests, and accounts without tokens", async () => {
+    const f = await fixture();
+    const github = await import("../../../convex/pullRequests/github");
+    const repository = (await f.t.run((ctx) => ctx.db.get(f.repositoryId)))!;
+    vi.spyOn(
+      repositoryIdentity,
+      "resolveVerifiedRepositoryAccess",
+    ).mockResolvedValue({
+      repository,
+      installation: {} as never,
+      githubRepositoryId: 123,
+      githubRepo: "owner/repo",
+      owner: "owner",
+      repo: "repo",
+      token: "fixture-token",
+    });
+    // Pull request 12 already has a review from the fixture.
+    const reviewed = await f.observe();
+    expect(reviewed).not.toBeNull();
+    const fresh = new Date().toISOString();
+    const pull = (number: number, user: unknown = { login: "person" }) =>
+      ({
+        number,
+        draft: false,
+        user,
+        updated_at: fresh,
+      }) as never;
+    vi.spyOn(github, "listOpenPullRequests").mockResolvedValue([
+      null as never,
+      pull(12),
+      pull(13, null),
+      pull(14),
+    ]);
+    await f.t.action(
+      internal.pullRequests.internalAction.reviewOpenPullRequests,
+      { repositoryId: f.repositoryId },
+    );
+    const jobs = await scheduled(f, "internalAction:observe");
+    expect(
+      jobs.map((job) => (job.args[0] as { number: number }).number),
+    ).toEqual([14]);
+    // An account that cannot pay for reviews gets none scheduled.
+    vi.spyOn(
+      subscriptionQueries,
+      "checkAccountTokenAllowance",
+    ).mockResolvedValue({ allowed: false } as never);
+    await f.t.action(
+      internal.pullRequests.internalAction.reviewOpenPullRequests,
+      { repositoryId: f.repositoryId },
+    );
+    expect(await scheduled(f, "internalAction:observe")).toHaveLength(1);
+  });
   it("does nothing for a repository with reviews off", async () => {
     const f = await fixture();
     const github = await import("../../../convex/pullRequests/github");
