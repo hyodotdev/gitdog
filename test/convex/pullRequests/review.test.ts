@@ -609,7 +609,7 @@ describe("bounded review workflow", () => {
       tools: requestOptions[0].tools,
       responseFormat: requestOptions[0].responseFormat,
     }).length;
-    expect(payloadSize).toMatchInlineSnapshot(`11217`);
+    expect(payloadSize).toMatchInlineSnapshot(`11236`);
     expect(payloadSize).toBeLessThan(11_500);
     expect(requestOptions[0].responseFormat).toEqual(REVIEW_RESPONSE_FORMAT);
     expect(requests).toHaveLength(1);

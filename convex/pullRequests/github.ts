@@ -506,7 +506,8 @@ export async function readDiscussion(
       },
     });
   };
-  const [comments, reviews, threads] = await Promise.all([
+  // Each part is best effort: one failed read keeps the others.
+  const [commentsRead, reviewsRead, threadsRead] = await Promise.allSettled([
     readReviewJson<
       Array<{
         created_at?: string;
@@ -566,6 +567,11 @@ export async function readDiscussion(
       ),
     ),
   ]);
+  const comments =
+    commentsRead.status === "fulfilled" ? commentsRead.value : [];
+  const reviews = reviewsRead.status === "fulfilled" ? reviewsRead.value : [];
+  const threads =
+    threadsRead.status === "fulfilled" ? threadsRead.value : undefined;
   for (const c of Array.isArray(comments) ? comments : [])
     add(
       c?.created_at,
@@ -582,8 +588,8 @@ export async function readDiscussion(
       "review",
       r?.body,
     );
-  for (const t of threads.data?.repository?.pullRequest?.reviewThreads?.nodes ??
-    []) {
+  for (const t of threads?.data?.repository?.pullRequest?.reviewThreads
+    ?.nodes ?? []) {
     if (t?.isResolved !== false) continue;
     const first = t.comments?.nodes?.[0];
     add(
