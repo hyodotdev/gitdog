@@ -7,10 +7,12 @@ import type {
   ChatCompletionOptions,
   ToolDefinition,
 } from "../_ai/model";
+import { ChatProviderRequestError } from "../_ai/providerErrors";
 import {
   ReviewResponseFormatError,
   ReviewContextLimitError,
   ReviewEvidenceError,
+  isLifecycleChange,
   isReviewGroupModelFailure,
   reviewFailureCause,
   runReviewRequest,
@@ -180,13 +182,15 @@ function relativeSourcePaths(path: string, source: string, known: Set<string>) {
 const PRELOAD_READS = 8;
 
 // Changed files the main review never read are reviewed afterwards in fresh
-// requests of their own. Each pass shows up to this much head source, and the
-// passes stop at the account limit or once the review has run this long, so
-// the action deadline is never at risk.
+// requests of their own. Each pass shows up to this much head source.
 const COVERAGE_PASS_SOURCE = 90_000;
 const COVERAGE_PASS_REQUEST = 150_000;
 const MAX_COVERAGE_PASSES = 8;
-const COVERAGE_DEADLINE_MS = 5 * 60_000;
+// Convex stops an action after 10 minutes, and a request may wait up to 90
+// seconds for another on the account and then run for up to 120. A coverage
+// request starts only within 5 minutes of the action's start, so even the
+// slowest one ends well before the action is stopped mid-request.
+const COVERAGE_REQUEST_CUTOFF_MS = 5 * 60_000;
 // Implementation first, then tests, then documentation and data, so a pass
 // cut short by the limit or the time budget leaves the least important
 // files unreviewed.
@@ -234,12 +238,14 @@ export async function reviewWithContext(args: {
   guard: () => Promise<void>;
   // Receives what each step proposed and kept, for review-quality checks.
   trace?: (event: ReviewTraceEvent) => void;
+  // When the enclosing action started, for its deadline; defaults to now.
+  startedAt?: number;
 }): Promise<{
   findings: Finding[];
   reads: ReadEvidence[];
   excludedPaths: string[];
 }> {
-  const started = Date.now();
+  const actionStarted = args.startedAt ?? Date.now();
   // Reports the raw candidates of one step before any filtering.
   const proposed = (step: string, value: unknown) => {
     if (
@@ -823,6 +829,22 @@ export async function reviewWithContext(args: {
     // A candidate is dropped only on a refutation quoting the shown source;
     // an unsupported "not retained" keeps it, since in practice verification
     // mostly removed real defects it was merely unsure about.
+    // A refutation quotes the candidate's own target or evidence files, and
+    // not merely the evidence the candidate already cites.
+    const refutes = (id: string, quote: string) => {
+      const finding = candidates.find((c) => c.id === id)?.finding;
+      if (!finding) return false;
+      const paths = new Set([
+        finding.path,
+        ...finding.evidence.map((e) => e.path),
+      ]);
+      return (
+        !finding.evidence.some((e) => e.quote.includes(quote)) &&
+        sources.some(
+          (source) => paths.has(source.path) && source.content.includes(quote),
+        )
+      );
+    };
     const refuted = new Set(
       ("refutations" in selection && Array.isArray(selection.refutations)
         ? selection.refutations
@@ -838,9 +860,7 @@ export async function reviewWithContext(args: {
             typeof r.quote === "string" &&
             r.quote.trim().length >= 12 &&
             r.quote.length <= 1500 &&
-            sources.some((source) =>
-              source.content.includes(r.quote as string),
-            ),
+            refutes(r.id, r.quote),
         )
         .map((r: { id: string }) => r.id),
     );
@@ -923,10 +943,13 @@ export async function reviewWithContext(args: {
   // reviewed, and the account limit or the time budget ends the passes.
   const coverUnread = async (): Promise<Finding[]> => {
     const found: Finding[] = [];
-    if (accountLimited) return found;
+    // A batch group runs on a quota hold sized for one request chain; the
+    // groups themselves are how a large change gets covered.
+    if (accountLimited || args.batchGroup) return found;
     const skipped = new Set<string>();
-    for (let pass = 1; pass <= MAX_COVERAGE_PASSES; pass++) {
-      if (Date.now() - started > COVERAGE_DEADLINE_MS) break;
+    const timeLeft = () =>
+      Date.now() - actionStarted <= COVERAGE_REQUEST_CUTOFF_MS;
+    for (let pass = 1; pass <= MAX_COVERAGE_PASSES && timeLeft(); pass++) {
       const pending = unread(skipped);
       if (pending.length === 0) break;
       await args.guard();
@@ -949,16 +972,19 @@ export async function reviewWithContext(args: {
           ) +
             REVIEW_OUTPUT_TOKENS <=
             COVERAGE_PASS_REQUEST;
-        if (!fits) {
-          // A file too large to review alone stays reported as not reviewed.
-          if (files.length === 0) skipped.add(file.filename);
-          break;
-        }
-        files.push(file);
-        sources.push(evidence);
+        if (fits) {
+          files.push(file);
+          sources.push(evidence);
+        } else if (files.length === 0) {
+          // Too large to review alone: reported as not reviewed.
+          skipped.add(file.filename);
+        } else break;
       }
       if (files.length === 0) continue;
       const passReads = [...context, ...sources];
+      // Files whose candidate could not be validated stay reported as not
+      // reviewed, so a defect the model saw can never read as a clean file.
+      const doubtful = new Set<string>();
       try {
         const response = await chat(coverageMessages(files, sources), {
           maxTokens: REVIEW_OUTPUT_TOKENS,
@@ -967,22 +993,21 @@ export async function reviewWithContext(args: {
         });
         if (response.finishReason !== "stop")
           throw new Error("Review did not finish completely");
-        const value = confidentCandidates(
-          proposed(`coverage/${pass}`, decode(response.content)),
-          args.allowSuggestions,
-          new Set(files.map((f) => f.filename)),
-        );
+        const decoded = proposed(`coverage/${pass}`, decode(response.content));
         if (
-          value === null ||
-          typeof value !== "object" ||
-          !("findings" in value) ||
-          !Array.isArray(value.findings)
+          decoded === null ||
+          typeof decoded !== "object" ||
+          !("findings" in decoded) ||
+          !Array.isArray(decoded.findings)
         )
           throw new Error("Invalid review result");
-        // Its files were reviewed even when a candidate is invalid, so a bad
-        // anchor or quote drops that candidate, not the pass's coverage.
+        const value = confidentCandidates(
+          { findings: decoded.findings.slice(0, MAX_REVIEW_FINDINGS) },
+          args.allowSuggestions,
+          new Set(files.map((f) => f.filename)),
+        ) as { findings: unknown[] };
         let candidates: Finding[] = [];
-        for (const item of value.findings.slice(0, MAX_REVIEW_FINDINGS)) {
+        for (const item of value.findings) {
           try {
             candidates = validateFindings(
               { findings: [...candidates, item] },
@@ -991,30 +1016,55 @@ export async function reviewWithContext(args: {
             );
           } catch (error) {
             if (!isReviewGroupModelFailure(error)) throw error;
+            const path =
+              item !== null && typeof item === "object" && "path" in item
+                ? item.path
+                : undefined;
+            for (const file of files)
+              if (path === undefined || file.filename === path)
+                doubtful.add(file.filename);
           }
         }
-        found.push(
-          ...(await verify(
-            candidates,
-            files,
-            passReads,
-            `pr-review/coverage/${pass}/critique`,
-          )),
-        );
+        if (candidates.length > 0) {
+          // Verification needs room for the candidates as well as the source.
+          if (
+            !timeLeft() ||
+            JSON.stringify(sources).length + JSON.stringify(candidates).length >
+              COVERAGE_PASS_REQUEST
+          )
+            throw new Error("Review verification did not finish");
+          found.push(
+            ...(await verify(
+              candidates,
+              files,
+              passReads,
+              `pr-review/coverage/${pass}/critique`,
+            )),
+          );
+        }
       } catch (error) {
+        if (isLifecycleChange(error)) throw error;
         const cause = reviewFailureCause(error);
-        if (
-          cause instanceof ChatBillingError &&
-          cause.reason === "limit_reached"
-        ) {
-          accountLimited = true;
+        if (cause instanceof ChatBillingError) {
+          accountLimited ||= cause.reason === "limit_reached";
           break;
         }
+        // A timeout or provider outage ends the optional passes; the review
+        // keeps what it already has.
+        if (
+          cause instanceof ChatProviderRequestError &&
+          !isReviewGroupModelFailure(error)
+        )
+          break;
         if (!isReviewGroupModelFailure(error)) throw error;
         for (const file of files) skipped.add(file.filename);
         continue;
       }
       for (const source of sources) {
+        if (doubtful.has(source.path)) {
+          skipped.add(source.path);
+          continue;
+        }
         reads.push(source);
         unavailablePaths.delete(source.path);
       }

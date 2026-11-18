@@ -219,7 +219,7 @@ const fixedFailureReasons = new Map([
   ],
   [
     "Finding contains unsupported evidence or mentions",
-    "A finding did not quote its target line, or contained an @mention or an agent instruction file reference.",
+    "A finding did not quote its target line, or referenced an agent instruction file.",
   ],
   [
     "Suggestions must use the validated suggestion field",

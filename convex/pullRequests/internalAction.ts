@@ -229,6 +229,7 @@ export const generate = internalAction({
     group: v.optional(v.number()),
   },
   handler: async (ctx, args): Promise<void> => {
+    const startedAt = Date.now();
     const token = await ctx.runMutation(
       internal.pullRequests.internalMutation.claimGeneration,
       args,
@@ -460,6 +461,7 @@ export const generate = internalAction({
         let result: Awaited<ReturnType<typeof reviewWithContext>>;
         try {
           result = await reviewWithContext({
+            startedAt,
             provider,
             batchGroup: batched,
             allowSuggestions:

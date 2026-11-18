@@ -234,10 +234,7 @@ describe("verification selects immutable grounded candidates", () => {
     const { promise, requests, requestOptions } = fixture(
       [
         stop([finding, second]),
-        verified(
-          ["F2"],
-          [{ id: "F1", quote: "return cache.get('constant');" }],
-        ),
+        verified(["F2"], [{ id: "F1", quote: "function find(key) {" }]),
       ],
       context,
     );
@@ -263,6 +260,20 @@ describe("verification selects immutable grounded candidates", () => {
       "schema.properties.retainedFindingIds.maxItems",
     );
     expect(requestOptions[1].tools).toBeUndefined();
+  });
+
+  it("keeps a candidate whose refutation only repeats its own evidence", async () => {
+    const { promise } = fixture(
+      [
+        stop([finding, second]),
+        verified(
+          ["F2"],
+          [{ id: "F1", quote: "return cache.get('constant');" }],
+        ),
+      ],
+      context,
+    );
+    expect((await promise).findings).toEqual([finding, second]);
   });
 
   it("keeps a candidate dropped without a refutation quoting the source", async () => {

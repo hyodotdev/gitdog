@@ -161,45 +161,39 @@ describe("commit-grounded PR finding validation", () => {
       validateFindings({ findings: [{ ...finding, ...patch }] }, [file], reads),
     ).toThrow(),
   );
-  it("keeps @-names as code so a finding notifies no one", () => {
+  it("quiets every @-name so a finding notifies no one", () => {
+    const J = "\u2060";
     const [kept] = validateFindings(
       {
         findings: [
           {
             ...finding,
             title: "Run @gitdogbot review only once",
-            body: `${finding.body} Commenting @gitdogbot review or importing @types/node is fine; \`@already\` is code and mail@example.com is not a mention.`,
+            body: `${finding.body} Commenting @gitdogbot review, x-@octocat, path/@octocat, \\\`@octocat\\\` or importing @types/node is fine; mail@example.com stays.`,
           },
         ],
       },
       [file],
       reads,
     );
-    expect(kept.title).toBe("Run `@gitdogbot` review only once");
-    expect(kept.body).toContain("Commenting `@gitdogbot` review");
-    expect(kept.body).toContain("importing `@types/node` is fine");
-    expect(kept.body).toContain("`@already` is code");
-    expect(kept.body).toContain("mail@example.com");
-    expect(
-      validateFindings(
-        {
-          findings: [
-            {
-              ...finding,
-              body: "Ask @hyochan to check this because the code may be incorrect under some conditions.",
-            },
-          ],
-        },
-        [file],
-        reads,
-      )[0].body,
-    ).toBe(
-      "Ask `@hyochan` to check this because the code may be incorrect under some conditions.",
-    );
+    expect(kept.title).toBe(`Run @${J}gitdogbot review only once`);
+    for (const name of ["gitdogbot", "octocat", "types/node"])
+      expect(kept.body).not.toMatch(new RegExp(`@${name}`));
+    expect(kept.body).toContain(`x-@${J}octocat`);
+    expect(kept.body).toContain(`path/@${J}octocat`);
+    expect(kept.body).toContain(`mail@${J}example.com`);
     // Validating the stored finding again changes nothing.
     expect(validateFindings({ findings: [kept] }, [file], reads)).toEqual([
       kept,
     ]);
+  });
+  it("checks finding lengths without the joiners added to @-names", () => {
+    const title = `@a ${"x".repeat(157)}`;
+    expect(title).toHaveLength(160);
+    expect(
+      validateFindings({ findings: [{ ...finding, title }] }, [file], reads)[0]
+        .title,
+    ).toBe(`@\u2060a ${"x".repeat(157)}`);
   });
   it("rejects an unread target and duplicate findings", () => {
     expect(() =>
@@ -1246,13 +1240,15 @@ describe("bounded review workflow", () => {
       expect(labels).toContain("pr-review/coverage/1");
       expect(labels).toContain("pr-review/coverage/1/critique");
     });
-    it("drops an invalid candidate without losing the pass's coverage", async () => {
+    it("drops an invalid candidate and leaves only its file unreviewed", async () => {
       let flagged: string | undefined;
+      let doubtful: string | undefined;
       const p = scripted((messages, pass) => {
         if (pass > 1) return stop([]);
         const [first, second] = passFiles(messages);
         flagged = second;
         // A line outside the diff, then a valid finding.
+        doubtful = first;
         return stop([{ ...at(first), line: 3 }, at(second)]);
       });
       const result = await run(
@@ -1261,7 +1257,8 @@ describe("bounded review workflow", () => {
         options,
       );
       expect(result.findings).toEqual([at(flagged!)]);
-      expect(result.excludedPaths).toEqual([]);
+      // The file whose candidate was dropped is not reported as clean.
+      expect(result.excludedPaths).toEqual([doubtful]);
     });
     it("reports a pass the model cannot complete and continues", async () => {
       let failed: string[] = [];
@@ -1279,6 +1276,57 @@ describe("bounded review workflow", () => {
       );
       expect(failed.length).toBeGreaterThan(0);
       expect(result.excludedPaths).toEqual(failed);
+    });
+    it("keeps the review when a coverage request times out", async () => {
+      const { ChatProviderRequestError } =
+        await import("../../../convex/_ai/providerErrors");
+      let coverageCalls = 0;
+      const p = scripted(() => {
+        coverageCalls++;
+        throw new ChatProviderRequestError(
+          "Claude request timed out",
+          "ambiguous",
+          {},
+        );
+      });
+      const result = await run(
+        p,
+        vi.fn(async () => padded),
+        options,
+      );
+      expect(coverageCalls).toBe(1);
+      expect(result.excludedPaths.length).toBeGreaterThan(0);
+    });
+    it("leaves coverage to the groups of a batched review", async () => {
+      const p = scripted(() => stop([]));
+      await run(
+        p,
+        vi.fn(async () => padded),
+        { ...options, batchGroup: true },
+      );
+      expect(
+        vi
+          .mocked(p.chat)
+          .mock.calls.some(([, o]) =>
+            o?.billingLabel?.startsWith("pr-review/coverage"),
+          ),
+      ).toBe(false);
+    });
+    it("starts no coverage request late in the action", async () => {
+      const p = scripted(() => stop([]));
+      const result = await run(
+        p,
+        vi.fn(async () => padded),
+        { ...options, startedAt: Date.now() - 5 * 60_000 - 1 },
+      );
+      expect(
+        vi
+          .mocked(p.chat)
+          .mock.calls.some(([, o]) =>
+            o?.billingLabel?.startsWith("pr-review/coverage"),
+          ),
+      ).toBe(false);
+      expect(result.excludedPaths.length).toBeGreaterThan(0);
     });
     it("stops at the account limit and reports the rest", async () => {
       const { ChatBillingError } =
@@ -1330,7 +1378,7 @@ describe("bounded review workflow", () => {
     const p = provider([
       use,
       stop([finding]),
-      verified([], [{ id: "F1", quote: "return cache.get('constant');" }]),
+      verified([], [{ id: "F1", quote: "function find(key) {" }]),
     ]);
     expect((await run(p)).findings).toEqual([]);
     expect(p.chat).toHaveBeenCalledTimes(3);

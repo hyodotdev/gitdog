@@ -188,21 +188,17 @@ export function addedLines(patch: string): Set<number> {
   return lines;
 }
 
-// GitHub notifies whoever is @-mentioned outside code. A finding that names a
-// package scope, a decorator or a bot command keeps the name as code, so it
-// reads the same and notifies no one.
-export function codeMentions(text: string): string {
-  return text
-    .split(/(```[\s\S]*?```|`[^`\n]*`)/)
-    .map((part, index) =>
-      index % 2 === 1
-        ? part
-        : part.replace(
-            /(^|[^\w`/.-])@([A-Za-z0-9][\w-]*(?:\/[\w.-]+)?)/g,
-            "$1`@$2`",
-          ),
-    )
-    .join("");
+// GitHub links an @ followed by a name anywhere outside code, and markdown has
+// too many ways to leave code (escapes, backtick runs, fences, HTML) to rely on
+// code spans. A word joiner after each such @ renders the same text, invisibly
+// separated, so no one is ever notified.
+export function quietMentions(text: string): string {
+  return text.replace(/@(?=[A-Za-z0-9])/g, "@\u2060");
+}
+
+// Lengths are checked without the joiners quietMentions adds.
+function visibleLength(text: string): number {
+  return text.replace(/\u2060/g, "").length;
 }
 
 export const OMITTED_SOURCE_MARKER =
@@ -274,10 +270,10 @@ export function validateFindings(
       ? {
           ...raw,
           ...(typeof raw.title === "string"
-            ? { title: codeMentions(raw.title) }
+            ? { title: quietMentions(raw.title) }
             : {}),
           ...(typeof raw.body === "string"
-            ? { body: codeMentions(raw.body) }
+            ? { body: quietMentions(raw.body) }
             : {}),
         }
       : raw;
@@ -288,11 +284,11 @@ export function validateFindings(
       !Number.isSafeInteger(item.line) ||
       (item.priority !== "P1" && item.priority !== "P2") ||
       typeof item.title !== "string" ||
-      item.title.length < 10 ||
-      item.title.length > 160 ||
+      visibleLength(item.title) < 10 ||
+      visibleLength(item.title) > 160 ||
       typeof item.body !== "string" ||
-      item.body.length < 60 ||
-      item.body.length > 2000 ||
+      visibleLength(item.body) < 60 ||
+      visibleLength(item.body) > 2000 ||
       typeof item.confidence !== "number" ||
       !Number.isFinite(item.confidence) ||
       item.confidence < MIN_FINDING_CONFIDENCE ||
