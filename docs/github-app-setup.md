@@ -79,6 +79,16 @@ requires the Pull requests permission and event above on both dev and production
 existing installations must accept the expanded permission. Reviews inspect
 immutable head/merge-base source and never execute pull-request code.
 
+Every changed file's head source is read. When a single review cannot hold
+them all, the rest are reviewed in coverage passes of their own, implementation
+files first; a batched review covers files through its groups instead. Passes
+stop at the account's token limit, at a provider error, or five minutes into
+the review, and the files left, or any whose candidate could not be
+validated, are reported as not fully reviewed. A candidate is
+dropped in verification only when the verifier quotes source that refutes it.
+`e2e/recall/cases.json` lists past commits with the issues other reviewers
+found there; `bun run test:e2e:recall` replays the reviewer on them.
+
 Gitdog reviews a pull request once, when it is opened or marked ready for
 review. Later reviews run when the author or a collaborator comments
 `@<app-slug> review` (changes since the last review) or `@<app-slug> full

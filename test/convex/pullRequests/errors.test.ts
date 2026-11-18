@@ -104,7 +104,7 @@ describe("safe PR generation diagnostics", () => {
     ],
     [
       "Finding contains unsupported evidence or mentions",
-      "did not quote its target line, or contained an @mention",
+      "did not quote its target line, or referenced an agent instruction file",
     ],
     ["Duplicate review finding", "same finding more than once"],
     ["Review did not finish completely", "did not finish normally"],

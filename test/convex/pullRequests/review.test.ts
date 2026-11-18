@@ -139,12 +139,9 @@ describe("commit-grounded PR finding validation", () => {
   it.each([
     { line: 1 },
     { line: 99 },
-    { confidence: 0.89 },
+    { confidence: 0.79 },
     { confidence: NaN },
     { path: "../secret" },
-    {
-      body: "Ask @hyochan to check this because the code may be incorrect under some conditions.",
-    },
     {
       evidence: [
         {
@@ -164,6 +161,56 @@ describe("commit-grounded PR finding validation", () => {
       validateFindings({ findings: [{ ...finding, ...patch }] }, [file], reads),
     ).toThrow(),
   );
+  it("quiets every @-name so a finding notifies no one", () => {
+    const J = "\u2060";
+    const [kept] = validateFindings(
+      {
+        findings: [
+          {
+            ...finding,
+            title: "Run @gitdogbot review only once",
+            body: `${finding.body} Commenting @gitdogbot review, x-@octocat, path/@octocat, \\\`@octocat\\\` or importing @types/node is fine; mail@example.com stays.`,
+          },
+        ],
+      },
+      [file],
+      reads,
+    );
+    expect(kept.title).toBe(`Run @${J}gitdogbot review only once`);
+    for (const name of ["gitdogbot", "octocat", "types/node"])
+      expect(kept.body).not.toMatch(new RegExp(`@${name}`));
+    expect(kept.body).toContain(`x-@${J}octocat`);
+    expect(kept.body).toContain(`path/@${J}octocat`);
+    expect(kept.body).toContain(`mail@${J}example.com`);
+    // Character references GitHub would decode into a mention.
+    const [entities] = validateFindings(
+      {
+        findings: [
+          {
+            ...finding,
+            body: `${finding.body} &#64;octocat &#x40;octocat &commat;octocat @&#111;ctocat AT&T`,
+          },
+        ],
+      },
+      [file],
+      reads,
+    );
+    expect(entities.body).toContain(
+      `&${J}#64;octocat &${J}#x40;octocat &${J}commat;octocat @&${J}#111;ctocat AT&T`,
+    );
+    // Validating the stored finding again changes nothing.
+    expect(validateFindings({ findings: [kept] }, [file], reads)).toEqual([
+      kept,
+    ]);
+  });
+  it("checks finding lengths without the joiners added to @-names", () => {
+    const title = `@a ${"x".repeat(157)}`;
+    expect(title).toHaveLength(160);
+    expect(
+      validateFindings({ findings: [{ ...finding, title }] }, [file], reads)[0]
+        .title,
+    ).toBe(`@\u2060a ${"x".repeat(157)}`);
+  });
   it("rejects an unread target and duplicate findings", () => {
     expect(() =>
       validateFindings({ findings: [finding] }, [file], []),
@@ -198,8 +245,11 @@ const stop = (findings: Finding[]) => ({
   content: JSON.stringify({ findings }),
   finishReason: "stop",
 });
-const verified = (retainedFindingIds = ["F1"]) => ({
-  content: JSON.stringify({ retainedFindingIds }),
+const verified = (
+  retainedFindingIds = ["F1"],
+  refutations: Array<{ id: string; quote: string }> = [],
+) => ({
+  content: JSON.stringify({ retainedFindingIds, refutations }),
   finishReason: "stop" as const,
 });
 function run(
@@ -505,7 +555,7 @@ describe("bounded review workflow", () => {
       tools: requestOptions[0].tools,
       responseFormat: requestOptions[0].responseFormat,
     }).length;
-    expect(payloadSize).toMatchInlineSnapshot(`10528`);
+    expect(payloadSize).toMatchInlineSnapshot(`10747`);
     expect(payloadSize).toBeLessThan(11_000);
     expect(requestOptions[0].responseFormat).toEqual(REVIEW_RESPONSE_FORMAT);
     expect(requests).toHaveLength(1);
@@ -1136,6 +1186,213 @@ describe("bounded review workflow", () => {
     expect(result.reads.some((r) => r.path === "src/more-7.ts")).toBe(false);
     expect(result.excludedPaths).toContain("src/more-7.ts");
   });
+  describe("coverage passes", () => {
+    // Too many changed files for the main conversation's source budget.
+    const files = Array.from({ length: 14 }, (_, index) => ({
+      ...file,
+      filename: `src/file-${index + 1}.ts`,
+    }));
+    const padded = `${source}\n${"// padding\n".repeat(1000)}`;
+    const role = (messages: ChatMessage[]) => {
+      const system = String(messages[0].content);
+      return system.includes("coverage pass")
+        ? "coverage"
+        : system.includes("verification pass")
+          ? "verify"
+          : "main";
+    };
+    const passFiles = (messages: ChatMessage[]) =>
+      (
+        reviewState(messages) as { changedFiles: Array<{ filename: string }> }
+      ).changedFiles.map((f) => f.filename);
+    const at = (path: string): Finding => ({
+      ...finding,
+      path,
+      evidence: finding.evidence.map((e) => ({ ...e, path })),
+    });
+    function scripted(
+      coverage: (messages: ChatMessage[], pass: number) => unknown,
+    ): AiProvider {
+      let pass = 0;
+      return {
+        ...provider([]),
+        chat: vi.fn(async (messages: ChatMessage[]) => {
+          switch (role(messages)) {
+            case "coverage":
+              return coverage(messages, ++pass) as Awaited<
+                ReturnType<AiProvider["chat"]>
+              >;
+            case "verify":
+              return verified();
+            default:
+              return stop([]) as Awaited<ReturnType<AiProvider["chat"]>>;
+          }
+        }),
+      };
+    }
+    const options = { files, paths: files.map((f) => f.filename) };
+    it("reviews every changed file the main review could not read", async () => {
+      let flagged: string | undefined;
+      const p = scripted((messages, pass) => {
+        if (pass > 1) return stop([]);
+        flagged = passFiles(messages)[0];
+        return stop([at(flagged)]);
+      });
+      const result = await run(
+        p,
+        vi.fn(async () => padded),
+        options,
+      );
+      expect(result.excludedPaths).toEqual([]);
+      for (const f of files)
+        expect(
+          result.reads.some((r) => r.ref === "head" && r.path === f.filename),
+        ).toBe(true);
+      expect(flagged).toBeDefined();
+      expect(result.findings).toEqual([at(flagged!)]);
+      const labels = vi
+        .mocked(p.chat)
+        .mock.calls.map(([, o]) => o?.billingLabel);
+      expect(labels).toContain("pr-review/coverage/1");
+      expect(labels).toContain("pr-review/coverage/1/critique");
+    });
+    it("drops an invalid candidate and leaves only its file unreviewed", async () => {
+      let flagged: string | undefined;
+      let doubtful: string | undefined;
+      const p = scripted((messages, pass) => {
+        if (pass > 1) return stop([]);
+        const [first, second] = passFiles(messages);
+        flagged = second;
+        // A line outside the diff, then a valid finding.
+        doubtful = first;
+        return stop([{ ...at(first), line: 3 }, at(second)]);
+      });
+      const result = await run(
+        p,
+        vi.fn(async () => padded),
+        options,
+      );
+      expect(result.findings).toEqual([at(flagged!)]);
+      // The file whose candidate was dropped is not reported as clean.
+      expect(result.excludedPaths).toEqual([doubtful]);
+    });
+    it("reports a pass the model cannot complete and continues", async () => {
+      let failed: string[] = [];
+      const p = scripted((messages, pass) => {
+        if (pass === 1) {
+          failed = passFiles(messages);
+          return { content: "not json", finishReason: "stop" };
+        }
+        return stop([]);
+      });
+      const result = await run(
+        p,
+        vi.fn(async () => padded),
+        options,
+      );
+      expect(failed.length).toBeGreaterThan(0);
+      expect(result.excludedPaths).toEqual(failed);
+    });
+    it("keeps the review when a coverage request times out", async () => {
+      const { ChatProviderRequestError } =
+        await import("../../../convex/_ai/providerErrors");
+      let coverageCalls = 0;
+      const p = scripted(() => {
+        coverageCalls++;
+        throw new ChatProviderRequestError(
+          "Claude request timed out",
+          "ambiguous",
+          {},
+        );
+      });
+      const result = await run(
+        p,
+        vi.fn(async () => padded),
+        options,
+      );
+      expect(coverageCalls).toBe(1);
+      expect(result.excludedPaths.length).toBeGreaterThan(0);
+    });
+    it("keeps the review when a coverage read fails", async () => {
+      let reads = 0;
+      const read = vi.fn(async () => {
+        // The main review reads what it can; a later GitHub read fails.
+        if (++reads > 9) throw new Error("GitHub returned 502");
+        return padded;
+      });
+      const p = scripted(() => stop([]));
+      const result = await run(p, read, options);
+      expect(result.excludedPaths.length).toBeGreaterThan(0);
+    });
+    it("leaves coverage to the groups of a batched review", async () => {
+      const p = scripted(() => stop([]));
+      await run(
+        p,
+        vi.fn(async () => padded),
+        { ...options, batchGroup: true },
+      );
+      expect(
+        vi
+          .mocked(p.chat)
+          .mock.calls.some(([, o]) =>
+            o?.billingLabel?.startsWith("pr-review/coverage"),
+          ),
+      ).toBe(false);
+    });
+    it("starts no coverage request late in the action", async () => {
+      const p = scripted(() => stop([]));
+      const result = await run(
+        p,
+        vi.fn(async () => padded),
+        { ...options, startedAt: Date.now() - 5 * 60_000 - 1 },
+      );
+      expect(
+        vi
+          .mocked(p.chat)
+          .mock.calls.some(([, o]) =>
+            o?.billingLabel?.startsWith("pr-review/coverage"),
+          ),
+      ).toBe(false);
+      expect(result.excludedPaths.length).toBeGreaterThan(0);
+    });
+    it("stops at the account limit and reports the rest", async () => {
+      const { ChatBillingError } =
+        await import("../../../convex/_ai/chatBilling");
+      let coverageCalls = 0;
+      const p = scripted(() => {
+        coverageCalls++;
+        throw new ChatBillingError("Token limit reached", "limit_reached");
+      });
+      const result = await run(
+        p,
+        vi.fn(async () => padded),
+        options,
+      );
+      expect(coverageCalls).toBe(1);
+      expect(result.excludedPaths.length).toBeGreaterThan(0);
+      expect(result.findings).toEqual([]);
+    });
+    it("propagates a pull request change instead of reporting files", async () => {
+      let calls = 0;
+      const guard = vi.fn(async () => {
+        // The pull request moves on once the main review has answered.
+        if (calls >= 2) throw new Error("Pull request changed during review");
+      });
+      const p = scripted(() => stop([]));
+      const chat = p.chat;
+      p.chat = vi.fn(async (...a: Parameters<AiProvider["chat"]>) => {
+        calls++;
+        return chat(...a);
+      });
+      await expect(
+        run(
+          p,
+          vi.fn(async () => padded),
+          { ...options, guard },
+        ),
+      ).rejects.toThrow("Pull request changed during review");
+    });
+  });
   it("requires source inspection even when the model returns no findings", async () => {
     await expect(
       run(
@@ -1145,7 +1402,11 @@ describe("bounded review workflow", () => {
     ).rejects.toThrow("did not inspect");
   });
   it("does not publish speculative candidates removed by the critique pass", async () => {
-    const p = provider([use, stop([finding]), verified([])]);
+    const p = provider([
+      use,
+      stop([finding]),
+      verified([], [{ id: "F1", quote: "function find(key) {" }]),
+    ]);
     expect((await run(p)).findings).toEqual([]);
     expect(p.chat).toHaveBeenCalledTimes(3);
   });

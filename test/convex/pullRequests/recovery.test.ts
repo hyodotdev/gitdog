@@ -43,8 +43,11 @@ const stop = (findings: Finding[] = []): ChatCompletionResult => ({
   content: JSON.stringify({ findings }),
   finishReason: "stop",
 });
-const verified = (retainedFindingIds = ["F1"]) => ({
-  content: JSON.stringify({ retainedFindingIds }),
+const verified = (
+  retainedFindingIds = ["F1"],
+  refutations: Array<{ id: string; quote: string }> = [],
+) => ({
+  content: JSON.stringify({ retainedFindingIds, refutations }),
   finishReason: "stop" as const,
 });
 const tool = (
@@ -229,7 +232,10 @@ describe("verification selects immutable grounded candidates", () => {
 
   it("selects a strict subset without generating replacement text or suggestions", async () => {
     const { promise, requests, requestOptions } = fixture(
-      [stop([finding, second]), verified(["F2"])],
+      [
+        stop([finding, second]),
+        verified(["F2"], [{ id: "F1", quote: "function find(key) {" }]),
+      ],
       context,
     );
     expect((await promise).findings).toEqual([second]);
@@ -254,6 +260,34 @@ describe("verification selects immutable grounded candidates", () => {
       "schema.properties.retainedFindingIds.maxItems",
     );
     expect(requestOptions[1].tools).toBeUndefined();
+  });
+
+  it("keeps a candidate whose refutation only repeats its own evidence", async () => {
+    const { promise } = fixture(
+      [
+        stop([finding, second]),
+        verified(
+          ["F2"],
+          [{ id: "F1", quote: "return cache.get('constant');" }],
+        ),
+      ],
+      context,
+    );
+    expect((await promise).findings).toEqual([finding, second]);
+  });
+
+  it("keeps a candidate dropped without a refutation quoting the source", async () => {
+    const { promise } = fixture(
+      [
+        stop([finding, second]),
+        verified(
+          ["F2"],
+          [{ id: "F1", quote: "this text is not in any source" }],
+        ),
+      ],
+      context,
+    );
+    expect((await promise).findings).toEqual([finding, second]);
   });
 
   it("preserves original order and fields regardless of selection order", async () => {
@@ -379,7 +413,7 @@ describe("uncertain review candidates", () => {
     replacement: " return cache.get(key);",
   };
 
-  it.each([0.9, 0.92, 0.94])(
+  it.each([0.8, 0.9, 0.94])(
     "keeps a finding at confidence %s but discards its suggestion",
     async (confidence) => {
       const supported = { ...finding, confidence };
@@ -396,7 +430,7 @@ describe("uncertain review candidates", () => {
 
   it("discards a finding just below the finding confidence with its suggestion", async () => {
     const { promise, provider } = fixture([
-      stop([{ ...finding, confidence: 0.89, suggestion }]),
+      stop([{ ...finding, confidence: 0.79, suggestion }]),
     ]);
     expect((await promise).findings).toEqual([]);
     expect(provider.chat).toHaveBeenCalledTimes(1);
@@ -852,7 +886,7 @@ describe("review recovery without weakening source evidence", () => {
     }
   });
 
-  it("leaves out source that would overflow the request on the last tool turn", async () => {
+  it("leaves out of the conversation source that would overflow the last tool turn", async () => {
     const files = [
       file,
       ...["src/b.ts", "src/c.ts"].map((filename) => ({ ...file, filename })),
@@ -871,6 +905,8 @@ describe("review recovery without weakening source evidence", () => {
         ...Array.from({ length: 7 }, () => tool("search_paths", { query: "" })),
         response,
         stop(),
+        // The file left out is reviewed in a coverage pass of its own.
+        stop(),
       ],
       {
         files,
@@ -881,9 +917,10 @@ describe("review recovery without weakening source evidence", () => {
     expect(result.reads.map((r) => r.path)).toEqual([
       file.filename,
       "src/b.ts",
+      "src/c.ts",
     ]);
-    expect(result.excludedPaths).toContain("src/c.ts");
-    expect(provider.chat).toHaveBeenCalledTimes(9);
+    expect(result.excludedPaths).not.toContain("src/c.ts");
+    expect(provider.chat).toHaveBeenCalledTimes(10);
     expect(JSON.stringify(state(requests[8]).recentToolResults)).toContain(
       "The review context budget is used up",
     );
