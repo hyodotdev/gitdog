@@ -1,0 +1,184 @@
+[
+  {
+    "pr": 28,
+    "headSha": "eef23f88e98393abad0caa10d170f49f42c83ce1",
+    "fixedIn": "2d08b47",
+    "title": "feat: show review progress on the pull request and accept @gitdog",
+    "expected": [
+      {
+        "path": "convex/pullRequests/internalMutation.ts",
+        "priority": "P1",
+        "title": "Expiries re-edited the status comment and could leave it stale"
+      },
+      {
+        "path": "convex/pullRequests/internalAction.ts",
+        "priority": "P1",
+        "title": "A late settle could overwrite a newer outcome"
+      },
+      {
+        "path": "convex/ticketActions/internalMutation.ts",
+        "priority": "P2",
+        "title": "A rejected review kept \"ready for approval\" forever"
+      },
+      {
+        "path": "convex/pullRequests/internalMutation.ts",
+        "priority": "P2",
+        "title": "A review that ended while its comment was being posted stayed \"Reviewing\""
+      },
+      {
+        "path": "convex/pullRequests/internalMutation.ts",
+        "priority": "P2",
+        "title": "A pull request that keeps failing got a comment on every push"
+      },
+      {
+        "path": "convex/pullRequests/commands.ts",
+        "priority": "P2",
+        "title": "Human logins ending in \"ai\" or \"bot\" counted as review bots"
+      },
+      {
+        "path": "convex/pullRequests/commands.ts",
+        "priority": "P3",
+        "title": "Cancelled reviews asked readers to try again"
+      },
+      {
+        "path": "convex/pullRequests/commands.ts",
+        "priority": "P3",
+        "title": "A chained thank-you posted the help text"
+      },
+      {
+        "path": "convex/pullRequests/commands.ts",
+        "priority": "P3",
+        "title": "`@gitdog` ran both the development and production apps"
+      },
+      {
+        "path": "convex/pullRequests/internalAction.ts",
+        "priority": "P3",
+        "title": "An automatic deletion-only review posted \"No new changes\""
+      }
+    ]
+  },
+  {
+    "pr": 26,
+    "headSha": "ed6452d902b3dce69a9aec7fef0bf73586e5b2a3",
+    "fixedIn": "ab98760",
+    "title": "feat: run pull request reviews on comment and CLI commands",
+    "expected": [
+      {
+        "path": "convex/pullRequests/internalMutation.ts",
+        "priority": "P1",
+        "title": "`full review` on a reviewed commit replied \"started\" and then failed"
+      },
+      {
+        "path": "convex/pullRequests/internalMutation.ts",
+        "priority": "P1",
+        "title": "A failed or limit-stopped review could not be retried"
+      },
+      {
+        "path": "convex/pullRequests/internalAction.ts",
+        "priority": "P2",
+        "title": "A command could queue a review of a stale head"
+      },
+      {
+        "path": "convex/pullRequests/internalMutation.ts",
+        "priority": "P2",
+        "title": "A failed first review turned off automatic review for the PR"
+      },
+      {
+        "path": "convex/pullRequests/webhook.ts",
+        "priority": "P2",
+        "title": "Fork authors could run full reviews on the owner's tokens"
+      },
+      {
+        "path": "convex/pullRequests/webhook.ts",
+        "priority": "P2",
+        "title": "Recording a command and running it were not atomic"
+      },
+      {
+        "path": "convex/pullRequests/commands.ts",
+        "priority": "P3",
+        "title": "Mentions inside sentences, templates and code ran commands"
+      },
+      {
+        "path": "convex/pullRequests/github.ts",
+        "priority": "P3",
+        "title": "`resolve` reported threads it did not resolve"
+      },
+      {
+        "path": "convex/pullRequests/internalMutation.ts",
+        "priority": "P3",
+        "title": "Limit notices on rechecks and closed pull requests"
+      },
+      {
+        "path": "convex/repositories/mutation.ts",
+        "priority": "P3",
+        "title": "Repository deletion left command records behind"
+      }
+    ]
+  },
+  {
+    "pr": 26,
+    "headSha": "ab987605e69d724f7a05ae4e90e96ceacde72063",
+    "fixedIn": "f450294",
+    "title": "feat: run pull request reviews on comment and CLI commands",
+    "expected": [
+      {
+        "path": "convex/pullRequests/internalAction.ts",
+        "priority": "P2",
+        "title": "Updating the branch withdrew the approval with no way back explained"
+      },
+      {
+        "path": "convex/pullRequests/internalMutation.ts",
+        "priority": "P3",
+        "title": "An about-to-post review and a queued recheck were not treated as running"
+      },
+      {
+        "path": "convex/pullRequests/internalMutation.ts",
+        "priority": "P3",
+        "title": "A review stuck before posting blocked commands on that commit"
+      },
+      {
+        "path": "convex/pullRequests/internalMutation.ts",
+        "priority": "P3",
+        "title": "A review whose post could not be confirmed could be posted twice"
+      },
+      {
+        "path": "convex/pullRequests/internalAction.ts",
+        "priority": "P3",
+        "title": "A command that could not run went silent"
+      },
+      {
+        "path": "convex/pullRequests/internalMutation.ts",
+        "priority": "P3",
+        "title": "Commands could be recorded for a repository being removed"
+      }
+    ]
+  },
+  {
+    "pr": 25,
+    "headSha": "ab36a20cefea4ddee34636772a34a30747810315",
+    "fixedIn": "0a42c20",
+    "title": "feat: approve clean reviews and link commits in cleaner review posts",
+    "expected": [
+      {
+        "path": "convex/pullRequests/internalAction.ts",
+        "priority": "P2",
+        "title": "A refused dismissal was forgotten anyway"
+      },
+      {
+        "path": "convex/pullRequests/internalMutation.ts",
+        "priority": "P2",
+        "title": "A push during an in-flight APPROVE could untrack the approval"
+      },
+      {
+        "path": "convex/pullRequests/internalAction.ts",
+        "priority": "P2",
+        "title": "A deletion-only push re-approved the PR"
+      },
+      {
+        "path": "convex/pullRequests/internalAction.ts",
+        "priority": "P3",
+        "title": "A no-change follow-up could post a non-approving comment"
+      }
+    ]
+  }
+]

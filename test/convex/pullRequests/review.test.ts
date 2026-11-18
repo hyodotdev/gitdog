@@ -139,12 +139,9 @@ describe("commit-grounded PR finding validation", () => {
   it.each([
     { line: 1 },
     { line: 99 },
-    { confidence: 0.89 },
+    { confidence: 0.79 },
     { confidence: NaN },
     { path: "../secret" },
-    {
-      body: "Ask @hyochan to check this because the code may be incorrect under some conditions.",
-    },
     {
       evidence: [
         {
@@ -164,6 +161,46 @@ describe("commit-grounded PR finding validation", () => {
       validateFindings({ findings: [{ ...finding, ...patch }] }, [file], reads),
     ).toThrow(),
   );
+  it("keeps @-names as code so a finding notifies no one", () => {
+    const [kept] = validateFindings(
+      {
+        findings: [
+          {
+            ...finding,
+            title: "Run @gitdogbot review only once",
+            body: `${finding.body} Commenting @gitdogbot review or importing @types/node is fine; \`@already\` is code and mail@example.com is not a mention.`,
+          },
+        ],
+      },
+      [file],
+      reads,
+    );
+    expect(kept.title).toBe("Run `@gitdogbot` review only once");
+    expect(kept.body).toContain("Commenting `@gitdogbot` review");
+    expect(kept.body).toContain("importing `@types/node` is fine");
+    expect(kept.body).toContain("`@already` is code");
+    expect(kept.body).toContain("mail@example.com");
+    expect(
+      validateFindings(
+        {
+          findings: [
+            {
+              ...finding,
+              body: "Ask @hyochan to check this because the code may be incorrect under some conditions.",
+            },
+          ],
+        },
+        [file],
+        reads,
+      )[0].body,
+    ).toBe(
+      "Ask `@hyochan` to check this because the code may be incorrect under some conditions.",
+    );
+    // Validating the stored finding again changes nothing.
+    expect(validateFindings({ findings: [kept] }, [file], reads)).toEqual([
+      kept,
+    ]);
+  });
   it("rejects an unread target and duplicate findings", () => {
     expect(() =>
       validateFindings({ findings: [finding] }, [file], []),
@@ -198,8 +235,11 @@ const stop = (findings: Finding[]) => ({
   content: JSON.stringify({ findings }),
   finishReason: "stop",
 });
-const verified = (retainedFindingIds = ["F1"]) => ({
-  content: JSON.stringify({ retainedFindingIds }),
+const verified = (
+  retainedFindingIds = ["F1"],
+  refutations: Array<{ id: string; quote: string }> = [],
+) => ({
+  content: JSON.stringify({ retainedFindingIds, refutations }),
   finishReason: "stop" as const,
 });
 function run(
@@ -505,7 +545,7 @@ describe("bounded review workflow", () => {
       tools: requestOptions[0].tools,
       responseFormat: requestOptions[0].responseFormat,
     }).length;
-    expect(payloadSize).toMatchInlineSnapshot(`10528`);
+    expect(payloadSize).toMatchInlineSnapshot(`10747`);
     expect(payloadSize).toBeLessThan(11_000);
     expect(requestOptions[0].responseFormat).toEqual(REVIEW_RESPONSE_FORMAT);
     expect(requests).toHaveLength(1);
@@ -1136,6 +1176,148 @@ describe("bounded review workflow", () => {
     expect(result.reads.some((r) => r.path === "src/more-7.ts")).toBe(false);
     expect(result.excludedPaths).toContain("src/more-7.ts");
   });
+  describe("coverage passes", () => {
+    // Too many changed files for the main conversation's source budget.
+    const files = Array.from({ length: 14 }, (_, index) => ({
+      ...file,
+      filename: `src/file-${index + 1}.ts`,
+    }));
+    const padded = `${source}\n${"// padding\n".repeat(1000)}`;
+    const role = (messages: ChatMessage[]) => {
+      const system = String(messages[0].content);
+      return system.includes("coverage pass")
+        ? "coverage"
+        : system.includes("verification pass")
+          ? "verify"
+          : "main";
+    };
+    const passFiles = (messages: ChatMessage[]) =>
+      (
+        reviewState(messages) as { changedFiles: Array<{ filename: string }> }
+      ).changedFiles.map((f) => f.filename);
+    const at = (path: string): Finding => ({
+      ...finding,
+      path,
+      evidence: finding.evidence.map((e) => ({ ...e, path })),
+    });
+    function scripted(
+      coverage: (messages: ChatMessage[], pass: number) => unknown,
+    ): AiProvider {
+      let pass = 0;
+      return {
+        ...provider([]),
+        chat: vi.fn(async (messages: ChatMessage[]) => {
+          switch (role(messages)) {
+            case "coverage":
+              return coverage(messages, ++pass) as Awaited<
+                ReturnType<AiProvider["chat"]>
+              >;
+            case "verify":
+              return verified();
+            default:
+              return stop([]) as Awaited<ReturnType<AiProvider["chat"]>>;
+          }
+        }),
+      };
+    }
+    const options = { files, paths: files.map((f) => f.filename) };
+    it("reviews every changed file the main review could not read", async () => {
+      let flagged: string | undefined;
+      const p = scripted((messages, pass) => {
+        if (pass > 1) return stop([]);
+        flagged = passFiles(messages)[0];
+        return stop([at(flagged)]);
+      });
+      const result = await run(
+        p,
+        vi.fn(async () => padded),
+        options,
+      );
+      expect(result.excludedPaths).toEqual([]);
+      for (const f of files)
+        expect(
+          result.reads.some((r) => r.ref === "head" && r.path === f.filename),
+        ).toBe(true);
+      expect(flagged).toBeDefined();
+      expect(result.findings).toEqual([at(flagged!)]);
+      const labels = vi
+        .mocked(p.chat)
+        .mock.calls.map(([, o]) => o?.billingLabel);
+      expect(labels).toContain("pr-review/coverage/1");
+      expect(labels).toContain("pr-review/coverage/1/critique");
+    });
+    it("drops an invalid candidate without losing the pass's coverage", async () => {
+      let flagged: string | undefined;
+      const p = scripted((messages, pass) => {
+        if (pass > 1) return stop([]);
+        const [first, second] = passFiles(messages);
+        flagged = second;
+        // A line outside the diff, then a valid finding.
+        return stop([{ ...at(first), line: 3 }, at(second)]);
+      });
+      const result = await run(
+        p,
+        vi.fn(async () => padded),
+        options,
+      );
+      expect(result.findings).toEqual([at(flagged!)]);
+      expect(result.excludedPaths).toEqual([]);
+    });
+    it("reports a pass the model cannot complete and continues", async () => {
+      let failed: string[] = [];
+      const p = scripted((messages, pass) => {
+        if (pass === 1) {
+          failed = passFiles(messages);
+          return { content: "not json", finishReason: "stop" };
+        }
+        return stop([]);
+      });
+      const result = await run(
+        p,
+        vi.fn(async () => padded),
+        options,
+      );
+      expect(failed.length).toBeGreaterThan(0);
+      expect(result.excludedPaths).toEqual(failed);
+    });
+    it("stops at the account limit and reports the rest", async () => {
+      const { ChatBillingError } =
+        await import("../../../convex/_ai/chatBilling");
+      let coverageCalls = 0;
+      const p = scripted(() => {
+        coverageCalls++;
+        throw new ChatBillingError("Token limit reached", "limit_reached");
+      });
+      const result = await run(
+        p,
+        vi.fn(async () => padded),
+        options,
+      );
+      expect(coverageCalls).toBe(1);
+      expect(result.excludedPaths.length).toBeGreaterThan(0);
+      expect(result.findings).toEqual([]);
+    });
+    it("propagates a pull request change instead of reporting files", async () => {
+      let calls = 0;
+      const guard = vi.fn(async () => {
+        // The pull request moves on once the main review has answered.
+        if (calls >= 2) throw new Error("Pull request changed during review");
+      });
+      const p = scripted(() => stop([]));
+      const chat = p.chat;
+      p.chat = vi.fn(async (...a: Parameters<AiProvider["chat"]>) => {
+        calls++;
+        return chat(...a);
+      });
+      await expect(
+        run(
+          p,
+          vi.fn(async () => padded),
+          { ...options, guard },
+        ),
+      ).rejects.toThrow("Pull request changed during review");
+    });
+  });
   it("requires source inspection even when the model returns no findings", async () => {
     await expect(
       run(
@@ -1145,7 +1327,11 @@ describe("bounded review workflow", () => {
     ).rejects.toThrow("did not inspect");
   });
   it("does not publish speculative candidates removed by the critique pass", async () => {
-    const p = provider([use, stop([finding]), verified([])]);
+    const p = provider([
+      use,
+      stop([finding]),
+      verified([], [{ id: "F1", quote: "return cache.get('constant');" }]),
+    ]);
     expect((await run(p)).findings).toEqual([]);
     expect(p.chat).toHaveBeenCalledTimes(3);
   });

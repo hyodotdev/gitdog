@@ -87,6 +87,10 @@ flowchart LR
    grounded in the indexed source.
 4. **Approve**: review the draft in Gitdog or the CLI, then publish it.
 
+Gitdog reads the source of every changed file. Files that do not fit the main
+review are reviewed in further passes, and a review that still could not read
+a file says so.
+
 A pull request review with no findings needs no approval. It posts at once and,
 when every changed file was reviewed and no Gitdog thread is open, approves the
 reviewed commit. A later push, including updating the branch, withdraws that

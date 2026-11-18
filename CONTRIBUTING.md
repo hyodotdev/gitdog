@@ -56,15 +56,16 @@ A development GitHub App is required for repository features; follow
 
 ## Commands
 
-| Command                | Purpose                                         |
-| ---------------------- | ----------------------------------------------- |
-| `bun run dev`          | Run the web app and Convex dev backend together |
-| `bun run typecheck`    | Type-check the web app, backend and e2e runners |
-| `bun run lint`         | ESLint across the monorepo                      |
-| `bun run format:check` | Prettier check                                  |
-| `bun run test`         | Web and backend test suites                     |
-| `bun run test:cli`     | CLI test suite                                  |
-| `bun run check:api`    | Verify the CLI API catalog matches the backend  |
+| Command                   | Purpose                                                     |
+| ------------------------- | ----------------------------------------------------------- |
+| `bun run dev`             | Run the web app and Convex dev backend together             |
+| `bun run typecheck`       | Type-check the web app, backend and e2e runners             |
+| `bun run lint`            | ESLint across the monorepo                                  |
+| `bun run format:check`    | Prettier check                                              |
+| `bun run test`            | Web and backend test suites                                 |
+| `bun run test:cli`        | CLI test suite                                              |
+| `bun run check:api`       | Verify the CLI API catalog matches the backend              |
+| `bun run test:e2e:recall` | Measure review recall on past commits (real provider calls) |
 
 ## Checks
 

@@ -11,10 +11,13 @@ import {
   ReviewResponseFormatError,
   ReviewContextLimitError,
   ReviewEvidenceError,
+  isReviewGroupModelFailure,
   reviewFailureCause,
   runReviewRequest,
 } from "./errors";
 import {
+  MAX_REVIEW_FINDINGS,
+  MIN_FINDING_CONFIDENCE,
   REVIEW_PROMPT,
   REVIEW_RESPONSE_FORMAT,
   addedLines,
@@ -95,7 +98,10 @@ function confidentCandidates(
     // relaxing any source, quote, anchor or suggestion validation. An optional
     // suggestion alone must not fail the whole review.
     findings: value.findings
-      .filter((item: unknown) => !((confidenceOf(item) ?? 1) < 0.9))
+      .filter(
+        (item: unknown) =>
+          !((confidenceOf(item) ?? 1) < MIN_FINDING_CONFIDENCE),
+      )
       // A batched group reports only its own files; another group reviews
       // the rest, so a finding elsewhere is dropped instead of failing all.
       .filter(
@@ -173,6 +179,44 @@ function relativeSourcePaths(path: string, source: string, known: Set<string>) {
 // Up to 8 guides plus 8 preloaded files leave 8 of the 24 file reads for tools.
 const PRELOAD_READS = 8;
 
+// Changed files the main review never read are reviewed afterwards in fresh
+// requests of their own. Each pass shows up to this much head source, and the
+// passes stop at the account limit or once the review has run this long, so
+// the action deadline is never at risk.
+const COVERAGE_PASS_SOURCE = 90_000;
+const COVERAGE_PASS_REQUEST = 150_000;
+const MAX_COVERAGE_PASSES = 8;
+const COVERAGE_DEADLINE_MS = 5 * 60_000;
+// Implementation first, then tests, then documentation and data, so a pass
+// cut short by the limit or the time budget leaves the least important
+// files unreviewed.
+function coverageRank(path: string): number {
+  if (
+    /(?:^|\/)(?:test|tests|__tests__|e2e)\/|\.(?:test|spec)\.[^/]+$/.test(path)
+  )
+    return 1;
+  if (
+    /\.(?:[cm]?[jt]sx?|py|go|rs|java|kt|swift|rb|php|cs|c|cc|cpp|h|scala|dart|vue|svelte|sql|ya?ml|toml|sh)$/i.test(
+      path,
+    )
+  )
+    return 0;
+  return 2;
+}
+
+export type ReviewTraceEvent =
+  | {
+      stage: "proposed";
+      step: string;
+      candidates: Array<{
+        path: unknown;
+        priority: unknown;
+        confidence: unknown;
+        title: unknown;
+      }>;
+    }
+  | { stage: "verified"; step: string; kept: string[]; discarded: string[] };
+
 export async function reviewWithContext(args: {
   provider: AiProvider;
   allowSuggestions?: boolean;
@@ -188,14 +232,41 @@ export async function reviewWithContext(args: {
   basePaths: string[];
   read: (path: string, ref: "head" | "base") => Promise<string>;
   guard: () => Promise<void>;
+  // Receives what each step proposed and kept, for review-quality checks.
+  trace?: (event: ReviewTraceEvent) => void;
 }): Promise<{
   findings: Finding[];
   reads: ReadEvidence[];
   excludedPaths: string[];
 }> {
+  const started = Date.now();
+  // Reports the raw candidates of one step before any filtering.
+  const proposed = (step: string, value: unknown) => {
+    if (
+      args.trace &&
+      value !== null &&
+      typeof value === "object" &&
+      "findings" in value &&
+      Array.isArray(value.findings)
+    )
+      args.trace({
+        stage: "proposed",
+        step,
+        candidates: value.findings.map((item: Record<string, unknown>) => ({
+          path: item?.path,
+          priority: item?.priority,
+          confidence: item?.confidence,
+          title: item?.title,
+        })),
+      });
+    return value;
+  };
   const reads: ReadEvidence[] = [];
   const sourceCache = new Map<string, string>();
   const unavailablePaths = new Set<string>();
+  // Paths whose source cannot be read at all, unlike ones the main
+  // conversation had no room left to show.
+  const unreadablePaths = new Set<string>();
   const incompleteGuides = new Set<string>();
   const headPaths = new Set([
     ...args.paths,
@@ -281,6 +352,7 @@ export async function reviewWithContext(args: {
       if (!(cause instanceof ReviewContextLimitError) && !unsupported)
         throw error;
       unavailablePaths.add(path);
+      unreadablePaths.add(path);
       return null;
     }
   };
@@ -661,9 +733,309 @@ export async function reviewWithContext(args: {
     reads.some(
       (r) => r.ref === "head" && args.files.some((f) => f.filename === r.path),
     );
+  // A second model pass challenges candidates; deterministic quote/line checks
+  // remain mandatory. This is self-critique, not an independent review.
+  const verify = async (
+    findings: Finding[],
+    files: ChangedFile[],
+    sources: ReadEvidence[],
+    billingLabel: string,
+  ): Promise<Finding[]> => {
+    if (findings.length === 0) return findings;
+    await args.guard();
+    const candidates = findings.map((finding, index) => ({
+      id: `F${index + 1}`,
+      finding,
+    }));
+    const critique = await chat(
+      [
+        {
+          role: "system",
+          content: `${REVIEW_PROMPT}\nThis is the verification pass. Check each supplied candidate against the source. Return retainedFindingIds for the candidates that hold. A candidate may be dropped only when the source shows it is incorrect, pre-existing or already handled: for each such candidate add a refutation with its id and an exact quote of 12-1500 characters from the SOURCE blocks that shows it. A candidate without a quoted refutation is kept; uncertainty alone is not a reason to drop it. Do not rewrite findings, change anchors or confidence, add suggestions, or introduce new findings.`,
+        },
+        reviewContextMessage(
+          {
+            candidates,
+            changedFiles: files,
+          },
+          sources.map((r) => ({
+            ...r,
+            truncated: r.ref === "base" && incompleteGuides.has(r.path),
+          })),
+        ),
+      ],
+      {
+        maxTokens: REVIEW_OUTPUT_TOKENS,
+        billingLabel,
+        responseFormat: {
+          name: "pull_request_verification",
+          schema: {
+            type: "object",
+            properties: {
+              retainedFindingIds: {
+                type: "array",
+                items: {
+                  type: "string",
+                  enum: candidates.map((candidate) => candidate.id),
+                },
+              },
+              refutations: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    id: {
+                      type: "string",
+                      enum: candidates.map((candidate) => candidate.id),
+                    },
+                    quote: { type: "string" },
+                  },
+                  required: ["id", "quote"],
+                  additionalProperties: false,
+                },
+              },
+            },
+            required: ["retainedFindingIds", "refutations"],
+            additionalProperties: false,
+          },
+        },
+      },
+    );
+    if (critique.finishReason !== "stop")
+      throw new Error("Review verification did not finish");
+    const selection = decode(critique.content);
+    if (
+      selection === null ||
+      typeof selection !== "object" ||
+      Object.keys(selection).some(
+        (key) => key !== "retainedFindingIds" && key !== "refutations",
+      ) ||
+      !("retainedFindingIds" in selection) ||
+      !Array.isArray(selection.retainedFindingIds) ||
+      selection.retainedFindingIds.length > candidates.length ||
+      new Set(selection.retainedFindingIds).size !==
+        selection.retainedFindingIds.length ||
+      selection.retainedFindingIds.some(
+        (id: unknown) => !candidates.some((candidate) => candidate.id === id),
+      )
+    )
+      throw new Error("Verification introduced an unreviewed finding");
+    // A candidate is dropped only on a refutation quoting the shown source;
+    // an unsupported "not retained" keeps it, since in practice verification
+    // mostly removed real defects it was merely unsure about.
+    const refuted = new Set(
+      ("refutations" in selection && Array.isArray(selection.refutations)
+        ? selection.refutations
+        : []
+      )
+        .filter(
+          (r: unknown): r is { id: string; quote: string } =>
+            r !== null &&
+            typeof r === "object" &&
+            "id" in r &&
+            typeof r.id === "string" &&
+            "quote" in r &&
+            typeof r.quote === "string" &&
+            r.quote.trim().length >= 12 &&
+            r.quote.length <= 1500 &&
+            sources.some((source) =>
+              source.content.includes(r.quote as string),
+            ),
+        )
+        .map((r: { id: string }) => r.id),
+    );
+    const retainedFindingIds = candidates
+      .filter(
+        (c) =>
+          (selection.retainedFindingIds as unknown[]).includes(c.id) ||
+          !refuted.has(c.id),
+      )
+      .map((c) => c.id);
+    args.trace?.({
+      stage: "verified",
+      step: billingLabel,
+      kept: candidates
+        .filter((c) => retainedFindingIds.includes(c.id))
+        .map((c) => c.finding.title),
+      discarded: candidates
+        .filter((c) => !retainedFindingIds.includes(c.id))
+        .map((c) => c.finding.title),
+    });
+    // Selection cannot mutate a previously validated candidate. Validate its
+    // original evidence again rather than trusting generated replacement text.
+    return validateFindings(
+      {
+        findings: candidates
+          .filter((candidate) => retainedFindingIds.includes(candidate.id))
+          .map((candidate) => candidate.finding),
+      },
+      files,
+      sources,
+    );
+  };
+  // Set once the account cannot afford another request in this review.
+  let accountLimited = false;
+  const unread = (skipped: Set<string>) =>
+    args.files
+      .filter(
+        (f) =>
+          !excludedPaths.includes(f.filename) &&
+          !unreadablePaths.has(f.filename) &&
+          !skipped.has(f.filename) &&
+          !reads.some((r) => r.ref === "head" && r.path === f.filename),
+      )
+      .sort((a, b) => coverageRank(a.filename) - coverageRank(b.filename));
+  const coverageMessages = (
+    files: ChangedFile[],
+    sources: ReadEvidence[],
+  ): ChatMessage[] => [
+    {
+      role: "system",
+      content: `${findingsPrompt}\nThis is a coverage pass over changed files the main review did not read. Review only the changed files listed here, using their SOURCE blocks and the diff. Tools are unavailable. Return every finding that meets the rules above for these files; an empty findings array is valid.`,
+    },
+    reviewContextMessage(
+      {
+        repository: args.repository,
+        title: args.title.slice(0, 500),
+        description,
+        descriptionTruncated: description.length < args.body.length,
+        changedFiles: files.map((file) => ({
+          ...file,
+          addedLineAnchors: lineAnchors(
+            file,
+            sources.find((s) => s.path === file.filename)?.content,
+          ),
+        })),
+        otherChangedPaths: args.files
+          .filter((f) => !files.includes(f))
+          .map((f) => f.filename)
+          .slice(0, 80),
+        guideContextWarning:
+          "Guide excerpts may be incomplete. Never infer omitted content.",
+      },
+      [...context, ...sources],
+    ),
+  ];
+  // The main conversation holds at most 100K characters of source, so a large
+  // change can end with changed files the reviewer never read. Those files are
+  // reviewed in fresh requests of their own, each verified on its own source.
+  // A pass the model cannot complete leaves its files reported as not
+  // reviewed, and the account limit or the time budget ends the passes.
+  const coverUnread = async (): Promise<Finding[]> => {
+    const found: Finding[] = [];
+    if (accountLimited) return found;
+    const skipped = new Set<string>();
+    for (let pass = 1; pass <= MAX_COVERAGE_PASSES; pass++) {
+      if (Date.now() - started > COVERAGE_DEADLINE_MS) break;
+      const pending = unread(skipped);
+      if (pending.length === 0) break;
+      await args.guard();
+      const files: ChangedFile[] = [];
+      const sources: ReadEvidence[] = [];
+      for (const file of pending) {
+        const content = await readOptionalContext(file.filename, "head");
+        if (content === null) continue;
+        const evidence = {
+          path: file.filename,
+          ref: "head" as const,
+          content,
+        };
+        const fits =
+          JSON.stringify([...sources, evidence]).length <=
+            COVERAGE_PASS_SOURCE &&
+          chatRequestBytes(
+            coverageMessages([...files, file], [...sources, evidence]),
+            { responseFormat: REVIEW_RESPONSE_FORMAT },
+          ) +
+            REVIEW_OUTPUT_TOKENS <=
+            COVERAGE_PASS_REQUEST;
+        if (!fits) {
+          // A file too large to review alone stays reported as not reviewed.
+          if (files.length === 0) skipped.add(file.filename);
+          break;
+        }
+        files.push(file);
+        sources.push(evidence);
+      }
+      if (files.length === 0) continue;
+      const passReads = [...context, ...sources];
+      try {
+        const response = await chat(coverageMessages(files, sources), {
+          maxTokens: REVIEW_OUTPUT_TOKENS,
+          billingLabel: `pr-review/coverage/${pass}`,
+          responseFormat: REVIEW_RESPONSE_FORMAT,
+        });
+        if (response.finishReason !== "stop")
+          throw new Error("Review did not finish completely");
+        const value = confidentCandidates(
+          proposed(`coverage/${pass}`, decode(response.content)),
+          args.allowSuggestions,
+          new Set(files.map((f) => f.filename)),
+        );
+        if (
+          value === null ||
+          typeof value !== "object" ||
+          !("findings" in value) ||
+          !Array.isArray(value.findings)
+        )
+          throw new Error("Invalid review result");
+        // Its files were reviewed even when a candidate is invalid, so a bad
+        // anchor or quote drops that candidate, not the pass's coverage.
+        let candidates: Finding[] = [];
+        for (const item of value.findings.slice(0, MAX_REVIEW_FINDINGS)) {
+          try {
+            candidates = validateFindings(
+              { findings: [...candidates, item] },
+              files,
+              passReads,
+            );
+          } catch (error) {
+            if (!isReviewGroupModelFailure(error)) throw error;
+          }
+        }
+        found.push(
+          ...(await verify(
+            candidates,
+            files,
+            passReads,
+            `pr-review/coverage/${pass}/critique`,
+          )),
+        );
+      } catch (error) {
+        const cause = reviewFailureCause(error);
+        if (
+          cause instanceof ChatBillingError &&
+          cause.reason === "limit_reached"
+        ) {
+          accountLimited = true;
+          break;
+        }
+        if (!isReviewGroupModelFailure(error)) throw error;
+        for (const file of files) skipped.add(file.filename);
+        continue;
+      }
+      for (const source of sources) {
+        reads.push(source);
+        unavailablePaths.delete(source.path);
+      }
+    }
+    return found;
+  };
   const finalize = async (findings: Finding[]) => {
     if (!inspectedChange() && !(args.batchGroup && findings.length === 0))
       throw new Error("Reviewer did not inspect the changed implementation");
+    if (
+      args.allowSuggestions === false &&
+      findings.some((f) => f.suggestion !== undefined)
+    )
+      throw new Error("Commit suggestions are disabled");
+    const verified = await verify(
+      findings,
+      args.files,
+      reads,
+      "pr-review/critique",
+    );
+    const covered = await coverUnread();
     const uncovered = args.files
       .filter(
         (f) => !reads.some((r) => r.path === f.filename && r.ref === "head"),
@@ -677,89 +1049,16 @@ export async function reviewWithContext(args: {
         ...incompleteGuides,
       ]),
     ];
-    if (
-      args.allowSuggestions === false &&
-      findings.some((f) => f.suggestion !== undefined)
-    )
-      throw new Error("Commit suggestions are disabled");
-    if (findings.length === 0)
-      return { findings, reads, excludedPaths: coverage };
-    await args.guard();
-    // A second model pass challenges candidates; deterministic quote/line checks
-    // remain mandatory. This is self-critique, not an independent review.
-    const candidates = findings.map((finding, index) => ({
-      id: `F${index + 1}`,
-      finding,
-    }));
-    const critique = await chat(
-      [
-        {
-          role: "system",
-          content: `${REVIEW_PROMPT}\nThis is the verification pass. Challenge each supplied candidate against the source. Discard speculative, pre-existing or already-handled defects. Return only retainedFindingIds from the supplied candidate IDs, using the verification schema. An empty list is valid. Do not rewrite findings, change anchors or confidence, add suggestions, or introduce new findings.`,
-        },
-        reviewContextMessage(
-          {
-            candidates,
-            changedFiles: args.files,
-          },
-          reads.map((r) => ({
-            ...r,
-            truncated: r.ref === "base" && incompleteGuides.has(r.path),
-          })),
-        ),
-      ],
-      {
-        maxTokens: REVIEW_OUTPUT_TOKENS,
-        billingLabel: "pr-review/critique",
-        responseFormat: {
-          name: "pull_request_verification",
-          schema: {
-            type: "object",
-            properties: {
-              retainedFindingIds: {
-                type: "array",
-                items: {
-                  type: "string",
-                  enum: candidates.map((candidate) => candidate.id),
-                },
-              },
-            },
-            required: ["retainedFindingIds"],
-            additionalProperties: false,
-          },
-        },
-      },
-    );
-    if (critique.finishReason !== "stop")
-      throw new Error("Review verification did not finish");
-    const selection = decode(critique.content);
-    if (
-      selection === null ||
-      typeof selection !== "object" ||
-      Object.keys(selection).length !== 1 ||
-      !("retainedFindingIds" in selection) ||
-      !Array.isArray(selection.retainedFindingIds) ||
-      selection.retainedFindingIds.length > candidates.length ||
-      new Set(selection.retainedFindingIds).size !==
-        selection.retainedFindingIds.length ||
-      selection.retainedFindingIds.some(
-        (id: unknown) => !candidates.some((candidate) => candidate.id === id),
-      )
-    )
-      throw new Error("Verification introduced an unreviewed finding");
-    const retainedFindingIds = selection.retainedFindingIds;
-    // Selection cannot mutate a previously validated candidate. Validate its
-    // original evidence again rather than trusting generated replacement text.
-    const verified = validateFindings(
-      {
-        findings: candidates
-          .filter((candidate) => retainedFindingIds.includes(candidate.id))
-          .map((candidate) => candidate.finding),
-      },
-      args.files,
+    return {
+      // The most severe and certain findings come first, so a cap on what is
+      // published keeps them.
+      findings: [...verified, ...covered].sort(
+        (a, b) =>
+          a.priority.localeCompare(b.priority) || b.confidence - a.confidence,
+      ),
       reads,
-    );
-    return { findings: verified, reads, excludedPaths: coverage };
+      excludedPaths: coverage,
+    };
   };
   let calls = 0;
   let sourceRetried = false;
@@ -845,6 +1144,7 @@ export async function reviewWithContext(args: {
         throw error;
       // Finish on the earlier answer; the files the pass would have shown
       // are reported as not reviewed.
+      accountLimited = true;
       reads.splice(beforeSourcePass.readCount);
       return await finalize(beforeSourcePass.findings);
     }
@@ -1003,7 +1303,7 @@ export async function reviewWithContext(args: {
     if (response.finishReason !== "stop")
       throw new Error("Review did not finish completely");
     const value = confidentCandidates(
-      await parse(response.content),
+      proposed(`main/${turn}`, await parse(response.content)),
       args.allowSuggestions,
       groupPaths,
     );
@@ -1083,6 +1383,7 @@ export async function reviewWithContext(args: {
       throw error;
     // Synthesize from the source read before the pass; the files it added
     // are reported as not reviewed.
+    accountLimited = true;
     reads.splice(readsBeforePass);
     rebuildMessages();
     final = await synthesize();
@@ -1092,7 +1393,7 @@ export async function reviewWithContext(args: {
   return await finalize(
     validateFindings(
       confidentCandidates(
-        await parse(final.content),
+        proposed("final", await parse(final.content)),
         args.allowSuggestions,
         groupPaths,
       ),

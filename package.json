@@ -26,6 +26,7 @@
     "prepare": "husky",
     "test:e2e:dev": "bun e2e/runDev.ts",
     "test:e2e:pr-review": "bun e2e/runPrReview.ts",
+    "test:e2e:recall": "bun e2e/runRecall.ts",
     "typecheck:cli": "bun run --cwd packages/cli typecheck",
     "test:cli": "bun run --cwd packages/cli test",
     "check:api": "bun packages/cli/scripts/sync-api.mjs --check"
