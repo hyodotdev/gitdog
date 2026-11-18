@@ -79,6 +79,9 @@ export const upsert = internalMutation({
     iv: v.string(),
     encryptionKeyId: v.string(),
     last4: v.string(),
+    // The model the new key was checked against; unset means the default.
+    modelId: v.optional(v.string()),
+    effort: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const now = Date.now();
@@ -93,6 +96,8 @@ export const upsert = internalMutation({
       iv: args.iv,
       encryptionKeyId: args.encryptionKeyId,
       last4: args.last4,
+      modelId: args.modelId,
+      effort: args.effort,
       status: "active" as const,
       lastValidatedAt: now,
       lastError: undefined,

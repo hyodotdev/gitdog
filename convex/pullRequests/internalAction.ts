@@ -265,8 +265,10 @@ export const reviewOpenPullRequests = internalAction({
       args.repositoryId,
     ).catch(() => null);
     if (!access) return await release();
+    const open = await listOpenPullRequests(access).catch(() => null);
+    if (!open) return await release();
     const now = Date.now();
-    const candidates = (await listOpenPullRequests(access)).filter(
+    const candidates = open.filter(
       (pr) =>
         pr !== null &&
         typeof pr === "object" &&
@@ -285,6 +287,7 @@ export const reviewOpenPullRequests = internalAction({
     const recent = candidates
       .filter((pr) => !reviewed.has(pr.number))
       .slice(0, CATCH_UP_PULL_REQUESTS);
+    if (recent.length === 0) return await release();
     // observe reviews a pull request only until it has one finished review.
     for (const [index, pr] of recent.entries())
       await ctx.scheduler.runAfter(

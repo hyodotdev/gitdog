@@ -89,7 +89,12 @@ export const save = action({
   handler: async (
     ctx,
     args,
-  ): Promise<{ provider: KeyProvider; last4: string; status: "active" }> => {
+  ): Promise<{
+    provider: KeyProvider;
+    last4: string;
+    status: "active";
+    modelId: string;
+  }> => {
     const userId = await getAuthUserId(ctx);
     if (!userId)
       keyError("UNAUTHORIZED", "unauthorized", "Sign in to save an API key.");
@@ -130,13 +135,26 @@ export const save = action({
       internal.providerApiKeys.internalQuery.getEncryptedKey,
       { userId, provider: args.provider },
     );
-    const model = userKeyModel(args.provider, existing?.modelId);
+    let model = userKeyModel(args.provider, existing?.modelId);
+    let choice = { modelId: existing?.modelId, effort: existing?.effort };
     await requireValidationSlot(ctx, userId);
-    const result = await validateProviderKey(
+    let result = await validateProviderKey(
       args.provider,
       apiKey,
       model.modelId,
     );
+    // A new key without access to the chosen model returns to the default
+    // model, so replacing a revoked key never needs the key removed first.
+    const defaultModel = userKeyModel(args.provider);
+    if (
+      !result.ok &&
+      result.code === "no_model_access" &&
+      model.modelId !== defaultModel.modelId
+    ) {
+      model = defaultModel;
+      choice = { modelId: undefined, effort: undefined };
+      result = await validateProviderKey(args.provider, apiKey, model.modelId);
+    }
     if (!result.ok) rejectValidation(args.provider, result, model.name);
     const last4 = apiKey.slice(-4);
     await ctx.runMutation(internal.providerApiKeys.internalMutation.upsert, {
@@ -144,8 +162,14 @@ export const save = action({
       provider: args.provider,
       ...encrypted,
       last4,
+      ...choice,
     });
-    return { provider: args.provider, last4, status: "active" };
+    return {
+      provider: args.provider,
+      last4,
+      status: "active",
+      modelId: model.modelId,
+    };
   },
 });
 
@@ -273,7 +297,7 @@ export const setModel = action({
         "Save an API key for this provider before choosing its model.",
       );
     const model = userKeyModel(args.provider, args.modelId, args.effort);
-    if (row.modelId !== model.modelId) {
+    if (userKeyModel(args.provider, row.modelId).modelId !== model.modelId) {
       let apiKey: string;
       try {
         apiKey = await decryptProviderKey(row);

@@ -1429,7 +1429,6 @@ export const stampAutomaticNotice = internalMutation({
   },
 });
 
-/** Remember the status comment posted for a review, once. */
 /** Frees the hourly catch-up allowance a catch-up that did nothing took. */
 export const releaseCatchUp = internalMutation({
   args: { repositoryId: v.id("repositories"), stampedAt: v.number() },
@@ -1450,6 +1449,7 @@ export const forgetStatusComment = internalMutation({
   },
 });
 
+/** Remember the status comment posted for a review, once. */
 export const recordStatusComment = internalMutation({
   args: {
     actionId: v.id("ticketActions"),

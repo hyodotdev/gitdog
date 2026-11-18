@@ -140,7 +140,7 @@ gitdog provider-keys set anthropic           # prompts without echoing the key
 printf %s "$OPENAI_API_KEY" | gitdog provider-keys set openai --stdin
 gitdog provider-keys check openai
 gitdog provider-keys models                 # models and efforts you can choose
-gitdog provider-keys model anthropic claude-sonnet-5-5 --effort high
+gitdog provider-keys model anthropic claude-sonnet-5-5 --effort high  # no --effort: the model default
 gitdog provider-keys remove openai --yes
 ```
 

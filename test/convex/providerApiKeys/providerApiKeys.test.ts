@@ -124,6 +124,7 @@ describe("provider key management", () => {
       provider: "anthropic",
       last4: ANTHROPIC_KEY.slice(-4),
       status: "active",
+      modelId: "claude-opus-5-5",
     });
     const [url, init] = fetch.mock.calls[0];
     expect(String(url)).toContain("/v1/models/");
@@ -370,28 +371,28 @@ describe("provider key model choice", () => {
     await expect(
       as.action(api.providerApiKeys.action.setModel, {
         provider: "anthropic",
-        modelId: "claude-fable-5-1",
-        effort: "max",
+        modelId: "claude-sonnet-5-5",
+        effort: "high",
       }),
     ).resolves.toEqual({
       provider: "anthropic",
-      modelId: "claude-fable-5-1",
-      effort: "max",
+      modelId: "claude-sonnet-5-5",
+      effort: "high",
     });
     expect(String(fetch.mock.calls[1][0])).toContain(
-      "/v1/models/claude-fable-5-1",
+      "/v1/models/claude-sonnet-5-5",
     );
     expect(
       (await as.query(api.providerApiKeys.query.list, {}))[0],
     ).toMatchObject({
-      modelId: "claude-fable-5-1",
-      name: "Claude Fable 5.1",
-      effort: "max",
+      modelId: "claude-sonnet-5-5",
+      name: "Claude Sonnet 5.5",
+      effort: "high",
     });
     // Changing only the effort needs no new check.
     await as.action(api.providerApiKeys.action.setModel, {
       provider: "anthropic",
-      modelId: "claude-fable-5-1",
+      modelId: "claude-sonnet-5-5",
       effort: "low",
     });
     expect(fetch).toHaveBeenCalledTimes(2);
@@ -401,8 +402,22 @@ describe("provider key model choice", () => {
       apiKey: ANTHROPIC_KEY,
     });
     expect(String(fetch.mock.calls[2][0])).toContain(
-      "/v1/models/claude-fable-5-1",
+      "/v1/models/claude-sonnet-5-5",
     );
+    // A new key without access to the chosen model returns to the default.
+    fetch.mockResolvedValueOnce(new Response("{}", { status: 404 }));
+    await expect(
+      as.action(api.providerApiKeys.action.save, {
+        provider: "anthropic",
+        apiKey: ANTHROPIC_KEY,
+      }),
+    ).resolves.toMatchObject({ modelId: "claude-opus-5-5" });
+    expect(String(fetch.mock.calls[4][0])).toContain(
+      "/v1/models/claude-opus-5-5",
+    );
+    expect(
+      (await as.query(api.providerApiKeys.query.list, {}))[0],
+    ).toMatchObject({ modelId: "claude-opus-5-5", effort: "medium" });
   });
 
   it("refuses models that are not offered, missing keys and models the key cannot use", async () => {

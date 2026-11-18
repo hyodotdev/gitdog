@@ -31,10 +31,12 @@ those keys instead of Gitdog's:
 - Each key runs the model and effort its owner chooses (web settings or
   `gitdog provider-keys model`), checked against the key when chosen and when
   the key is saved again. Anthropic: Claude Opus 5.5 (default, `medium`),
-  Sonnet 5.5 (`high`), Fable 5.1 (`high`) or Haiku 5.5 (`medium`); OpenAI:
-  GPT-6.1 Sol (`high`). Fable 5.1 is unavailable to zero-data-retention
-  organizations, and Haiku 5.5 bills prompts over 100K tokens at a higher
-  rate. A model no longer offered falls back to the default.
+  Sonnet 5.5 (`high`) or Haiku 5.5 (`medium`); OpenAI: GPT-6.1 Sol (`high`).
+  Efforts are `low`, `medium` or `high`: requests are not streamed and stop
+  after two minutes, so Fable 5.1 and `xhigh`/`max` are not offered. Haiku
+  5.5 bills prompts over 100K tokens at 5x and has no server-side refusal
+  fallback. A new key without access to the chosen model is saved with the
+  default model, and a model no longer offered falls back to the default.
 - Claude runs on the user's Anthropic key and is not affected by Gitdog's
   Claude deadline. The user's OpenAI key is used if only it is saved, if the
   Anthropic key is rejected, or if Claude reports exhausted credit.
@@ -57,7 +59,7 @@ those keys instead of Gitdog's:
   `printf %s "$BYOK_ENCRYPTION_KEY" | base64 -d | shasum -a 256`. Keys saved
   under the old server key then become unreadable, and their owners are asked
   to enter them again. There is no decrypt-only previous key.
-- Keys are validated against the generation model on save, encrypted with
+- Keys are validated against their chosen model on save, encrypted with
   AES-256-GCM using `BYOK_ENCRYPTION_KEY`, and never returned to clients.
 
 ## Authentication
@@ -92,7 +94,8 @@ indexing costs no AI tokens.
 | ----------------- | ------------------- | -------------------- | ------------ |
 | Claude Opus 5.5   | $4.00               | $20.00               | 2            |
 | GPT-6.1 Sol       | $2.00               | $10.00               | 1            |
-| Claude Sonnet 5.5 | $2.00               | $10.00               | 1 (retired)  |
+| Claude Sonnet 5.5 | $2.00               | $10.00               | 1 (own keys) |
+| Claude Haiku 5.5  | $0.10               | $0.50                | own keys     |
 
 On Gitdog's keys, each provider token counts as its model's quota weight in
 Gitdog tokens: an Opus 5.5 call with 30K input and 5K output tokens uses 70K.

@@ -83,12 +83,6 @@ export const CHAT_MODELS: Record<
     quotaWeight: 1,
   },
   // Available on an owner's own key only; priced for recorded cost.
-  "claude-fable-5-1": {
-    provider: "anthropic",
-    inputPer1M: 10,
-    outputPer1M: 50,
-    quotaWeight: 5,
-  },
   "claude-haiku-5-5": {
     provider: "anthropic",
     inputPer1M: 0.1,
@@ -130,7 +124,7 @@ export function getChatModel(model: string, provider: string) {
   return entry;
 }
 
-export type ModelEffort = "low" | "medium" | "high" | "xhigh" | "max";
+export type ModelEffort = "low" | "medium" | "high";
 export type UserKeyModel = {
   modelId: string;
   name: string;
@@ -141,31 +135,27 @@ export type UserKeyModel = {
 /**
  * Models an owner can choose for their own provider key, the default first.
  * The provider bills that usage, so it never counts against Gitdog tokens.
+ * Requests are not streamed and stop after two minutes, so settings that can
+ * think for longer, such as Fable 5.1 or xhigh and max effort, are left out.
  */
 export const USER_KEY_MODELS: Record<"anthropic" | "openai", UserKeyModel[]> = {
   anthropic: [
     {
       modelId: "claude-opus-5-5",
       name: "Claude Opus 5.5",
-      efforts: ["low", "medium", "high", "xhigh", "max"],
+      efforts: ["low", "medium", "high"],
       defaultEffort: "medium",
     },
     {
       modelId: "claude-sonnet-5-5",
       name: "Claude Sonnet 5.5",
-      efforts: ["low", "medium", "high", "xhigh", "max"],
-      defaultEffort: "high",
-    },
-    {
-      modelId: "claude-fable-5-1",
-      name: "Claude Fable 5.1",
-      efforts: ["low", "medium", "high", "xhigh", "max"],
+      efforts: ["low", "medium", "high"],
       defaultEffort: "high",
     },
     {
       modelId: "claude-haiku-5-5",
       name: "Claude Haiku 5.5",
-      efforts: ["low", "medium", "high", "xhigh", "max"],
+      efforts: ["low", "medium", "high"],
       defaultEffort: "medium",
     },
   ],
@@ -173,7 +163,7 @@ export const USER_KEY_MODELS: Record<"anthropic" | "openai", UserKeyModel[]> = {
     {
       modelId: "gpt-6.1-sol",
       name: "GPT-6.1 Sol",
-      efforts: ["low", "medium", "high", "xhigh"],
+      efforts: ["low", "medium", "high"],
       defaultEffort: "high",
     },
   ],
