@@ -203,12 +203,14 @@ const FINAL_REQUEST_END_MS = 7 * 60_000;
 // The main review's turns. The state each turn shows how many are left, so a
 // model that keeps exploring answers before the slower closing synthesis.
 const REVIEW_TURNS = 8;
-// Requests after the main review may run until this long after the action
-// started (two to four minutes each), so a slower reasoning model finishes
-// instead of being cut off with its usage unknown. None runs past
-// ACTION_REQUEST_END_MS, however long it waited to start, which leaves the
-// action time to save the review.
+// Requests after the main review get a timeout that aims to end them by this
+// long after the action started (two to four minutes each), so a slower
+// reasoning model finishes instead of being cut off with its usage unknown.
+// The hard limit is ACTION_REQUEST_END_MS, enforced when a request is sent,
+// however long it waited to start; one that would get less than
+// SLOW_REQUEST_MIN_MS is not sent, since it would likely be cut off.
 const LATE_REQUEST_END_MS = 8 * 60_000;
+const SLOW_REQUEST_MIN_MS = 90_000;
 const ACTION_REQUEST_END_MS = 9 * 60_000;
 // After the main review, focused second looks at the same source. Each one
 // resends the main review's last request with only its closing state
@@ -844,6 +846,7 @@ export async function reviewWithContext(args: {
         maxTokens: REVIEW_OUTPUT_TOKENS,
         billingLabel,
         timeoutMs: timeoutMs ?? lateRequestTimeout(),
+        minTimeMs: SLOW_REQUEST_MIN_MS,
         responseFormat: {
           name: "pull_request_verification",
           schema: {
@@ -1071,6 +1074,7 @@ export async function reviewWithContext(args: {
           maxTokens: REVIEW_OUTPUT_TOKENS,
           billingLabel: `pr-review/coverage/${pass}`,
           timeoutMs: lateRequestTimeout(),
+          minTimeMs: SLOW_REQUEST_MIN_MS,
           responseFormat: REVIEW_RESPONSE_FORMAT,
         });
         if (response.finishReason !== "stop")
@@ -1227,6 +1231,7 @@ export async function reviewWithContext(args: {
             tools: reviewTools,
             billingLabel: `pr-review/look/${look.name}`,
             timeoutMs: lateRequestTimeout(),
+            minTimeMs: SLOW_REQUEST_MIN_MS,
             responseFormat: REVIEW_RESPONSE_FORMAT,
           },
         );
@@ -1679,6 +1684,7 @@ export async function reviewWithContext(args: {
         maxTokens: REVIEW_OUTPUT_TOKENS,
         billingLabel: "pr-review/final",
         responseFormat: REVIEW_RESPONSE_FORMAT,
+        minTimeMs: SLOW_REQUEST_MIN_MS,
         timeoutMs: Math.min(
           5 * 60_000,
           Math.max(

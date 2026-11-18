@@ -79,8 +79,10 @@ export type ChatCompletionOptions = {
   // How long the provider may take; the provider's default when unset.
   timeoutMs?: number;
   // When the request must have ended (epoch ms), however long it waited to
-  // start; a request with too little time left is not sent.
+  // start; a request with less than minTimeMs left (30 seconds unless set)
+  // is not sent.
   endBy?: number;
+  minTimeMs?: number;
   responseFormat?: {
     name: string;
     schema: Record<string, unknown>;
