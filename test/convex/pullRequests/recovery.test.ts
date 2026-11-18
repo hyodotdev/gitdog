@@ -523,7 +523,9 @@ describe("uncertain review candidates", () => {
     // The closing synthesis may run past the usual two minutes.
     expect(requestOptions[8].timeoutMs).toBeGreaterThan(120_000);
     expect(requestOptions[8].timeoutMs).toBeLessThanOrEqual(300_000);
-    expect(requestOptions[7]).not.toHaveProperty("timeoutMs");
+    // A main turn waits up to four minutes, never past the action's end.
+    expect(requestOptions[7].timeoutMs).toBe(240_000);
+    expect(requestOptions[7].endBy).toBeGreaterThan(Date.now());
     expect(requests[8][0].content).toContain("Commit suggestions are disabled");
   });
 
