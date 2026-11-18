@@ -1509,13 +1509,35 @@ describe("bounded review workflow", () => {
     ).rejects.toThrow("did not inspect");
   });
   it("does not publish speculative candidates removed by the critique pass", async () => {
+    const refuted = verified([], [{ id: "F1", quote: "function find(key) {" }]);
+    // The refutation is checked again, and holds.
+    const p = provider([use, stop([finding]), refuted, refuted]);
+    expect((await run(p)).findings).toEqual([]);
+    expect(p.chat).toHaveBeenCalledTimes(4);
+    const appeal = vi.mocked(p.chat).mock.calls[3];
+    expect(appeal[1]?.billingLabel).toBe("pr-review/critique/appeal");
+    expect(
+      JSON.stringify(appeal[0][1].content).includes("function find(key) {"),
+    ).toBe(true);
+  });
+  it("keeps a candidate whose refutation does not hold on a second check", async () => {
+    const p = provider([
+      use,
+      stop([finding]),
+      verified([], [{ id: "F1", quote: "function find(key) {" }]),
+      verified(["F1"]),
+    ]);
+    expect((await run(p)).findings).toEqual([finding]);
+  });
+  it("keeps the first decision when the second check cannot run", async () => {
+    // The scripted provider has no answer for the second check.
     const p = provider([
       use,
       stop([finding]),
       verified([], [{ id: "F1", quote: "function find(key) {" }]),
     ]);
     expect((await run(p)).findings).toEqual([]);
-    expect(p.chat).toHaveBeenCalledTimes(3);
+    expect(p.chat).toHaveBeenCalledTimes(4);
   });
   it("keeps verified defects while rebuilding source state", async () => {
     expect(
