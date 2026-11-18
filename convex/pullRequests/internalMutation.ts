@@ -17,8 +17,10 @@ import { isUsableProviderKey } from "../providerApiKeys/usability";
 import { settleThenGrantTrialCredit } from "../subscriptions/credit";
 import type { ReviewQuotaRefusal } from "./errors";
 import {
+  MAX_OPEN_REQUESTS,
   findingBody,
   findingValidator,
+  openRequestNotes,
   reviewBatchProgressValidator,
   reviewSummary,
 } from "./review";
@@ -855,6 +857,9 @@ export const propose = internalMutation({
     actionId: v.id("ticketActions"),
     source: snapshotValidator,
     findings: v.array(findingValidator),
+    openRequests: v.optional(
+      v.array(v.object({ author: v.string(), request: v.string() })),
+    ),
     excludedPaths: v.array(v.string()),
     refusedPaths: v.optional(v.array(v.string())),
     filesRead: v.array(v.string()),
@@ -955,7 +960,9 @@ export const propose = internalMutation({
       );
       return true;
     }
-    const noFindings = args.findings.length === 0;
+    // Reviewer requests left open are reported in the review like findings.
+    const openRequests = args.openRequests?.slice(0, MAX_OPEN_REQUESTS) ?? [];
+    const noFindings = args.findings.length === 0 && openRequests.length === 0;
     // A push that changed nothing in the PR diff, such as a base merge.
     const nothingNew = noFindings && args.coverage?.changedFiles === 0;
     const verificationOnly = action.reviewVerificationOnly === true;
@@ -1012,6 +1019,7 @@ export const propose = internalMutation({
               }
             : {}),
         findings: args.findings,
+        ...(openRequests.length ? { openRequests } : {}),
         excludedPaths: args.excludedPaths,
         ...(args.refusedPaths?.length
           ? { refusedPaths: args.refusedPaths }
@@ -1026,12 +1034,15 @@ export const propose = internalMutation({
             batch?.findingCount ?? args.findingCount ?? args.findings.length,
             args.source.headSha,
             coverage,
-            (batch?.findingCount ?? args.findingCount ?? 0) >
+            [
+              ...((batch?.findingCount ?? args.findingCount ?? 0) >
               args.findings.length
-              ? [
-                  `Showing the ${args.findings.length} highest-priority findings out of ${batch?.findingCount ?? args.findingCount}.`,
-                ]
-              : [],
+                ? [
+                    `Showing the ${args.findings.length} highest-priority findings out of ${batch?.findingCount ?? args.findingCount}.`,
+                  ]
+                : []),
+              ...openRequestNotes(openRequests),
+            ],
           ),
           ...args.findings.map(
             (f) => `${f.path}:${f.line}\n${findingBody(f, suggestions)}`,
@@ -1419,6 +1430,16 @@ export const stampAutomaticNotice = internalMutation({
 });
 
 /** Remember the status comment posted for a review, once. */
+/** The status comment was deleted because the review it described was posted. */
+export const forgetStatusComment = internalMutation({
+  args: { actionId: v.id("ticketActions"), commentId: v.number() },
+  handler: async (ctx, args) => {
+    const action = await ctx.db.get(args.actionId);
+    if (action?.statusCommentId === args.commentId)
+      await ctx.db.patch(action._id, { statusCommentId: undefined });
+  },
+});
+
 export const recordStatusComment = internalMutation({
   args: {
     actionId: v.id("ticketActions"),

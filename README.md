@@ -91,10 +91,19 @@ Gitdog reads the source of every changed file. Files that do not fit the main
 review are reviewed in further passes, and a review that still could not read
 a file says so.
 
-A pull request review with no findings needs no approval. It posts at once and,
-when every changed file was reviewed and no Gitdog thread is open, approves the
-reviewed commit. A later push, including updating the branch, withdraws that
-approval until the new commits are reviewed.
+A single review also reads the conversation: people's comments, review
+summaries and open review threads. A change a reviewer asked for that the code
+does not make yet is listed in the review as not yet addressed, and such a
+review waits for approval like one with findings. A large pull request reviewed
+in batches does not read the conversation; open threads and requested changes
+still keep it from approving.
+
+A pull request review with no findings and nothing left open needs no approval.
+It posts at once and
+approves the reviewed commit when every changed file was reviewed, no review
+thread from anyone is open, no reviewer has requested changes, and nothing from
+the discussion is left unaddressed. A later push, including updating the
+branch, withdraws that approval until the new commits are reviewed.
 
 ## Pull request commands
 
@@ -120,8 +129,9 @@ After that, ask for more in a pull request comment or from the CLI:
   works as shorthand, but it also notifies the GitHub user of that name, so
   `@gitdogai` is preferred.
 - **Status**: while a review runs, one status comment on the pull request shows
-  whether it is reviewing, waiting for approval, reviewed, or why it could not
-  finish. A review that failed or ran out of tokens can be requested again. For
+  that it is reviewing or waiting for approval. Once the review is posted the
+  comment is removed, so the review is the only result; if no review is posted,
+  the comment says why. A review that failed or ran out of tokens can be requested again. For
   automatic reviews, Gitdog posts at most one failure comment a day per pull
   request.
 - **Limits**: someone who sends more than 10 commands an hour or 40 a day to
