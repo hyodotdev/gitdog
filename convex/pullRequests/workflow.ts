@@ -23,6 +23,7 @@ import {
   validOpenRequests,
   type OpenRequest,
   MIN_FINDING_CONFIDENCE,
+  OMITTED_SOURCE_MARKER,
   REVIEW_PROMPT,
   REVIEW_RESPONSE_FORMAT,
   addedLines,
@@ -199,6 +200,16 @@ const COVERAGE_REQUEST_CUTOFF_MS = 4 * 60_000;
 // started (never less than two minutes nor more than five), which still leaves
 // room for verification before Convex stops the action.
 const FINAL_REQUEST_END_MS = 7 * 60_000;
+// The main review's turns. The state each turn shows how many are left, so a
+// model that keeps exploring answers before the slower closing synthesis.
+const REVIEW_TURNS = 8;
+// Requests after the main review may run until this long after the action
+// started (two to four minutes each), so a slower reasoning model finishes
+// instead of being cut off with its usage unknown. None runs past
+// ACTION_REQUEST_END_MS, however long it waited to start, which leaves the
+// action time to save the review.
+const LATE_REQUEST_END_MS = 8 * 60_000;
+const ACTION_REQUEST_END_MS = 9 * 60_000;
 // After the main review, focused second looks at the same source. Each one
 // resends the main review's last request with only its closing state
 // replaced, so the repository context and sources are read from the prompt
@@ -344,6 +355,13 @@ export async function reviewWithContext(args: {
     );
   };
   let readBudget = 0;
+  let turnsLeft = REVIEW_TURNS;
+  const lateRequestTimeout = () =>
+    Math.min(
+      4 * 60_000,
+      Math.max(2 * 60_000, actionStarted + LATE_REQUEST_END_MS - Date.now()),
+    );
+  const endBy = actionStarted + ACTION_REQUEST_END_MS;
   // A review's own changed files are bounded by its file count and the source
   // budget, so they do not use up the reads that guides and tools share.
   const groupSources = new Set(args.files.map((f) => `head:${f.filename}`));
@@ -676,6 +694,13 @@ export async function reviewWithContext(args: {
           unavailableContextPaths: [...unavailablePaths],
           recentToolResults: observations,
           omittedToolResultCount: omittedObservations,
+          turnsLeft,
+          ...(turnsLeft <= 2
+            ? {
+                turnWarning:
+                  "This is one of the last turns. Return findings from the source shown now; a turn without findings may end the review with less.",
+              }
+            : {}),
           ...(validationFeedback ? { validationFeedback } : {}),
         },
         reads.map((r) => ({
@@ -785,6 +810,7 @@ export async function reviewWithContext(args: {
     files: ChangedFile[],
     sources: ReadEvidence[],
     billingLabel: string,
+    timeoutMs?: number,
   ): Promise<Finding[]> => {
     if (findings.length === 0) return findings;
     await args.guard();
@@ -812,6 +838,7 @@ export async function reviewWithContext(args: {
       {
         maxTokens: REVIEW_OUTPUT_TOKENS,
         billingLabel,
+        ...(timeoutMs ? { timeoutMs, endBy } : {}),
         responseFormat: {
           name: "pull_request_verification",
           schema: {
@@ -1038,6 +1065,8 @@ export async function reviewWithContext(args: {
         const response = await chat(coverageMessages(files, sources), {
           maxTokens: REVIEW_OUTPUT_TOKENS,
           billingLabel: `pr-review/coverage/${pass}`,
+          timeoutMs: lateRequestTimeout(),
+          endBy,
           responseFormat: REVIEW_RESPONSE_FORMAT,
         });
         if (response.finishReason !== "stop")
@@ -1097,6 +1126,7 @@ export async function reviewWithContext(args: {
               files,
               passReads,
               `pr-review/coverage/${pass}/critique`,
+              lateRequestTimeout(),
             )),
           );
         }
@@ -1192,6 +1222,8 @@ export async function reviewWithContext(args: {
             maxTokens: REVIEW_OUTPUT_TOKENS,
             tools: reviewTools,
             billingLabel: `pr-review/look/${look.name}`,
+            timeoutMs: lateRequestTimeout(),
+            endBy,
             responseFormat: REVIEW_RESPONSE_FORMAT,
           },
         );
@@ -1246,6 +1278,7 @@ export async function reviewWithContext(args: {
             args.files,
             sources,
             `pr-review/look/${look.name}/critique`,
+            lateRequestTimeout(),
           )),
         );
       } catch (error) {
@@ -1367,8 +1400,12 @@ export async function reviewWithContext(args: {
   // The answer given before the one-time source pass, kept in case the
   // account cannot afford the larger request that pass makes.
   let beforeSourcePass: { readCount: number; findings: Finding[] } | undefined;
-  for (let turn = 0; turn < 8; turn++) {
+  for (let turn = 0; turn < REVIEW_TURNS; turn++) {
     await args.guard();
+    if (turn > 0 && turnsLeft !== REVIEW_TURNS - turn) {
+      turnsLeft = REVIEW_TURNS - turn;
+      rebuildMessages();
+    }
     if (JSON.stringify(messages).length > 180_000)
       throw new Error("Review conversation exceeds the context budget");
     let response: Awaited<ReturnType<typeof chat>>;
@@ -1431,6 +1468,21 @@ export async function reviewWithContext(args: {
             continue;
           }
           const source = await readOptionalContext(path, ref);
+          const before = reads.find((r) => r.path === path && r.ref === ref);
+          // Some models ask again for a file they were already shown in part,
+          // hoping for the rest, and spend every turn doing so.
+          if (source !== null && before?.content === source) {
+            addObservation({
+              tool: tool.name,
+              path,
+              ref,
+              status: "already shown in SOURCE blocks; nothing more to show",
+              note: source.includes(OMITTED_SOURCE_MARKER)
+                ? "This is all of this file that can be shown: lines far from the diff are blank after the omitted-lines marker and cannot be read. Do not request it again. Use search_code on this file for a specific symbol, read other files, or answer from what is shown."
+                : "This file is shown in full already. Do not request it again; read other files or answer.",
+            });
+            continue;
+          }
           const shown = source !== null && showRead(path, ref, source);
           addObservation({
             tool: tool.name,
@@ -1622,6 +1674,7 @@ export async function reviewWithContext(args: {
             actionStarted + FINAL_REQUEST_END_MS - Date.now(),
           ),
         ),
+        endBy: actionStarted + ACTION_REQUEST_END_MS,
       },
     );
   let final: Awaited<ReturnType<typeof chat>>;
@@ -1644,15 +1697,34 @@ export async function reviewWithContext(args: {
   }
   if (final.finishReason !== "stop")
     throw new Error("Review final synthesis did not complete");
-  return await finalize(
-    validateFindings(
-      confidentCandidates(
-        recordOpenRequests(proposed("final", await parse(final.content))),
-        args.allowSuggestions,
-        groupPaths,
-      ),
-      args.files,
-      reads,
-    ),
-  );
+  const synthesized = confidentCandidates(
+    recordOpenRequests(proposed("final", await parse(final.content))),
+    args.allowSuggestions,
+    groupPaths,
+  ) as { findings?: unknown };
+  // There is no turn left to correct evidence, so a finding whose quotes do
+  // not match the source is dropped, and its file is reported as not fully
+  // reviewed, instead of failing a review that has other findings.
+  // A malformed answer still fails as before.
+  if (!Array.isArray(synthesized.findings))
+    return await finalize(validateFindings(synthesized, args.files, reads));
+  let kept: Finding[] = [];
+  for (const item of synthesized.findings) {
+    try {
+      kept = validateFindings({ findings: [...kept, item] }, args.files, reads);
+    } catch (error) {
+      if (!isReviewGroupModelFailure(error)) throw error;
+      const path =
+        item !== null && typeof item === "object" && "path" in item
+          ? item.path
+          : undefined;
+      if (
+        typeof path === "string" &&
+        args.files.some((f) => f.filename === path) &&
+        !excludedPaths.includes(path)
+      )
+        excludedPaths.push(path);
+    }
+  }
+  return await finalize(kept);
 }

@@ -78,6 +78,9 @@ export type ChatCompletionOptions = {
   billingLabel?: string;
   // How long the provider may take; the provider's default when unset.
   timeoutMs?: number;
+  // When the request must have ended (epoch ms), however long it waited to
+  // start; a request with too little time left is not sent.
+  endBy?: number;
   responseFormat?: {
     name: string;
     schema: Record<string, unknown>;

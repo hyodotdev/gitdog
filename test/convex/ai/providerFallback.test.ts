@@ -570,6 +570,18 @@ it("waits as long as a request asks before giving up", async () => {
   expect(timeout.mock.calls.map(([ms]) => ms)).toEqual([
     120_000, 240_000, 240_000,
   ]);
+  // An end time shortens the wait, and too little time sends nothing.
+  vi.mocked(globalThis.fetch).mockResolvedValueOnce(openai());
+  await new OpenAIProvider("test").chat(messages, {
+    timeoutMs: 240_000,
+    endBy: Date.now() + 60_000,
+  });
+  expect(timeout.mock.calls.at(-1)?.[0]).toBeLessThanOrEqual(60_000);
+  const sent = vi.mocked(globalThis.fetch).mock.calls.length;
+  await expect(
+    new OpenAIProvider("test").chat(messages, { endBy: Date.now() + 10_000 }),
+  ).rejects.toMatchObject({ billingOutcome: "not_billed" });
+  expect(vi.mocked(globalThis.fetch).mock.calls.length).toBe(sent);
 });
 
 it("bills OpenAI cache usage as the input it costs", async () => {
