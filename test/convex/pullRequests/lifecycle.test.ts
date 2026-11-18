@@ -1354,7 +1354,7 @@ describe("open pull requests when reviews turn on", () => {
     // An account runs one review at a time.
     expect(
       jobs[1].scheduledTime - jobs[0].scheduledTime,
-    ).toBeGreaterThanOrEqual(10 * 60_000 - 1_000);
+    ).toBeGreaterThanOrEqual(12 * 60_000 - 1_000);
   });
   it("starts at most one catch-up an hour, however often reviews toggle", async () => {
     const f = await fixture();
