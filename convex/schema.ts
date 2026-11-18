@@ -1740,16 +1740,32 @@ const applicationTables = {
     actionId: v.id("ticketActions"),
     page: v.optional(v.number()),
     group: v.optional(v.number()),
-    outcome: v.union(v.literal("proposed"), v.literal("failed")),
-    providerId: v.optional(v.string()),
-    modelId: v.optional(v.string()),
-    keySource: v.optional(v.union(v.literal("gitdog"), v.literal("user"))),
+    kind: v.union(
+      v.literal("full"),
+      v.literal("scoped"),
+      v.literal("verification"),
+    ),
+    // "refused" and "group_failed": the model call failed and the review
+    // went on without this run's files.
+    outcome: v.union(
+      v.literal("proposed"),
+      v.literal("refused"),
+      v.literal("group_failed"),
+      v.literal("failed"),
+      v.literal("cancelled"),
+    ),
+    // The fixed name of the review stage a failed run stopped in.
+    failedStage: v.optional(v.string()),
+    providerId: v.string(),
+    modelId: v.string(),
+    keySource: v.union(v.literal("gitdog"), v.literal("user")),
     durationMs: v.number(),
     changedFiles: v.number(),
     inspectedFiles: v.number(),
     uncoveredFiles: v.number(),
     discussionEntries: v.number(),
     steps: v.number(),
+    // Summed over steps; a retried step proposes its findings again.
     candidates: v.number(),
     discarded: v.number(),
     findings: v.number(),

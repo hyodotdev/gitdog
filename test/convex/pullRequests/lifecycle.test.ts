@@ -1054,8 +1054,16 @@ describe("PR review durable lifecycle", () => {
           "Reason · GitHub could not find the requested resource (HTTP 404).",
         ].join("\n"),
       });
-      // A run that reached the model is recorded even when it fails.
-      expect(records).toMatchObject([{ outcome: "failed", changedFiles: 1 }]);
+      // A run that failed after a model was chosen is recorded with the
+      // stage it stopped in.
+      expect(records).toMatchObject([
+        {
+          kind: "full",
+          outcome: "failed",
+          failedStage: "AI generation and evidence validation",
+          changedFiles: 1,
+        },
+      ]);
     });
     it("explains that a PR has too many changed files", async () => {
       expect(
@@ -3225,7 +3233,10 @@ describe("batched PR reviews", () => {
       );
     const [record] = await records();
     expect(record).toMatchObject({
+      kind: "full",
       outcome: "proposed",
+      providerId: "anthropic",
+      modelId: "claude-opus-5-5",
       page: 1,
       group: 0,
       keySource: "gitdog",

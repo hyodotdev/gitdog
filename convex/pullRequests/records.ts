@@ -3,10 +3,12 @@ import type { ReviewTraceEvent } from "./workflow";
 
 // How long a review run's per-step trace is kept for quality checks.
 export const REVIEW_TRACE_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
-const MAX_TRACE_STEPS = 24;
-const MAX_STEP_ENTRIES = 30;
-const MAX_TITLE_LENGTH = 200;
-const MAX_PATH_LENGTH = 300;
+// Bounds one record to a few hundred KB even for multibyte text, so a trim
+// batch stays well inside a transaction's read limit.
+const MAX_TRACE_STEPS = 16;
+const MAX_STEP_ENTRIES = 15;
+const MAX_TITLE_LENGTH = 160;
+const MAX_PATH_LENGTH = 200;
 
 export const reviewTraceStepValidator = v.object({
   step: v.string(),
@@ -26,8 +28,9 @@ export const reviewTraceStepValidator = v.object({
 
 export type ReviewTraceStep = typeof reviewTraceStepValidator.type;
 
+// Cut by code point so a surrogate pair is never split.
 const text = (value: unknown, limit: number) =>
-  (typeof value === "string" ? value : "").slice(0, limit);
+  typeof value === "string" ? Array.from(value).slice(0, limit).join("") : "";
 
 /** A bounded copy of what each review step proposed and kept. */
 export function summarizeReviewTrace(events: ReviewTraceEvent[]): {
@@ -67,8 +70,13 @@ export function summarizeReviewTrace(events: ReviewTraceEvent[]): {
       });
     }
   }
+  const half = MAX_TRACE_STEPS / 2;
   return {
-    trace: trace.slice(0, MAX_TRACE_STEPS),
+    // The first steps and the last, where the final verification is.
+    trace:
+      trace.length > MAX_TRACE_STEPS
+        ? [...trace.slice(0, half), ...trace.slice(-half)]
+        : trace,
     steps: events.filter((e) => e.stage === "proposed").length,
     candidates,
     discarded,

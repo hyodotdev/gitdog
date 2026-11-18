@@ -1142,7 +1142,7 @@
         "items": [
           "Account data for as long as your account is active",
           "Repository index data while repositories are connected",
-          "Pull request review records while the repository is connected: the model used, how long each review ran, and how many files it read and findings it proposed, kept and posted. The file paths and titles of the candidate findings each review step considered are kept for 30 days, then deleted",
+          "Pull request review records while the repository is connected: the model and key type used, how long each review run took, how many files it read, and how many findings it proposed and how many passed verification. The file paths and titles of the candidate findings each review step considered are kept for 30 days, then deleted",
           "Action history for 12 months for your reference",
           "Normalized payment transaction, entitlement-change, and refund/audit records are ordinarily retained for 5 years, then deleted unless a longer legal, security, accounting, or unresolved manual-review hold applies",
           "A non-content, non-reversible settlement fingerprint may be retained indefinitely to prevent duplicate credits or charges; it contains no raw payload, card, or contact data",

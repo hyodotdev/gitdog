@@ -448,7 +448,11 @@ describe("repository lifecycle fencing", () => {
       await ctx.db.insert("reviewRecords", {
         repositoryId,
         actionId: referencedActionId,
+        kind: "full",
         outcome: "proposed",
+        providerId: "anthropic",
+        modelId: "claude-opus-5-5",
+        keySource: "gitdog",
         durationMs: 1,
         changedFiles: 1,
         inspectedFiles: 1,

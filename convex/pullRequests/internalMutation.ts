@@ -1474,10 +1474,25 @@ export const recordReview = internalMutation({
     actionId: v.id("ticketActions"),
     page: v.optional(v.number()),
     group: v.optional(v.number()),
-    outcome: v.union(v.literal("proposed"), v.literal("failed")),
-    providerId: v.optional(v.string()),
-    modelId: v.optional(v.string()),
-    keySource: v.optional(v.union(v.literal("gitdog"), v.literal("user"))),
+    kind: v.union(
+      v.literal("full"),
+      v.literal("scoped"),
+      v.literal("verification"),
+    ),
+    // "refused" and "group_failed": the model call failed and the review
+    // went on without this run's files.
+    outcome: v.union(
+      v.literal("proposed"),
+      v.literal("refused"),
+      v.literal("group_failed"),
+      v.literal("failed"),
+      v.literal("cancelled"),
+    ),
+    // The fixed name of the review stage a failed run stopped in.
+    failedStage: v.optional(v.string()),
+    providerId: v.string(),
+    modelId: v.string(),
+    keySource: v.union(v.literal("gitdog"), v.literal("user")),
     durationMs: v.number(),
     changedFiles: v.number(),
     inspectedFiles: v.number(),
@@ -1508,7 +1523,7 @@ export const recordReview = internalMutation({
   },
 });
 
-const REVIEW_TRACE_TRIM_BATCH = 200;
+const REVIEW_TRACE_TRIM_BATCH = 20;
 
 // Clears review traces past their retention window; the counts stay.
 export const trimReviewTraces = internalMutation({
