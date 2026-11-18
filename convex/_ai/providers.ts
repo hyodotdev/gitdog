@@ -17,7 +17,7 @@ import type {
 import { ChatProviderRequestError, type ProviderUsage } from "./providerErrors";
 
 const REQUEST_TIMEOUT_MS = 120_000;
-const MIN_REQUEST_TIME_MS = 30_000;
+const MIN_REQUEST_TIME_MS = 90_000;
 type RecordValue = Record<string, unknown>;
 type HistoryContent = TextContent | ToolUseContent | ThinkingContent;
 
@@ -68,7 +68,9 @@ async function request(
       options?.endBy === undefined
         ? limit
         : Math.min(limit, options.endBy - Date.now());
-    if (timeoutMs < MIN_REQUEST_TIME_MS)
+    // A request that would likely be cut off mid-flight, with its usage
+    // unknown, is not sent at all.
+    if (timeoutMs < Math.min(limit, MIN_REQUEST_TIME_MS))
       throw new ChatProviderRequestError(
         "Too little time is left for the request",
         "not_billed",

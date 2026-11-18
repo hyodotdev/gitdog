@@ -574,12 +574,12 @@ it("waits as long as a request asks before giving up", async () => {
   vi.mocked(globalThis.fetch).mockResolvedValueOnce(openai());
   await new OpenAIProvider("test").chat(messages, {
     timeoutMs: 240_000,
-    endBy: Date.now() + 60_000,
+    endBy: Date.now() + 100_000,
   });
-  expect(timeout.mock.calls.at(-1)?.[0]).toBeLessThanOrEqual(60_000);
+  expect(timeout.mock.calls.at(-1)?.[0]).toBeLessThanOrEqual(100_000);
   const sent = vi.mocked(globalThis.fetch).mock.calls.length;
   await expect(
-    new OpenAIProvider("test").chat(messages, { endBy: Date.now() + 10_000 }),
+    new OpenAIProvider("test").chat(messages, { endBy: Date.now() + 60_000 }),
   ).rejects.toMatchObject({ billingOutcome: "not_billed" });
   expect(vi.mocked(globalThis.fetch).mock.calls.length).toBe(sent);
 });

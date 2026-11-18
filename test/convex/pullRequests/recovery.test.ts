@@ -1159,5 +1159,9 @@ describe("models that keep asking for the same source", () => {
     const result = await promise;
     expect(result.findings).toEqual([finding]);
     expect(result.excludedPaths).toContain(file.filename);
+    // The file counts as not reviewed, so the review cannot approve.
+    expect(
+      result.reads.some((r) => r.ref === "head" && r.path === file.filename),
+    ).toBe(false);
   });
 });

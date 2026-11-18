@@ -286,6 +286,9 @@ export async function reviewWithContext(args: {
   openRequests: OpenRequest[];
 }> {
   const actionStarted = args.startedAt ?? Date.now();
+  // No request runs past this, however long it waited to start, which leaves
+  // the action time to save the review.
+  const endBy = actionStarted + ACTION_REQUEST_END_MS;
   const discussion = args.discussion ?? [];
   // The latest answer's unaddressed reviewer requests.
   let openRequests: OpenRequest[] = [];
@@ -351,17 +354,19 @@ export async function reviewWithContext(args: {
       {
         operation: `Request AI review (${options.billingLabel ?? "generation"})`,
       },
-      () => args.provider.chat(messages, options),
+      () => args.provider.chat(messages, { endBy, ...options }),
     );
   };
   let readBudget = 0;
-  let turnsLeft = REVIEW_TURNS;
+  // Files a dropped closing finding pointed at: they count as not reviewed,
+  // so a review that lost a finding there can never approve.
+  const doubtfulPaths = new Set<string>();
+  let turnsLeft: number | undefined;
   const lateRequestTimeout = () =>
     Math.min(
       4 * 60_000,
       Math.max(2 * 60_000, actionStarted + LATE_REQUEST_END_MS - Date.now()),
     );
-  const endBy = actionStarted + ACTION_REQUEST_END_MS;
   // A review's own changed files are bounded by its file count and the source
   // budget, so they do not use up the reads that guides and tools share.
   const groupSources = new Set(args.files.map((f) => `head:${f.filename}`));
@@ -694,8 +699,8 @@ export async function reviewWithContext(args: {
           unavailableContextPaths: [...unavailablePaths],
           recentToolResults: observations,
           omittedToolResultCount: omittedObservations,
-          turnsLeft,
-          ...(turnsLeft <= 2
+          ...(turnsLeft === undefined ? {} : { turnsLeft }),
+          ...(turnsLeft !== undefined && turnsLeft <= 2
             ? {
                 turnWarning:
                   "This is one of the last turns. Return findings from the source shown now; a turn without findings may end the review with less.",
@@ -838,7 +843,7 @@ export async function reviewWithContext(args: {
       {
         maxTokens: REVIEW_OUTPUT_TOKENS,
         billingLabel,
-        ...(timeoutMs ? { timeoutMs, endBy } : {}),
+        timeoutMs: timeoutMs ?? lateRequestTimeout(),
         responseFormat: {
           name: "pull_request_verification",
           schema: {
@@ -1066,7 +1071,6 @@ export async function reviewWithContext(args: {
           maxTokens: REVIEW_OUTPUT_TOKENS,
           billingLabel: `pr-review/coverage/${pass}`,
           timeoutMs: lateRequestTimeout(),
-          endBy,
           responseFormat: REVIEW_RESPONSE_FORMAT,
         });
         if (response.finishReason !== "stop")
@@ -1223,7 +1227,6 @@ export async function reviewWithContext(args: {
             tools: reviewTools,
             billingLabel: `pr-review/look/${look.name}`,
             timeoutMs: lateRequestTimeout(),
-            endBy,
             responseFormat: REVIEW_RESPONSE_FORMAT,
           },
         );
@@ -1334,7 +1337,9 @@ export async function reviewWithContext(args: {
         (a, b) =>
           a.priority.localeCompare(b.priority) || b.confidence - a.confidence,
       ),
-      reads,
+      reads: reads.filter(
+        (r) => !(r.ref === "head" && doubtfulPaths.has(r.path)),
+      ),
       excludedPaths: coverage,
     };
   };
@@ -1405,6 +1410,11 @@ export async function reviewWithContext(args: {
     if (turn > 0 && turnsLeft !== REVIEW_TURNS - turn) {
       turnsLeft = REVIEW_TURNS - turn;
       rebuildMessages();
+      while (observations.length && requestBytes() > 180_000) {
+        observations.shift();
+        omittedObservations++;
+        rebuildMessages();
+      }
     }
     if (JSON.stringify(messages).length > 180_000)
       throw new Error("Review conversation exceeds the context budget");
@@ -1478,7 +1488,7 @@ export async function reviewWithContext(args: {
               ref,
               status: "already shown in SOURCE blocks; nothing more to show",
               note: source.includes(OMITTED_SOURCE_MARKER)
-                ? "This is all of this file that can be shown: lines far from the diff are blank after the omitted-lines marker and cannot be read. Do not request it again. Use search_code on this file for a specific symbol, read other files, or answer from what is shown."
+                ? "This is all of this file that can be shown at head: lines far from the diff are blank after the omitted-lines marker. Do not request it again. Read the file at base for the code around the change, read other files, or answer from what is shown."
                 : "This file is shown in full already. Do not request it again; read other files or answer.",
             });
             continue;
@@ -1651,6 +1661,8 @@ export async function reviewWithContext(args: {
   const readsBeforePass = reads.length;
   const passShown =
     needsSource() && !sourceRetried ? await showUninspected() : false;
+  // Exploration is over, so the turn countdown no longer applies.
+  turnsLeft = undefined;
   rebuildMessages();
   const synthesize = () =>
     chat(
@@ -1674,7 +1686,6 @@ export async function reviewWithContext(args: {
             actionStarted + FINAL_REQUEST_END_MS - Date.now(),
           ),
         ),
-        endBy: actionStarted + ACTION_REQUEST_END_MS,
       },
     );
   let final: Awaited<ReturnType<typeof chat>>;
@@ -1718,12 +1729,14 @@ export async function reviewWithContext(args: {
         item !== null && typeof item === "object" && "path" in item
           ? item.path
           : undefined;
-      if (
-        typeof path === "string" &&
-        args.files.some((f) => f.filename === path) &&
-        !excludedPaths.includes(path)
-      )
-        excludedPaths.push(path);
+      const doubtful =
+        typeof path === "string" && args.files.some((f) => f.filename === path)
+          ? [path]
+          : args.files.map((f) => f.filename);
+      for (const file of doubtful) {
+        doubtfulPaths.add(file);
+        if (!excludedPaths.includes(file)) excludedPaths.push(file);
+      }
     }
   }
   return await finalize(kept);
