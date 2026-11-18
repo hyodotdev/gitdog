@@ -182,6 +182,22 @@ describe("commit-grounded PR finding validation", () => {
     expect(kept.body).toContain(`x-@${J}octocat`);
     expect(kept.body).toContain(`path/@${J}octocat`);
     expect(kept.body).toContain(`mail@${J}example.com`);
+    // Character references GitHub would decode into a mention.
+    const [entities] = validateFindings(
+      {
+        findings: [
+          {
+            ...finding,
+            body: `${finding.body} &#64;octocat &#x40;octocat &commat;octocat @&#111;ctocat AT&T`,
+          },
+        ],
+      },
+      [file],
+      reads,
+    );
+    expect(entities.body).toContain(
+      `&${J}#64;octocat &${J}#x40;octocat &${J}commat;octocat @&${J}#111;ctocat AT&T`,
+    );
     // Validating the stored finding again changes nothing.
     expect(validateFindings({ findings: [kept] }, [file], reads)).toEqual([
       kept,
@@ -1295,6 +1311,17 @@ describe("bounded review workflow", () => {
         options,
       );
       expect(coverageCalls).toBe(1);
+      expect(result.excludedPaths.length).toBeGreaterThan(0);
+    });
+    it("keeps the review when a coverage read fails", async () => {
+      let reads = 0;
+      const read = vi.fn(async () => {
+        // The main review reads what it can; a later GitHub read fails.
+        if (++reads > 9) throw new Error("GitHub returned 502");
+        return padded;
+      });
+      const p = scripted(() => stop([]));
+      const result = await run(p, read, options);
       expect(result.excludedPaths.length).toBeGreaterThan(0);
     });
     it("leaves coverage to the groups of a batched review", async () => {

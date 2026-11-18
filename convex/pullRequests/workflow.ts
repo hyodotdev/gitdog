@@ -186,11 +186,11 @@ const PRELOAD_READS = 8;
 const COVERAGE_PASS_SOURCE = 90_000;
 const COVERAGE_PASS_REQUEST = 150_000;
 const MAX_COVERAGE_PASSES = 8;
-// Convex stops an action after 10 minutes, and a request may wait up to 90
-// seconds for another on the account and then run for up to 120. A coverage
-// request starts only within 5 minutes of the action's start, so even the
-// slowest one ends well before the action is stopped mid-request.
-const COVERAGE_REQUEST_CUTOFF_MS = 5 * 60_000;
+// Convex stops an action after 10 minutes. A request may wait up to 90 seconds
+// for another on the account, once for each provider route, and then run for
+// up to 120. A coverage request starts only within 4 minutes of the action's
+// start, so even the slowest one ends before the action is stopped.
+const COVERAGE_REQUEST_CUTOFF_MS = 4 * 60_000;
 // Implementation first, then tests, then documentation and data, so a pass
 // cut short by the limit or the time budget leaves the least important
 // files unreviewed.
@@ -955,8 +955,16 @@ export async function reviewWithContext(args: {
       await args.guard();
       const files: ChangedFile[] = [];
       const sources: ReadEvidence[] = [];
+      let content: string | null;
       for (const file of pending) {
-        const content = await readOptionalContext(file.filename, "head");
+        try {
+          content = await readOptionalContext(file.filename, "head");
+        } catch (error) {
+          // A GitHub read failure ends the optional passes; the review keeps
+          // what it already has.
+          if (isLifecycleChange(error)) throw error;
+          return found;
+        }
         if (content === null) continue;
         const evidence = {
           path: file.filename,
@@ -985,6 +993,8 @@ export async function reviewWithContext(args: {
       // Files whose candidate could not be validated stay reported as not
       // reviewed, so a defect the model saw can never read as a clean file.
       const doubtful = new Set<string>();
+      // Reading the files takes time too: check again right before the request.
+      if (!timeLeft()) break;
       try {
         const response = await chat(coverageMessages(files, sources), {
           maxTokens: REVIEW_OUTPUT_TOKENS,
@@ -1002,7 +1012,16 @@ export async function reviewWithContext(args: {
         )
           throw new Error("Invalid review result");
         const value = confidentCandidates(
-          { findings: decoded.findings.slice(0, MAX_REVIEW_FINDINGS) },
+          {
+            // Uncertain candidates go first, so they never displace a
+            // confident one past the cap.
+            findings: decoded.findings
+              .filter(
+                (item: unknown) =>
+                  !((confidenceOf(item) ?? 1) < MIN_FINDING_CONFIDENCE),
+              )
+              .slice(0, MAX_REVIEW_FINDINGS),
+          },
           args.allowSuggestions,
           new Set(files.map((f) => f.filename)),
         ) as { findings: unknown[] };
@@ -1021,7 +1040,7 @@ export async function reviewWithContext(args: {
                 ? item.path
                 : undefined;
             for (const file of files)
-              if (path === undefined || file.filename === path)
+              if (typeof path !== "string" || file.filename === path)
                 doubtful.add(file.filename);
           }
         }
