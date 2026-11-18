@@ -151,6 +151,13 @@ crons.daily(
   {},
 );
 
+crons.daily(
+  "trim-review-traces",
+  { hourUTC: 3, minuteUTC: 40 },
+  internal.pullRequests.internalMutation.trimReviewTraces,
+  {},
+);
+
 // Push webhooks update immediately; daily synchronization also catches missed events.
 crons.daily(
   "daily-repository-sync",

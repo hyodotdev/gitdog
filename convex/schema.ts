@@ -3,6 +3,7 @@ import { v } from "convex/values";
 import { authTables } from "@convex-dev/auth/server";
 import { chatRecoveryTargetValidator } from "./_ai/chatRecovery";
 import { reviewBatchResultValidator } from "./pullRequests/review";
+import { reviewTraceStepValidator } from "./pullRequests/records";
 
 const applicationTables = {
   projectApiKeys: defineTable({
@@ -771,6 +772,7 @@ const applicationTables = {
         v.literal("invitations"),
         v.literal("api_keys"),
         v.literal("commands"),
+        v.literal("review_records"),
         v.literal("tickets"),
         v.literal("history"),
         v.literal("notifications"),
@@ -1727,6 +1729,54 @@ const applicationTables = {
     .index("by_repository", ["repositoryId"])
     .index("by_comment", ["repositoryId", "commentId"])
     .index("by_repository_user", ["repositoryId", "githubUserId", "createdAt"]),
+
+  // One row per model run of a pull request review, kept to measure review
+  // quality: what the run covered, what it proposed and what verification
+  // dropped. The per-step trace holds model-written titles, so it is cleared
+  // after a retention window; the counts stay while the repository is
+  // connected.
+  reviewRecords: defineTable({
+    repositoryId: v.id("repositories"),
+    actionId: v.id("ticketActions"),
+    page: v.optional(v.number()),
+    group: v.optional(v.number()),
+    kind: v.union(
+      v.literal("full"),
+      v.literal("scoped"),
+      v.literal("verification"),
+    ),
+    // "refused" and "group_failed": the model call failed and the review
+    // went on without this run's files.
+    outcome: v.union(
+      v.literal("proposed"),
+      v.literal("refused"),
+      v.literal("group_failed"),
+      v.literal("failed"),
+      v.literal("cancelled"),
+    ),
+    // The fixed name of the review stage a failed run stopped in.
+    failedStage: v.optional(v.string()),
+    providerId: v.string(),
+    modelId: v.string(),
+    keySource: v.union(v.literal("gitdog"), v.literal("user")),
+    durationMs: v.number(),
+    changedFiles: v.number(),
+    inspectedFiles: v.number(),
+    uncoveredFiles: v.number(),
+    discussionEntries: v.number(),
+    steps: v.number(),
+    // Summed over steps; a retried step proposes its findings again.
+    candidates: v.number(),
+    discarded: v.number(),
+    findings: v.number(),
+    openRequests: v.number(),
+    trace: v.optional(v.array(reviewTraceStepValidator)),
+    traceExpiresAt: v.optional(v.number()),
+    createdAt: v.number(),
+  })
+    .index("by_repository", ["repositoryId"])
+    .index("by_action", ["actionId"])
+    .index("by_trace_expiry", ["traceExpiresAt"]),
 
   // ============================================
   // INVITATIONS (Team invitations)

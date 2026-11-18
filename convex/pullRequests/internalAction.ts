@@ -14,6 +14,7 @@ import {
   UserApiKeyError,
   usesUserKey,
 } from "../_ai/providerResolution";
+import type { AiProvider } from "../_ai/model";
 import {
   BATCH_REVIEW_THRESHOLD,
   changedSince,
@@ -35,7 +36,8 @@ import {
   treePaths,
   type PullRequest,
 } from "./github";
-import { reviewWithContext } from "./workflow";
+import { reviewWithContext, type ReviewTraceEvent } from "./workflow";
+import { summarizeReviewTrace } from "./records";
 import { REVIEW_QUOTA_FAILURES } from "./internalMutation";
 import {
   isReviewGroupModelFailure,
@@ -329,6 +331,45 @@ export const generate = internalAction({
     const group = args.group ?? 0;
     let stage = "Source preflight";
     let batched = args.page !== undefined;
+    // What this run did, recorded once a model was chosen to measure review
+    // quality. A record that cannot be written never fails the review.
+    const traceEvents: ReviewTraceEvent[] = [];
+    // Read when the record is written: a fallback provider reports the
+    // provider that answered last.
+    let runProvider: AiProvider | undefined;
+    let runOutcome: "proposed" | "refused" | "group_failed" = "proposed";
+    let run:
+      | {
+          kind: "full" | "scoped" | "verification";
+          keySource: "gitdog" | "user";
+          changedFiles: number;
+          inspectedFiles: number;
+          uncoveredFiles: number;
+          discussionEntries: number;
+          findings: number;
+          openRequests: number;
+        }
+      | undefined;
+    const recordRun = async (error?: unknown) => {
+      if (!run || !runProvider) return;
+      await ctx
+        .runMutation(internal.pullRequests.internalMutation.recordReview, {
+          actionId: args.actionId,
+          ...(batched ? { page, group } : {}),
+          ...(error === undefined
+            ? { outcome: runOutcome }
+            : {
+                outcome: isLifecycleChange(error) ? "cancelled" : "failed",
+                failedStage: stage,
+              }),
+          ...run,
+          providerId: runProvider.providerId,
+          modelId: runProvider.modelId,
+          ...summarizeReviewTrace(traceEvents),
+          durationMs: Date.now() - startedAt,
+        })
+        .catch(() => console.warn("Review record was not written"));
+    };
     try {
       const initial = await ctx.runQuery(
         internal.pullRequests.internalQuery.get,
@@ -487,6 +528,17 @@ export const generate = internalAction({
         userId: initial.repository.userId,
         ticketActionId: args.actionId,
       });
+      runProvider = rawAiProvider;
+      run = {
+        kind: verificationOnly ? "verification" : scoped ? "scoped" : "full",
+        keySource: usesUserKey(rawAiProvider) ? "user" : "gitdog",
+        changedFiles: selected.filter((f) => f.status !== "removed").length,
+        inspectedFiles: 0,
+        uncoveredFiles: 0,
+        discussionEntries: 0,
+        findings: 0,
+        openRequests: 0,
+      };
       if (batched && !previous && group === 0) {
         // Refuse up front instead of spending tokens on early batches and
         // stopping at the account limit with nothing published.
@@ -532,6 +584,8 @@ export const generate = internalAction({
         : [];
       stage = "AI generation and evidence validation";
       if (batched && !hasReviewableFiles) {
+        // No model is called for this group, so there is no run to record.
+        run = undefined;
         for (const file of selected) excludedPaths.add(file.filename);
         // A removed file has no added code to review.
         uncoveredFiles += selected.filter((f) => f.status !== "removed").length;
@@ -565,9 +619,11 @@ export const generate = internalAction({
         });
         let result: Awaited<ReturnType<typeof reviewWithContext>>;
         try {
+          if (discussion) run.discussionEntries = discussion.length;
           result = await reviewWithContext({
             startedAt,
             discussion,
+            trace: (event) => traceEvents.push(event),
             provider,
             batchGroup: batched,
             allowSuggestions:
@@ -604,6 +660,7 @@ export const generate = internalAction({
             (refused && refusedGroups >= MAX_REFUSED_REVIEW_GROUPS)
           )
             throw error;
+          runOutcome = refused ? "refused" : "group_failed";
           if (refused) {
             refusedGroups++;
             for (const file of selected) refusedPaths.add(file.filename);
@@ -619,6 +676,8 @@ export const generate = internalAction({
           };
         }
         openRequests = result.openRequests;
+        run.findings = result.findings.length;
+        run.openRequests = result.openRequests.length;
         // Each review group decides windowing for its own reads, so the way
         // each quoted file was seen travels with the evidence itself.
         findings.push(
@@ -638,9 +697,13 @@ export const generate = internalAction({
         for (const file of selected) {
           if (file.status === "removed") continue;
           // A diff dropped for size was not reviewed even if its source was read.
-          if (hasReviewablePatch(file) && inspected.has(file.filename))
+          if (hasReviewablePatch(file) && inspected.has(file.filename)) {
             inspectedFiles++;
-          else uncoveredFiles++;
+            run.inspectedFiles++;
+          } else {
+            uncoveredFiles++;
+            run.uncoveredFiles++;
+          }
         }
         for (const path of result.excludedPaths) excludedPaths.add(path);
         for (const read of result.reads)
@@ -732,7 +795,9 @@ export const generate = internalAction({
                 uncoveredFiles,
               },
       });
+      await recordRun();
     } catch (error) {
+      await recordRun(error);
       // Do not persist provider bodies, source snippets or credentials in errors.
       if (batched)
         stage = `${stage} (review batch ${page}${group ? `, part ${group + 1}` : ""})`;

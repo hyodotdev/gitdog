@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import schema from "../../../convex/schema";
+import type { Doc } from "../../../convex/_generated/dataModel";
 import { internal, api } from "../../../convex/_generated/api";
 import * as helpers from "../../../convex/github/helpers";
 import * as repositoryIdentity from "../../../convex/github/repositoryIdentity";
@@ -1022,8 +1023,10 @@ describe("PR review durable lifecycle", () => {
       await f.t.action(internal.pullRequests.internalAction.generate, {
         actionId,
       });
+      records = await f.t.run((ctx) => ctx.db.query("reviewRecords").collect());
       return await f.t.run((ctx) => ctx.db.get(actionId));
     }
+    let records: Doc<"reviewRecords">[] = [];
     it("records the failed pinned source request on the review ticket", async () => {
       const filename = "src/pages/[id].tsx";
       const tree = {
@@ -1051,6 +1054,16 @@ describe("PR review durable lifecycle", () => {
           "Reason · GitHub could not find the requested resource (HTTP 404).",
         ].join("\n"),
       });
+      // A run that failed after a model was chosen is recorded with the
+      // stage it stopped in.
+      expect(records).toMatchObject([
+        {
+          kind: "full",
+          outcome: "failed",
+          failedStage: "AI generation and evidence validation",
+          changedFiles: 1,
+        },
+      ]);
     });
     it("explains that a PR has too many changed files", async () => {
       expect(
@@ -3207,6 +3220,50 @@ describe("batched PR reviews", () => {
     expect((await f.getAction())?.statusCommentId).toBe(901);
     await f.generate(2);
     expect(f.statusComments.add).toHaveBeenCalledTimes(1);
+  });
+  it("records what each review run covered, proposed and kept", async () => {
+    const f = await batchFixture();
+    await f.generate();
+    const records = () =>
+      f.t.run((ctx) =>
+        ctx.db
+          .query("reviewRecords")
+          .withIndex("by_action", (q) => q.eq("actionId", f.actionId))
+          .collect(),
+      );
+    const [record] = await records();
+    expect(record).toMatchObject({
+      kind: "full",
+      outcome: "proposed",
+      providerId: "anthropic",
+      modelId: "claude-opus-5-5",
+      page: 1,
+      group: 0,
+      keySource: "gitdog",
+      changedFiles: 16,
+      inspectedFiles: 16,
+      uncoveredFiles: 0,
+      steps: 2,
+      candidates: 2,
+      discarded: 0,
+      findings: 1,
+      openRequests: 0,
+    });
+    expect(record.trace?.at(-1)).toEqual({
+      step: "pr-review/critique",
+      kept: ["Keep the requested key"],
+      discarded: [],
+    });
+    // The trace is cleared after its retention window; the counts stay.
+    vi.setSystemTime(record.traceExpiresAt! + 1);
+    await f.t.mutation(
+      internal.pullRequests.internalMutation.trimReviewTraces,
+      {},
+    );
+    const [trimmed] = await records();
+    expect(trimmed).not.toHaveProperty("trace");
+    expect(trimmed).not.toHaveProperty("traceExpiresAt");
+    expect(trimmed).toMatchObject({ findings: 1, candidates: 2 });
   });
   it("combines findings from a 61-file PR into one review body after all batches finish", async () => {
     const f = await batchFixture();
