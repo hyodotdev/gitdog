@@ -8,6 +8,7 @@ import type {
 } from "../../../convex/_ai/model";
 import { reviewWithContext } from "../../../convex/pullRequests/workflow";
 import { getChatReservationLimits } from "../../../convex/_ai/chatBilling";
+import { chatRequestBytes } from "../../../convex/_ai/requestSize";
 import {
   type ChangedFile,
   type Finding,
@@ -873,8 +874,13 @@ describe("review recovery without weakening source evidence", () => {
     const result = await promise;
     const limits = getChatReservationLimits(requests[0], requestOptions[0]);
     expect(
-      limits.inputTokenLimit + limits.outputTokenLimit,
+      chatRequestBytes(requests[0], requestOptions[0]) +
+        limits.outputTokenLimit,
     ).toBeLessThanOrEqual(90_000);
+    // Billing holds room for the whole prompt to be written to the cache.
+    expect(limits.inputTokenLimit).toBe(
+      Math.ceil(chatRequestBytes(requests[0], requestOptions[0]) * 1.25),
+    );
     const shown = state(requests[0]).headImplementationContext;
     expect(shown.length).toBeGreaterThan(0);
     expect(shown.length).toBeLessThan(4);
@@ -949,7 +955,8 @@ describe("review recovery without weakening source evidence", () => {
     const result = await promise;
     const limits = getChatReservationLimits(requests[0], requestOptions[0]);
     expect(
-      limits.inputTokenLimit + limits.outputTokenLimit,
+      chatRequestBytes(requests[0], requestOptions[0]) +
+        limits.outputTokenLimit,
     ).toBeLessThanOrEqual(90_000);
     expect(state(requests[0]).headImplementationContext).toEqual([]);
     expect(state(requests[1]).inspectedSource).toHaveLength(1);
@@ -994,5 +1001,78 @@ describe("review recovery without weakening source evidence", () => {
     expect(result.excludedPaths).not.toContain(file.filename);
     expect(provider.chat).toHaveBeenCalledTimes(3);
     expect(JSON.stringify(requests[2]).length).toBeLessThanOrEqual(180_000);
+  });
+});
+
+describe("second looks after the main review", () => {
+  const looks = (
+    responses: ChatCompletionResult[],
+    overrides: Partial<Parameters<typeof reviewWithContext>[0]> = {},
+  ) => fixture(responses, { secondLooks: true, ...overrides });
+  const labels = (options: ChatCompletionOptions[]) =>
+    options.map((o) => o.billingLabel);
+
+  it("reuses the main review's cached prefix and keeps a verified new finding", async () => {
+    const { promise, requests, requestOptions } = looks([
+      stop(),
+      stop([finding]),
+      verified(),
+      stop(),
+    ]);
+    const result = await promise;
+    expect(result.findings).toEqual([finding]);
+    expect(labels(requestOptions)).toEqual([
+      "pr-review/0",
+      "pr-review/look/removed-behavior",
+      "pr-review/look/removed-behavior/critique",
+      "pr-review/look/edge-cases",
+    ]);
+    const main = requests[0][1].content as Array<Record<string, unknown>>;
+    const look = requests[1][1].content as Array<Record<string, unknown>>;
+    // Everything up to the cache breakpoint is resent unchanged.
+    expect(requests[1][0]).toEqual(requests[0][0]);
+    expect(look.slice(0, -1)).toEqual(main.slice(0, -1));
+    expect(look.slice(0, -1).some((part) => part.cache)).toBe(true);
+    expect(requestOptions[1].tools).toEqual(requestOptions[0].tools);
+    expect(requestOptions[1].responseFormat).toEqual(
+      requestOptions[0].responseFormat,
+    );
+    expect(JSON.parse(String(look.at(-1)!.text))).toMatchObject({
+      secondLook: { alreadyReported: [] },
+    });
+    // The next look knows what the first one found.
+    const next = requests[3][1].content as Array<Record<string, unknown>>;
+    expect(JSON.parse(String(next.at(-1)!.text))).toMatchObject({
+      secondLook: {
+        alreadyReported: [
+          { path: finding.path, line: finding.line, title: finding.title },
+        ],
+      },
+    });
+  });
+
+  it("drops a repeated finding and ignores a look that asks for more source", async () => {
+    const { promise, requestOptions } = looks([
+      stop([finding]),
+      verified(),
+      stop([{ ...finding, title: "The same defect, reworded" }]),
+      tool("read_file", { path: file.filename, ref: "base" }),
+    ]);
+    const result = await promise;
+    expect(result.findings).toEqual([finding]);
+    expect(labels(requestOptions)).toEqual([
+      "pr-review/0",
+      "pr-review/critique",
+      "pr-review/look/removed-behavior",
+      "pr-review/look/edge-cases",
+    ]);
+  });
+
+  it("runs no looks unless asked, or for a batch group", async () => {
+    for (const overrides of [{ secondLooks: false }, { batchGroup: true }]) {
+      const { promise, requestOptions } = looks([stop()], overrides);
+      await promise;
+      expect(labels(requestOptions)).toEqual(["pr-review/0"]);
+    }
   });
 });

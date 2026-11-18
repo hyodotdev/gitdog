@@ -141,6 +141,8 @@ export const replayReview = internalAction({
     const trace: unknown[] = [];
     const result = await reviewWithContext({
       trace: (event) => trace.push(event),
+      // As production single reviews run.
+      secondLooks: true,
       provider,
       repository: args.repository,
       title: args.title,

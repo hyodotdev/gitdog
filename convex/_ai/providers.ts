@@ -1,4 +1,8 @@
-import { CLAUDE_API_ENDS_AT, GENERATION_MODELS } from "./config";
+import {
+  CLAUDE_API_ENDS_AT,
+  GENERATION_MODELS,
+  cacheAdjustedInputTokens,
+} from "./config";
 import { createAnthropicFederationAuthorizer } from "./federation";
 import type {
   AiProvider,
@@ -226,7 +230,19 @@ export class ClaudeProvider implements AiProvider {
       {
         model: this.modelId,
         fallbacks: "default",
-        system: systemPrompt(messages),
+        // The system prompt and tools are shared by every turn of a
+        // conversation, and the caller marks longer prefixes it resends.
+        ...(systemPrompt(messages)
+          ? {
+              system: [
+                {
+                  type: "text",
+                  text: systemPrompt(messages),
+                  cache_control: { type: "ephemeral" },
+                },
+              ],
+            }
+          : {}),
         messages: messages
           .filter((m) => m.role !== "system")
           .map((m) => ({
@@ -234,7 +250,13 @@ export class ClaudeProvider implements AiProvider {
             content: parts(m).flatMap((p) => {
               switch (p.type) {
                 case "text":
-                  return { type: "text", text: p.text };
+                  return {
+                    type: "text",
+                    text: p.text,
+                    ...(p.cache
+                      ? { cache_control: { type: "ephemeral" } }
+                      : {}),
+                  };
                 case "tool_use":
                   return {
                     type: p.type,
@@ -271,23 +293,32 @@ export class ClaudeProvider implements AiProvider {
       this.enforceDeadline ? CLAUDE_API_ENDS_AT : undefined,
     );
     const counts = record(data.usage) ? data.usage : {};
-    // No prompt caching is requested. Reject unexpected cache billing rather
-    // than recording an incorrect price or incomplete token count.
     // With fallbacks, top-level usage covers the attempt that produced the
     // message. A declined attempt before it is not charged to the account:
     // most declines are free, and counting it could exceed the reservation.
-    const billed = usage(counts.input_tokens, counts.output_tokens, requestId);
+    // Cached prompt tokens count as the input they cost on the model that
+    // answered.
+    const cacheWrite = counts.cache_creation_input_tokens ?? 0;
+    const cacheRead = counts.cache_read_input_tokens ?? 0;
+    if (!tokens(cacheWrite) || !tokens(cacheRead))
+      throw new ChatProviderRequestError(
+        "AI provider returned invalid usage metadata",
+        "ambiguous",
+        { providerRequestId: requestId },
+      );
+    const billed = usage(
+      tokens(counts.input_tokens)
+        ? cacheAdjustedInputTokens(
+            typeof data.model === "string" ? data.model : this.modelId,
+            counts.input_tokens,
+            cacheWrite,
+            cacheRead,
+          )
+        : counts.input_tokens,
+      counts.output_tokens,
+      requestId,
+    );
     try {
-      if (
-        (counts.cache_creation_input_tokens ?? 0) !== 0 ||
-        (counts.cache_read_input_tokens ?? 0) !== 0
-      ) {
-        throw new ChatProviderRequestError(
-          "Claude returned unsupported cache usage",
-          "ambiguous",
-          { providerRequestId: requestId },
-        );
-      }
       if (data.stop_reason === "refusal") {
         const details = record(data.stop_details) ? data.stop_details : {};
         const category =

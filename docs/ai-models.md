@@ -105,6 +105,15 @@ lower of its model's weight and its reservation's, so a reservation made before
 weights existed is charged at most 1x. Usage on your own key is billed by the
 provider and is never weighted.
 
+Claude requests use prompt caching: the system prompt and tools of every
+request, and in a review's main loop the repository context and every source
+shown so far, which the loop resends each turn ahead of the turn's own state.
+Cached prompt tokens are recorded as the input tokens they cost: a cache write
+counts 1.25x and a read 0.05x on Opus 5.5 (0.1x on other Claude models),
+rounded up. Quota, cost and reservations therefore need no separate cache
+accounting, and reservations hold 1.25x the request size so a prompt written
+to the cache in full still fits.
+
 A request Opus 5.5 declines may be served inside the same call by Anthropic's
 refusal fallback model (Claude Opus 5 or Opus 4.8, $5/$25), and later turns
 of that conversation go to the fallback model directly for a while. Whenever

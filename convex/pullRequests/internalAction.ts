@@ -624,6 +624,7 @@ export const generate = internalAction({
             startedAt,
             discussion,
             trace: (event) => traceEvents.push(event),
+            secondLooks: !verificationOnly,
             provider,
             batchGroup: batched,
             allowSuggestions:

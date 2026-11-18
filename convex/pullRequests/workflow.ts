@@ -194,6 +194,22 @@ const MAX_COVERAGE_PASSES = 8;
 // up to 120. A coverage request starts only within 4 minutes of the action's
 // start, so even the slowest one ends before the action is stopped.
 const COVERAGE_REQUEST_CUTOFF_MS = 4 * 60_000;
+// After the main review, focused second looks at the same source. Each one
+// resends the main review's last request with only its closing state
+// replaced, so the repository context and sources are read from the prompt
+// cache and a look costs little more than its answer.
+const SECOND_LOOKS = [
+  {
+    name: "removed-behavior",
+    focus:
+      "Removed behavior and cross-file contracts. For every line the diff deletes or replaces, name the guard, invariant, validation or error path it enforced and check that the new code re-establishes it. For each function, type, schema field, constant or message the diff changes, check its callers and callees in the shown source for a new precondition, a changed return shape or unit, a new exception, a removed field or an ordering dependency the change breaks.",
+  },
+  {
+    name: "edge-cases",
+    focus:
+      "Edge cases and failure paths. For each changed line, find the input, state or timing that makes it wrong: missing, empty, zero or duplicate values, retries and idempotency, concurrent requests and races, partial failure, limits and truncation, and error handling that swallows or misreports a failure.",
+  },
+] as const;
 // Implementation first, then tests, then documentation and data, so a pass
 // cut short by the limit or the time budget leaves the least important
 // files unreviewed.
@@ -245,6 +261,8 @@ export async function reviewWithContext(args: {
   startedAt?: number;
   // What people and other reviewers said on the pull request.
   discussion?: DiscussionEntry[];
+  // Run SECOND_LOOKS after the main review of a single review.
+  secondLooks?: boolean;
 }): Promise<{
   findings: Finding[];
   reads: ReadEvidence[];
@@ -490,7 +508,14 @@ export async function reviewWithContext(args: {
       : "");
   const initialMessages = (sources = headContext): ChatMessage[] => [
     { role: "system", content: findingsPrompt },
-    reviewContextMessage(initialMetadata(sources), [...context, ...sources]),
+    reviewContextMessage(
+      initialMetadata(sources),
+      [...context, ...sources].map((r) => ({
+        ...r,
+        truncated: r.ref === "base" && incompleteGuides.has(r.path),
+      })),
+      { cached: true },
+    ),
   ];
   // Returns whether a source read was used, so batched preloading can stop
   // before the shared file-read budget is exhausted.
@@ -504,8 +529,8 @@ export async function reviewWithContext(args: {
     if (JSON.stringify([...headContext, evidence]).length > headContextLimit)
       return true;
     const prepared = [...headContext, evidence];
-    // Use the same UTF-8/escaping estimate as billing before claiming source
-    // inspection. Optional preparation must fit a fresh Free account's hold.
+    // Use the same UTF-8/escaping estimate billing reserves from before
+    // claiming source inspection, so optional preparation stays bounded.
     const reserved =
       chatRequestBytes(initialMessages(prepared), {
         tools: reviewTools,
@@ -659,6 +684,7 @@ export async function reviewWithContext(args: {
           ...r,
           truncated: r.ref === "base" && incompleteGuides.has(r.path),
         })),
+        { cached: true },
       ),
     ];
   };
@@ -1105,6 +1131,142 @@ export async function reviewWithContext(args: {
     }
     return found;
   };
+  const secondLooks = async (
+    known: Finding[],
+    sources: ReadEvidence[],
+  ): Promise<Finding[]> => {
+    const found: Finding[] = [];
+    const last = messages[1]?.content;
+    const state = Array.isArray(last) ? last.at(-1) : undefined;
+    if (
+      !args.secondLooks ||
+      accountLimited ||
+      args.batchGroup ||
+      !Array.isArray(last) ||
+      state?.type !== "text" ||
+      state.cache ||
+      // The cached layout ends with a state block after the sources.
+      !last.slice(0, -1).some((part) => part.type === "text" && part.cache)
+    )
+      return found;
+    let anchors: unknown;
+    try {
+      anchors = (JSON.parse(state.text) as Record<string, unknown>)
+        .addedLineAnchors;
+    } catch {
+      return found;
+    }
+    const prefix = last.slice(0, -1);
+    const timeLeft = () =>
+      Date.now() - actionStarted <= COVERAGE_REQUEST_CUTOFF_MS;
+    for (const look of SECOND_LOOKS) {
+      if (!timeLeft()) break;
+      await args.guard();
+      const reported = [...known, ...found].map((f) => ({
+        path: f.path,
+        line: f.line,
+        title: f.title,
+      }));
+      try {
+        const response = await chat(
+          [
+            messages[0],
+            {
+              role: "user",
+              content: [
+                ...prefix,
+                {
+                  type: "text",
+                  text: JSON.stringify({
+                    addedLineAnchors: anchors,
+                    secondLook: {
+                      focus: look.focus,
+                      alreadyReported: reported,
+                      instruction:
+                        "The review above is done, and first reviews of a change usually miss real defects. Look again at the same source with only this focus: go through every changed hunk one by one and apply the focus to it. Report each defect not already reported that the shown source supports, with the usual evidence and confidence rules; a separate verification checks every finding. Answer from the source shown; do not call tools. Return an empty findings array only when no hunk has such a defect.",
+                    },
+                  }),
+                },
+              ],
+            },
+          ],
+          {
+            maxTokens: REVIEW_OUTPUT_TOKENS,
+            tools: reviewTools,
+            billingLabel: `pr-review/look/${look.name}`,
+            responseFormat: REVIEW_RESPONSE_FORMAT,
+          },
+        );
+        // A look that wants more source has nothing to add from this one.
+        if (response.finishReason !== "stop") continue;
+        const decoded = proposed(`look/${look.name}`, decode(response.content));
+        if (
+          decoded === null ||
+          typeof decoded !== "object" ||
+          !("findings" in decoded) ||
+          !Array.isArray(decoded.findings)
+        )
+          continue;
+        const value = confidentCandidates(
+          {
+            findings: decoded.findings
+              .filter(
+                (item: unknown) =>
+                  !((confidenceOf(item) ?? 1) < MIN_FINDING_CONFIDENCE),
+              )
+              .slice(0, MAX_REVIEW_FINDINGS),
+          },
+          args.allowSuggestions,
+          new Set(args.files.map((f) => f.filename)),
+        ) as { findings: unknown[] };
+        let candidates: Finding[] = [];
+        for (const item of value.findings) {
+          try {
+            candidates = validateFindings(
+              { findings: [...candidates, item] },
+              args.files,
+              sources,
+            );
+          } catch (error) {
+            if (!isReviewGroupModelFailure(error)) throw error;
+          }
+        }
+        // A look may repeat what the review already found.
+        candidates = candidates.filter(
+          (c) =>
+            !reported.some(
+              (r) =>
+                r.path === c.path && (r.line === c.line || r.title === c.title),
+            ),
+        );
+        if (candidates.length === 0 || !timeLeft()) continue;
+        found.push(
+          ...(await verify(
+            candidates,
+            args.files,
+            sources,
+            `pr-review/look/${look.name}/critique`,
+          )),
+        );
+      } catch (error) {
+        if (isLifecycleChange(error)) throw error;
+        const cause = reviewFailureCause(error);
+        if (cause instanceof ChatBillingError) {
+          accountLimited ||= cause.reason === "limit_reached";
+          break;
+        }
+        // A second look is optional: an outage, a timeout or an answer that
+        // cannot be used ends the looks, and the review keeps what it has.
+        if (
+          cause instanceof ChatProviderRequestError &&
+          !isReviewGroupModelFailure(error)
+        )
+          break;
+        if (!isReviewGroupModelFailure(error)) throw error;
+      }
+    }
+    return found;
+  };
   const finalize = async (findings: Finding[]) => {
     if (!inspectedChange() && !(args.batchGroup && findings.length === 0))
       throw new Error("Reviewer did not inspect the changed implementation");
@@ -1119,7 +1281,11 @@ export async function reviewWithContext(args: {
       reads,
       "pr-review/critique",
     );
+    // Second looks read the source the main review was shown, captured
+    // before coverage passes add their own.
+    const mainReads = [...reads];
     const covered = await coverUnread();
+    const looked = await secondLooks([...verified, ...covered], mainReads);
     const uncovered = args.files
       .filter(
         (f) => !reads.some((r) => r.path === f.filename && r.ref === "head"),
@@ -1137,7 +1303,7 @@ export async function reviewWithContext(args: {
       openRequests,
       // The most severe and certain findings come first, so a cap on what is
       // published keeps them.
-      findings: [...verified, ...covered].sort(
+      findings: [...verified, ...covered, ...looked].sort(
         (a, b) =>
           a.priority.localeCompare(b.priority) || b.confidence - a.confidence,
       ),

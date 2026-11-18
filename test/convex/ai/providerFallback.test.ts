@@ -669,6 +669,83 @@ describe("Claude safety refusals", () => {
       await new ClaudeProvider("fixture-key").chat(messages),
     ).not.toHaveProperty("servedModelId");
   });
+  it("caches the prompt and bills cached tokens as the input they cost", async () => {
+    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      claude({
+        model: "claude-opus-5-5",
+        usage: {
+          input_tokens: 10,
+          output_tokens: 4,
+          cache_creation_input_tokens: 1_000,
+          cache_read_input_tokens: 20_000,
+        },
+      }),
+    );
+    // Writes count 1.25x and Opus 5.5 reads 0.05x: 10 + 1,250 + 1,000.
+    expect(
+      await new ClaudeProvider("fixture-key").chat(messages),
+    ).toMatchObject({
+      usage: { promptTokens: 2_260, completionTokens: 4, totalTokens: 2_264 },
+    });
+    const body = JSON.parse(fetch.mock.calls[0][1]!.body as string);
+    expect(body).not.toHaveProperty("cache_control");
+    expect(body.system).toEqual([
+      {
+        type: "text",
+        text: "Be precise",
+        cache_control: { type: "ephemeral" },
+      },
+    ]);
+    // A block the caller marks ends a cached prefix.
+    fetch.mockResolvedValueOnce(claude());
+    await new ClaudeProvider("fixture-key").chat([
+      messages[0],
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "Repository context", cache: true },
+          { type: "text", text: "Turn state" },
+        ],
+      },
+    ]);
+    expect(
+      JSON.parse(fetch.mock.calls[1][1]!.body as string).messages[0].content,
+    ).toEqual([
+      {
+        type: "text",
+        text: "Repository context",
+        cache_control: { type: "ephemeral" },
+      },
+      { type: "text", text: "Turn state" },
+    ]);
+    // A fallback model reads at the default 0.1x and rounds up.
+    fetch.mockResolvedValueOnce(
+      claude({
+        model: "claude-opus-4-8",
+        usage: {
+          input_tokens: 1,
+          output_tokens: 1,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 15,
+        },
+      }),
+    );
+    expect(
+      await new ClaudeProvider("fixture-key").chat(messages),
+    ).toMatchObject({ usage: { promptTokens: 3 } });
+    fetch.mockResolvedValueOnce(
+      claude({
+        usage: {
+          input_tokens: 1,
+          output_tokens: 1,
+          cache_read_input_tokens: -1,
+        },
+      }),
+    );
+    await expect(
+      new ClaudeProvider("fixture-key").chat(messages),
+    ).rejects.toMatchObject({ billingOutcome: "ambiguous" });
+  });
   it("reports a decline with its category instead of a processing failure", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
       claude({
