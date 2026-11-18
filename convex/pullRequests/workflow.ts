@@ -211,6 +211,11 @@ const REVIEW_TURNS = 8;
 // SLOW_REQUEST_MIN_MS is not sent, since it would likely be cut off.
 const LATE_REQUEST_END_MS = 8 * 60_000;
 const SLOW_REQUEST_MIN_MS = 90_000;
+// A reasoning model can spend over two minutes on the turn that writes its
+// findings. Cutting it off leaves its usage unknown and blocks the account's
+// AI work for 30 minutes, so review requests wait this long by default,
+// still never past ACTION_REQUEST_END_MS.
+const REVIEW_REQUEST_TIMEOUT_MS = 4 * 60_000;
 const ACTION_REQUEST_END_MS = 9 * 60_000;
 // After the main review, focused second looks at the same source. Each one
 // resends the main review's last request with only its closing state
@@ -356,7 +361,12 @@ export async function reviewWithContext(args: {
       {
         operation: `Request AI review (${options.billingLabel ?? "generation"})`,
       },
-      () => args.provider.chat(messages, { endBy, ...options }),
+      () =>
+        args.provider.chat(messages, {
+          endBy,
+          timeoutMs: REVIEW_REQUEST_TIMEOUT_MS,
+          ...options,
+        }),
     );
   };
   let readBudget = 0;
