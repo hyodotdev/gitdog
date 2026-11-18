@@ -16,7 +16,7 @@ Gitdog is an AI automation platform for GitHub that helps developers automate re
 
 ## Commands
 
-Gitdog reviews a pull request once, when it is opened or marked ready for review. After that, the pull request author or a repository collaborator asks for more:
+Gitdog reviews a pull request once, when it is opened or marked ready for review. When pull request reviews turn on, or a repository with them on is reactivated, reconnected or regains GitHub access, Gitdog also gives up to five open pull requests from the last 30 days their first review, skipping drafts and bots. After that, the pull request author or a repository collaborator asks for more:
 
 | Pull request comment | CLI | What it does |
 | --- | --- | --- |

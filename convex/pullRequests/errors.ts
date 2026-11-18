@@ -214,6 +214,10 @@ const fixedFailureReasons = new Map([
     "The AI verification response was not a valid selection of the reviewed findings.",
   ],
   [
+    "Open pull requests are invalid",
+    "GitHub returned an unexpected list of open pull requests.",
+  ],
+  [
     "Finding must anchor to an added line in the reviewed diff",
     "A finding did not point to a line added by the pull request.",
   ],

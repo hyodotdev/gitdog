@@ -20,6 +20,10 @@ import {
 import { getCanonicalGitHubRepositoryFullNameKey } from "../github/repositoryIdentity";
 import { pauseRepositoryForAccessRemoval } from "./accessLifecycle";
 import {
+  reviewOpenPullRequests,
+  turnsReviewsOn,
+} from "../pullRequests/catchUp";
+import {
   getRepositoryNameQuarantineFullName,
   readCanonicalRepositoryNameMatches,
 } from "./nameIdentity";
@@ -152,6 +156,8 @@ async function reactivateInstallationReconnect(
       internal.repoIndexing.action.indexRepository,
       { repositoryId: repository._id, expectedIndexVersion: indexVersion },
     );
+    if (repository.settings.pullRequestReviewsEnabled === true)
+      await reviewOpenPullRequests(ctx, repository);
   }
   return repository._id;
 }
@@ -392,10 +398,13 @@ export const updateSettings = mutation({
       throw new Error("repository disconnect cleanup is still in progress");
     }
 
+    const settings = { ...repo.settings, ...args.settings };
     await ctx.db.patch(args.repositoryId, {
-      settings: { ...repo.settings, ...args.settings },
+      settings,
       updatedAt: Date.now(),
     });
+    if (repo.isActive && turnsReviewsOn(repo.settings, settings))
+      await reviewOpenPullRequests(ctx, repo);
 
     return args.repositoryId;
   },
@@ -547,6 +556,8 @@ export const toggleActive = mutation({
           expectedIndexVersion: activationVersion,
         },
       );
+      if (repo.settings.pullRequestReviewsEnabled === true)
+        await reviewOpenPullRequests(ctx, repo);
     }
 
     return args.repositoryId;

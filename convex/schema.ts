@@ -776,6 +776,9 @@ const applicationTables = {
     ),
 
     // Issue Assistant settings (simplified)
+    // When open pull requests were last scheduled for review because
+    // reviews turned on.
+    pullRequestCatchUpAt: v.optional(v.number()),
     settings: v.object({
       // Issue Assistant features
       issueAssistantEnabled: v.boolean(), // Master toggle

@@ -1,3 +1,7 @@
+import {
+  reviewOpenPullRequests,
+  turnsReviewsOn,
+} from "../pullRequests/catchUp";
 import { internalMutation } from "../_generated/server";
 import type { MutationCtx } from "../_generated/server";
 import type { Doc } from "../_generated/dataModel";
@@ -200,6 +204,8 @@ export const execute = internalMutation({
           Object.assign(settings, { [key]: value });
         }
         await ctx.db.patch(repo._id, { settings, updatedAt: Date.now() });
+        if (repo.isActive && turnsReviewsOn(repo.settings, settings))
+          await reviewOpenPullRequests(ctx, repo);
         return repo._id;
       }
       case "repoIndexing/query:getIndexingStatus":
