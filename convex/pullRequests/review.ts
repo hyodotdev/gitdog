@@ -190,12 +190,15 @@ export function addedLines(patch: string): Set<number> {
 
 // GitHub links an @ followed by a name anywhere outside code, and markdown has
 // too many ways to leave code (escapes, backtick runs, fences, HTML) to rely on
-// code spans. A word joiner after each such @, and after each & that starts a
-// character reference such as &#64;, renders the same text invisibly
-// separated, so no one is ever notified. Text copied from a code span in a
-// finding carries the joiner too; suggestions are not changed.
+// code spans. A word joiner after each such @ keeps the text and links no one.
+// One after each & that starts a character reference, such as &#64;, stops
+// GitHub decoding it, so the reference shows as written instead. Joiners the
+// model wrote itself are removed first, so length limits count real text.
+// Text copied from a code span in a finding carries the joiner too;
+// suggestions are not changed.
 export function quietMentions(text: string): string {
   return text
+    .replace(/\u2060/g, "")
     .replace(/@(?=[A-Za-z0-9])/g, "@\u2060")
     .replace(/&(?=#|[A-Za-z][A-Za-z0-9]*;)/g, "&\u2060");
 }

@@ -24,6 +24,18 @@ const logRoot = path.resolve(
 );
 mkdirSync(logRoot, { recursive: true });
 type Expected = { path: string; priority: string; title: string };
+type Replay = {
+  seconds: number;
+  findings: Array<{
+    path: string;
+    line: number;
+    priority: string;
+    confidence: number;
+    title: string;
+  }>;
+  headReads: number;
+  excludedPaths: string[];
+};
 type Case = {
   pr: number;
   headSha: string;
@@ -151,34 +163,40 @@ try {
     }>(`repos/${repository}/compare/main...${c.headSha}`);
     const baseSha = compare.merge_base_commit.sha;
     const pr = gh<{ body: string | null }>(`repos/${repository}/pulls/${c.pr}`);
-    const result = call<{
-      seconds: number;
-      findings: Array<{
-        path: string;
-        line: number;
-        priority: string;
-        confidence: number;
-        title: string;
-      }>;
-      headReads: number;
-      excludedPaths: string[];
-    }>("e2eSupport/prRecall:replayReview", {
-      ...seeded,
-      repository,
-      headSha: c.headSha,
-      baseSha,
-      title: c.title,
-      body: pr.body ?? "",
-      files: compare.files.map((f) => ({
-        filename: f.filename,
-        status: f.status,
-        additions: f.additions,
-        deletions: f.deletions,
-        ...(f.patch !== undefined ? { patch: f.patch } : {}),
-      })),
-      paths: tree(c.headSha),
-      basePaths: tree(baseSha),
-    });
+    let result: Replay;
+    try {
+      result = call<Replay>("e2eSupport/prRecall:replayReview", {
+        ...seeded,
+        repository,
+        headSha: c.headSha,
+        baseSha,
+        title: c.title,
+        body: pr.body ?? "",
+        files: compare.files.map((f) => ({
+          filename: f.filename,
+          status: f.status,
+          additions: f.additions,
+          deletions: f.deletions,
+          ...(f.patch !== undefined ? { patch: f.patch } : {}),
+        })),
+        paths: tree(c.headSha),
+        basePaths: tree(baseSha),
+      });
+    } catch (error) {
+      // The CLI can give up on a long review while the action still runs;
+      // record the case and keep the fixture funded for the rest.
+      const stderr = (error as { stderr?: unknown }).stderr;
+      const message = String(typeof stderr === "string" ? stderr : error)
+        .trim()
+        .slice(-500);
+      (report.cases as unknown[]).push({
+        pr: c.pr,
+        headSha: c.headSha,
+        error: message,
+      });
+      console.log(`PR ${c.pr} @ ${c.headSha.slice(0, 7)}: failed (${message})`);
+      continue;
+    }
     const changed = new Set(compare.files.map((f) => f.filename));
     const notReviewed = result.excludedPaths.filter((p) => changed.has(p));
     // A file-level hit; titles are printed for a person to confirm.
