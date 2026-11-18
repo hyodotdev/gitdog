@@ -104,7 +104,7 @@ A command is a comment line that starts with the mention, or follows another rev
 author can run every command except a full review, which needs a collaborator.
 These arrive through the **Issue comments** event. A
 commenter who sends more than 10 commands an hour or 40 a day to one
-repository is paused there for 24 hours. When a review cannot finish, for example because the account ran out of tokens, its status comment says why; for automatic reviews Gitdog posts at most one such comment a day per pull request.
+repository is paused there for 24 hours. A review keeps one status comment while it runs and removes it once the review is posted. Each single review also reads the pull request conversation (comments, review summaries and open threads, at most 8,000 characters, without Gitdog's own posts) and lists a reviewer's request the code does not make yet; such a request, an open thread from anyone or a reviewer's standing request for changes keeps a clean review from approving. When a review cannot finish, for example because the account ran out of tokens, its status comment says why; for automatic reviews Gitdog posts at most one such comment a day per pull request.
 
 ### 6. Installation Settings
 

@@ -440,10 +440,141 @@ type ReviewThreadPage = {
  * Whether a review thread Gitdog started is still unresolved. An answer that
  * cannot be read completely counts as unresolved, so it never approves.
  */
-export async function hasUnresolvedOwnThreads(
+export type DiscussionEntry = {
+  author: string;
+  kind: "comment" | "review" | "thread";
+  text: string;
+  path?: string;
+};
+
+// The conversation shown to a reviewer is bounded: newest first, each entry
+// trimmed, and the whole within this many characters.
+const DISCUSSION_ENTRY_CHARS = 1_200;
+const DISCUSSION_CHARS = 8_000;
+
+function discussionText(body: unknown): string {
+  return typeof body === "string"
+    ? body
+        .replace(/<!--[\s\S]*?(-->|$)/g, " ")
+        .replace(/<details[\s\S]*?(<\/details>|$)/gi, " ")
+        .replace(/<[^>]+>/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+    : "";
+}
+
+/**
+ * What people and other reviewers said on the pull request: its comments,
+ * review summaries and unresolved review threads, without Gitdog's own posts
+ * or commands to it. A reviewer checks whether the change does what they
+ * asked; the text is untrusted data.
+ */
+export async function readDiscussion(
   access: VerifiedRepositoryAccess,
   number: number,
-  botLogin: string,
+  isGitdog: (login: string) => boolean,
+): Promise<DiscussionEntry[]> {
+  type Item = { at: string; entry: DiscussionEntry };
+  const items: Item[] = [];
+  const add = (
+    at: unknown,
+    login: unknown,
+    kind: DiscussionEntry["kind"],
+    body: unknown,
+    path?: unknown,
+  ) => {
+    if (typeof login !== "string" || isGitdog(login)) return;
+    const text = discussionText(body);
+    if (text.length < 20 || /^@gitdog/i.test(text)) return;
+    items.push({
+      at: typeof at === "string" ? at : "",
+      entry: {
+        author: login.replace(/\[bot\]$/i, ""),
+        kind,
+        text: text.slice(0, DISCUSSION_ENTRY_CHARS),
+        ...(typeof path === "string" ? { path } : {}),
+      },
+    });
+  };
+  const [comments, reviews, threads] = await Promise.all([
+    readReviewJson<
+      Array<{ created_at?: string; user?: { login?: string }; body?: string }>
+    >(
+      access,
+      `/issues/${number}/comments?per_page=100`,
+      "Read pull request comments",
+    ),
+    readReviewJson<
+      Array<{ submitted_at?: string; user?: { login?: string }; body?: string }>
+    >(
+      access,
+      `/pulls/${number}/reviews?per_page=100`,
+      "Read pull request reviews",
+    ),
+    runReviewRequest({ operation: "Read review threads" }, () =>
+      fetchGitHubAppJsonWithRetry<{
+        data?: {
+          repository?: {
+            pullRequest?: {
+              reviewThreads?: {
+                nodes?: Array<{
+                  isResolved?: boolean;
+                  path?: string;
+                  comments?: {
+                    nodes?: Array<{
+                      createdAt?: string;
+                      body?: string;
+                      author?: { login?: string };
+                    }>;
+                  };
+                }>;
+              };
+            };
+          };
+        };
+      }>(
+        "https://api.github.com/graphql",
+        access.token,
+        "Read review threads",
+        {
+          method: "POST",
+          maxAttempts: REVIEW_READ_ATTEMPTS,
+          jsonBody: {
+            query:
+              "query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){reviewThreads(first:100){nodes{isResolved path comments(first:1){nodes{createdAt body author{login}}}}}}}}",
+            variables: { owner: access.owner, repo: access.repo, number },
+          },
+        },
+      ),
+    ),
+  ]);
+  for (const c of Array.isArray(comments) ? comments : [])
+    add(c?.created_at, c?.user?.login, "comment", c?.body);
+  for (const r of Array.isArray(reviews) ? reviews : [])
+    add(r?.submitted_at, r?.user?.login, "review", r?.body);
+  for (const t of threads.data?.repository?.pullRequest?.reviewThreads?.nodes ??
+    []) {
+    if (t?.isResolved !== false) continue;
+    const first = t.comments?.nodes?.[0];
+    add(first?.createdAt, first?.author?.login, "thread", first?.body, t.path);
+  }
+  const result: DiscussionEntry[] = [];
+  let size = 0;
+  for (const { entry } of items.sort((a, b) => b.at.localeCompare(a.at))) {
+    size += entry.text.length;
+    if (size > DISCUSSION_CHARS) break;
+    result.push(entry);
+  }
+  return result;
+}
+
+/**
+ * Whether any review thread on the pull request is unresolved, whoever opened
+ * it: an approval must not talk over a reviewer's open request.
+ */
+export async function hasUnresolvedThreads(
+  access: VerifiedRepositoryAccess,
+  number: number,
 ): Promise<boolean> {
   const page = await runReviewRequest(
     { operation: "Read review threads" },
@@ -464,21 +595,13 @@ export async function hasUnresolvedOwnThreads(
       ),
   );
   const threads = page.data?.repository?.pullRequest?.reviewThreads;
-  // GraphQL names an app by its slug, REST by `slug[bot]`.
-  const login = (value: string) => value.toLowerCase().replace(/\[bot\]$/, "");
-  const own = login(botLogin);
   if (
-    !own ||
     page.errors?.length ||
     !threads?.nodes ||
     threads.pageInfo?.hasNextPage !== false
   )
     return true;
-  return threads.nodes.some(
-    (thread) =>
-      thread.isResolved !== true &&
-      login(thread.comments?.nodes?.[0]?.author?.login ?? "") === own,
-  );
+  return threads.nodes.some((thread) => thread.isResolved !== true);
 }
 
 /**

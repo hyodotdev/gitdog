@@ -8,6 +8,7 @@ import {
   splitReviewDiff,
   readFile,
   readReviewFile,
+  readDiscussion,
   resolveOwnThreads,
   treePaths,
   type PullRequest,
@@ -630,5 +631,101 @@ describe("resolving Gitdog review threads", () => {
     await expect(
       resolveOwnThreads(access, 12, "gitdogbot[bot]"),
     ).rejects.toThrow("Review threads could not be read");
+  });
+});
+
+describe("pull request discussion", () => {
+  afterEach(() => vi.restoreAllMocks());
+  it("keeps what people asked, newest first, without Gitdog or noise", async () => {
+    vi.spyOn(helpers, "fetchGitHubAppJsonWithRetry").mockImplementation(
+      async (url) => {
+        if (url.includes("/issues/12/comments"))
+          return [
+            {
+              created_at: "2026-11-01T00:00:00Z",
+              user: { login: "gitdogai[bot]" },
+              body: "**Reviewed** abc · see the review here please",
+            },
+            {
+              created_at: "2026-11-02T00:00:00Z",
+              user: { login: "hyochan" },
+              body: "@gitdogai review this one again please",
+            },
+            {
+              created_at: "2026-11-03T00:00:00Z",
+              user: { login: "coderabbitai[bot]" },
+              body: "<!-- hidden -->Walkthrough<details><summary>x</summary>long table</details> of the change set.",
+            },
+          ] as never;
+        if (url.includes("/pulls/12/reviews"))
+          return [
+            {
+              submitted_at: "2026-11-04T00:00:00Z",
+              user: { login: "hyochan" },
+              body: "Two things before merging: release the session when playback ends.",
+            },
+          ] as never;
+        return {
+          data: {
+            repository: {
+              pullRequest: {
+                reviewThreads: {
+                  nodes: [
+                    {
+                      isResolved: false,
+                      path: "ios/Sound.swift",
+                      comments: {
+                        nodes: [
+                          {
+                            createdAt: "2026-11-05T00:00:00Z",
+                            author: { login: "coderabbitai" },
+                            body: "Release the session after a failed player start.",
+                          },
+                        ],
+                      },
+                    },
+                    {
+                      isResolved: true,
+                      path: "ios/Sound.swift",
+                      comments: {
+                        nodes: [
+                          {
+                            createdAt: "2026-11-06T00:00:00Z",
+                            author: { login: "someone" },
+                            body: "This was already fixed in the last push.",
+                          },
+                        ],
+                      },
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        } as never;
+      },
+    );
+    expect(
+      await readDiscussion(access, 12, (login) =>
+        login.toLowerCase().startsWith("gitdogai"),
+      ),
+    ).toEqual([
+      {
+        author: "coderabbitai",
+        kind: "thread",
+        text: "Release the session after a failed player start.",
+        path: "ios/Sound.swift",
+      },
+      {
+        author: "hyochan",
+        kind: "review",
+        text: "Two things before merging: release the session when playback ends.",
+      },
+      {
+        author: "coderabbitai",
+        kind: "comment",
+        text: "Walkthrough of the change set.",
+      },
+    ]);
   });
 });

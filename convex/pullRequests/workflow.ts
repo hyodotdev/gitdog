@@ -17,8 +17,11 @@ import {
   reviewFailureCause,
   runReviewRequest,
 } from "./errors";
+import type { DiscussionEntry } from "./github";
 import {
   MAX_REVIEW_FINDINGS,
+  validOpenRequests,
+  type OpenRequest,
   MIN_FINDING_CONFIDENCE,
   REVIEW_PROMPT,
   REVIEW_RESPONSE_FORMAT,
@@ -240,12 +243,24 @@ export async function reviewWithContext(args: {
   trace?: (event: ReviewTraceEvent) => void;
   // When the enclosing action started, for its deadline; defaults to now.
   startedAt?: number;
+  // What people and other reviewers said on the pull request.
+  discussion?: DiscussionEntry[];
 }): Promise<{
   findings: Finding[];
   reads: ReadEvidence[];
   excludedPaths: string[];
+  openRequests: OpenRequest[];
 }> {
   const actionStarted = args.startedAt ?? Date.now();
+  const discussionAuthors = new Set(
+    (args.discussion ?? []).map((entry) => entry.author.toLowerCase()),
+  );
+  // The latest answer's unaddressed reviewer requests.
+  let openRequests: OpenRequest[] = [];
+  const recordOpenRequests = (answer: unknown) => {
+    openRequests = validOpenRequests(answer, discussionAuthors);
+    return answer;
+  };
   // Reports the raw candidates of one step before any filtering.
   const proposed = (step: string, value: unknown) => {
     if (
@@ -467,6 +482,7 @@ export async function reviewWithContext(args: {
     excludedPaths,
     warning:
       "Excluded paths cannot be reviewed completely. No findings is not a clean bill of health.",
+    ...(args.discussion?.length ? { discussion: args.discussion } : {}),
   });
   // Every request that returns findings carries the repository's setting.
   const findingsPrompt =
@@ -590,6 +606,7 @@ export async function reviewWithContext(args: {
     return {
       findings: [],
       reads,
+      openRequests: [],
       excludedPaths: [
         ...new Set([
           ...args.files.map((f) => f.filename),
@@ -911,7 +928,7 @@ export async function reviewWithContext(args: {
   ): ChatMessage[] => [
     {
       role: "system",
-      content: `${findingsPrompt}\nThis is a coverage pass over changed files the main review did not read. Review only the changed files listed here, using their SOURCE blocks and the diff. Tools are unavailable. Return every finding that meets the rules above for these files; an empty findings array is valid.`,
+      content: `${findingsPrompt}\nThis is a coverage pass over changed files the main review did not read. Review only the changed files listed here, using their SOURCE blocks and the diff. Tools are unavailable. Return every finding that meets the rules above for these files; an empty findings array is valid. There is no discussion here: return an empty openRequests array.`,
     },
     reviewContextMessage(
       {
@@ -1119,6 +1136,7 @@ export async function reviewWithContext(args: {
       ]),
     ];
     return {
+      openRequests,
       // The most severe and certain findings come first, so a cap on what is
       // published keeps them.
       findings: [...verified, ...covered].sort(
@@ -1371,8 +1389,10 @@ export async function reviewWithContext(args: {
     }
     if (response.finishReason !== "stop")
       throw new Error("Review did not finish completely");
+    const answer = proposed(`main/${turn}`, await parse(response.content));
+    openRequests = validOpenRequests(answer, discussionAuthors);
     const value = confidentCandidates(
-      proposed(`main/${turn}`, await parse(response.content)),
+      answer,
       args.allowSuggestions,
       groupPaths,
     );
@@ -1462,7 +1482,7 @@ export async function reviewWithContext(args: {
   return await finalize(
     validateFindings(
       confidentCandidates(
-        proposed("final", await parse(final.content)),
+        recordOpenRequests(proposed("final", await parse(final.content))),
         args.allowSuggestions,
         groupPaths,
       ),

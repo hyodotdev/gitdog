@@ -19,7 +19,8 @@ import {
   changedSince,
   getPullRequest,
   listOpenPullRequests,
-  hasUnresolvedOwnThreads,
+  readDiscussion,
+  hasUnresolvedThreads,
   resolveOwnThreads,
   isBotPullRequestAuthor,
   minimumReviewBatches,
@@ -51,6 +52,8 @@ import {
   combinedReviewBody,
   hasReviewablePatch,
   MAX_REVIEW_FINDINGS,
+  openRequestNotes,
+  type OpenRequest,
   reviewBody,
   reviewComments,
   validateFindings,
@@ -60,6 +63,7 @@ import {
 import {
   addIssueComment,
   updateIssueComment,
+  deleteIssueComment,
   GITHUB_API_VERSION,
   fetchGitHubAppJsonWithRetry,
 } from "../github/helpers";
@@ -432,6 +436,8 @@ export const generate = internalAction({
         }
       }
       const findings = [...(previous?.findings ?? [])];
+      // Reviewer requests the change does not make yet; a single review only.
+      let openRequests: OpenRequest[] = [];
       let findingCount = previous?.findingCount ?? 0;
       let inspectedFiles = previous?.inspectedFiles ?? 0;
       let uncoveredFiles = previous?.uncoveredFiles ?? 0;
@@ -515,6 +521,17 @@ export const generate = internalAction({
         uncoveredFiles += selected.filter((f) => f.status !== "removed").length;
       } else {
         const generationKey = `pr/${args.actionId}/${source.headSha}`;
+        // A single review also reads what people asked for on the pull
+        // request. Reading it is best effort; the review runs without it.
+        const discussion = batched
+          ? undefined
+          : await readDiscussion(
+              access,
+              pr.number,
+              (login) =>
+                login.toLowerCase().replace(/\[bot\]$/, "") ===
+                botLogin().replace(/\[bot\]$/, ""),
+            ).catch(() => undefined);
         const provider = createMeteredProvider(ctx, {
           userId: initial.repository.userId,
           repositoryId: initial.repository._id,
@@ -532,6 +549,7 @@ export const generate = internalAction({
         try {
           result = await reviewWithContext({
             startedAt,
+            discussion,
             provider,
             batchGroup: batched,
             allowSuggestions:
@@ -579,8 +597,10 @@ export const generate = internalAction({
             findings: [],
             reads: [],
             excludedPaths: selected.map((file) => file.filename),
+            openRequests: [],
           };
         }
+        openRequests = result.openRequests;
         // Each review group decides windowing for its own reads, so the way
         // each quoted file was seen travels with the evidence itself.
         findings.push(
@@ -637,6 +657,7 @@ export const generate = internalAction({
         group: args.group,
         next,
         findings: findings.slice(0, MAX_REVIEW_FINDINGS),
+        ...(openRequests.length ? { openRequests } : {}),
         // Findings past the cap never become threads.
         ...(!batched && findings.length > MAX_REVIEW_FINDINGS
           ? { findingCount: findings.length }
@@ -754,9 +775,20 @@ async function ownReviews(
   number: number,
   marker: string | null,
   sha: string,
-): Promise<{ prior: Review | null; approvals: Review[] }> {
+): Promise<{
+  prior: Review | null;
+  approvals: Review[];
+  changesRequested: boolean;
+}> {
   let prior: Review | null = null;
   const approvals: Review[] = [];
+  // Each other reviewer's latest decision; a comment alone does not change it.
+  const decisions = new Map<string, string>();
+  const result = () => ({
+    prior,
+    approvals,
+    changesRequested: [...decisions.values()].includes("CHANGES_REQUESTED"),
+  });
   for (let page = 1; page <= 5; page++) {
     const reviews = await readReviewJson<Review[]>(
       access,
@@ -766,13 +798,20 @@ async function ownReviews(
     if (!Array.isArray(reviews))
       throw new Error("Review history is unavailable");
     for (const r of reviews) {
-      if (r.user?.type !== "Bot" || r.user.login.toLowerCase() !== botLogin())
+      if (r.user?.type !== "Bot" || r.user.login.toLowerCase() !== botLogin()) {
+        if (
+          r.user?.login &&
+          r.state &&
+          ["APPROVED", "CHANGES_REQUESTED", "DISMISSED"].includes(r.state)
+        )
+          decisions.set(r.user.login.toLowerCase(), r.state);
         continue;
+      }
       if (marker && r.body?.includes(marker) && r.commit_id === sha)
         prior ??= r;
       if (r.state === "APPROVED") approvals.push(r);
     }
-    if (reviews.length < 100) return { prior, approvals };
+    if (reviews.length < 100) return result();
   }
   throw new Error("Review history exceeded the reconciliation limit");
 }
@@ -862,6 +901,9 @@ export const publish = internalAction({
       }
       const proposal = initial.action.proposedChanges;
       const findings = proposal?.findings as Finding[];
+      const openRequests: OpenRequest[] = Array.isArray(proposal?.openRequests)
+        ? (proposal.openRequests as OpenRequest[])
+        : [];
       if (!Array.isArray(findings) || findings.length > MAX_REVIEW_FINDINGS)
         throw new Error("Review findings are invalid");
       // Re-read diff and evidence at publication, including after human approval.
@@ -949,7 +991,7 @@ export const publish = internalAction({
         }
       }
       const marker = `<!-- gitdog-pr-review:${args.actionId} -->`;
-      const { prior, approvals } = await ownReviews(
+      const { prior, approvals, changesRequested } = await ownReviews(
         access,
         live.number,
         marker,
@@ -957,13 +999,12 @@ export const publish = internalAction({
       );
       // Read before claiming, so a slow read never delays a claimed post.
       // A failed read is no reason to fail a review that is ready.
+      // Another reviewer's open thread or standing request for changes also
+      // keeps a clean review from approving.
       const threadsOpen =
         findings.length === 0 && canApproveReview(0, proposal.coverageComplete)
-          ? await hasUnresolvedOwnThreads(
-              access,
-              live.number,
-              botLogin(),
-            ).catch(() => true)
+          ? changesRequested ||
+            (await hasUnresolvedThreads(access, live.number).catch(() => true))
           : true;
       // A follow-up with no new PR changes posts only to approve again.
       if (
@@ -1061,6 +1102,8 @@ export const publish = internalAction({
           let approve =
             canApproveReview(findingCount, proposal.coverageComplete) &&
             !threadsOpen &&
+            // A reviewer's request the change does not make yet is open too.
+            openRequests.length === 0 &&
             latest.head.sha === source.headSha &&
             current.state.ticket.pullRequestDroppedAt === undefined;
           // Recorded before posting, so an approval whose outcome is unclear
@@ -1078,11 +1121,14 @@ export const publish = internalAction({
               findingCount,
               source.headSha,
               coverage,
-              findingCount > findings.length
-                ? [
-                    `Showing the ${findings.length} highest-priority findings out of ${findingCount}.`,
-                  ]
-                : [],
+              [
+                ...(findingCount > findings.length
+                  ? [
+                      `Showing the ${findings.length} highest-priority findings out of ${findingCount}.`,
+                    ]
+                  : []),
+                ...openRequestNotes(openRequests),
+              ],
               approved,
             );
           // Every finding becomes its own thread unless some are left out
@@ -1486,7 +1532,12 @@ export const settleStatusComment = internalAction({
       ctx.runQuery(internal.pullRequests.internalQuery.get, args);
     // Whether this state changes the pull request at all, decided before
     // any GitHub token is fetched.
-    const plan = (state: NonNullable<Awaited<ReturnType<typeof read>>>) => {
+    type Plan =
+      | { remove: true; commentId: number }
+      | { remove?: undefined; body: string; commentId: number | undefined };
+    const plan = (
+      state: NonNullable<Awaited<ReturnType<typeof read>>>,
+    ): Plan | null => {
       const { action } = state;
       if (
         action.reviewVerificationOnly === true ||
@@ -1494,6 +1545,15 @@ export const settleStatusComment = internalAction({
         action.status === "approved"
       )
         return null;
+      // A posted review is the result itself, so its status comment goes
+      // away instead of repeating it.
+      if (
+        action.status === "completed" &&
+        action.executionResult?.published === true
+      )
+        return action.statusCommentId !== undefined
+          ? { remove: true, commentId: action.statusCommentId }
+          : null;
       const body = reviewStatusBody(action, slug);
       if (!body) return null;
       if (action.statusCommentId !== undefined)
@@ -1529,6 +1589,19 @@ export const settleStatusComment = internalAction({
       action.reviewRequested !== true &&
       action.status === "failed" &&
       !isCancelledReview(action);
+    if (next.remove) {
+      await deleteIssueComment(
+        access.owner,
+        access.repo,
+        next.commentId,
+        access.token,
+      );
+      await ctx.runMutation(
+        internal.pullRequests.internalMutation.forgetStatusComment,
+        { actionId: args.actionId, commentId: next.commentId },
+      );
+      return;
+    }
     if (next.commentId !== undefined) {
       await updateIssueComment(
         access.owner,

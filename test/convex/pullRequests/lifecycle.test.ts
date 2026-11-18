@@ -6,6 +6,7 @@ import schema from "../../../convex/schema";
 import { internal, api } from "../../../convex/_generated/api";
 import * as helpers from "../../../convex/github/helpers";
 import * as repositoryIdentity from "../../../convex/github/repositoryIdentity";
+import * as pullRequestGitHub from "../../../convex/pullRequests/github";
 import * as subscriptionQueries from "../../../convex/subscriptions/internalQuery";
 import {
   CURRENT_TERMS_VERSION,
@@ -47,6 +48,11 @@ async function fixture() {
   const statusComments = {
     add: vi.spyOn(helpers, "addIssueComment").mockResolvedValue(901),
     update: vi.spyOn(helpers, "updateIssueComment").mockResolvedValue(),
+    remove: vi.spyOn(helpers, "deleteIssueComment").mockResolvedValue(),
+    // The pull request conversation, read before a single review.
+    discussion: vi
+      .spyOn(pullRequestGitHub, "readDiscussion")
+      .mockResolvedValue([]),
   };
   const ids = await t.run(async (ctx) => {
     const userId = await ctx.db.insert("users", {});
@@ -490,7 +496,7 @@ describe("review commands", () => {
         "token limit of the account",
       );
     });
-    it("edits the reviewing comment in place when the review ends", async () => {
+    it("removes the status comment once the review itself is posted", async () => {
       const f = await fixture();
       await withAccess(f);
       const actionId = (await f.observe())!;
@@ -507,10 +513,29 @@ describe("review commands", () => {
       );
       await settle(f, actionId);
       expect(f.statusComments.add).not.toHaveBeenCalled();
-      expect(f.statusComments.update.mock.calls[0][2]).toBe(55);
-      expect(f.statusComments.update.mock.calls[0][3]).toContain(
-        "**Reviewed**",
+      expect(f.statusComments.update).not.toHaveBeenCalled();
+      expect(f.statusComments.remove.mock.calls[0][2]).toBe(55);
+      expect(
+        (await f.t.run((ctx) => ctx.db.get(actionId)))?.statusCommentId,
+      ).toBeUndefined();
+      // Settling again finds nothing left to change.
+      await settle(f, actionId);
+      expect(f.statusComments.remove).toHaveBeenCalledTimes(1);
+    });
+    it("edits the status comment when a review ends without posting one", async () => {
+      const f = await fixture();
+      await withAccess(f);
+      const actionId = (await f.observe())!;
+      await f.t.run((ctx) =>
+        ctx.db.patch(actionId, {
+          statusCommentId: 55,
+          status: "failed",
+          errorMessage: "Review generation: something failed",
+        }),
       );
+      await settle(f, actionId);
+      expect(f.statusComments.remove).not.toHaveBeenCalled();
+      expect(f.statusComments.update.mock.calls[0][2]).toBe(55);
     });
     it("posts a failure of an automatic review at most once a day", async () => {
       const f = await fixture();
@@ -1604,7 +1629,11 @@ it("allows one generation across two automatic actions already queued for the sa
   );
 });
 
-async function publicationFixture(empty = false, uncoveredFiles = 1) {
+async function publicationFixture(
+  empty = false,
+  uncoveredFiles = 1,
+  openRequests?: Array<{ author: string; request: string }>,
+) {
   const f = await fixture();
   const actionId = (await f.observe())!;
   const suggestion = {
@@ -1619,6 +1648,7 @@ async function publicationFixture(empty = false, uncoveredFiles = 1) {
     excludedPaths: [],
     filesRead: ["head:src/main.ts"],
     ...(empty ? { coverage: { changedFiles: 3, uncoveredFiles } } : {}),
+    ...(openRequests ? { openRequests } : {}),
   });
   const identity = await import("../../../convex/github/repositoryIdentity");
   const github = await import("../../../convex/pullRequests/github");
@@ -1741,6 +1771,7 @@ describe("approval", () => {
       dismissFails?: boolean;
       errors?: boolean;
       author?: string;
+      reviews?: unknown[];
     } = {},
   ) {
     const helpers = await import("../../../convex/github/helpers");
@@ -1772,11 +1803,35 @@ describe("approval", () => {
               },
             },
           } as never;
-        if (url.includes("/reviews?")) return [ownApproval] as never;
+        if (url.includes("/reviews?"))
+          return [ownApproval, ...(graphql.reviews ?? [])] as never;
         return {} as never;
       });
   }
-  it("approves past a thread someone else left open", async () => {
+  it("lists a reviewer's unaddressed request instead of approving", async () => {
+    const f = await publicationFixture(true, 0, [
+      {
+        author: "maintainer",
+        request: "Release the audio session when playback ends naturally.",
+      },
+    ]);
+    // With approval required, a review that says something waits for it.
+    expect((await f.t.run((ctx) => ctx.db.get(f.actionId)))?.status).toBe(
+      "pending_approval",
+    );
+    await github([]);
+    await f.t.action(internal.pullRequests.internalAction.publish, {
+      actionId: f.actionId,
+      manual: true,
+    });
+    const posted = JSON.parse(f.fetch.mock.calls[0][1]!.body as string);
+    expect(posted.event).toBe("COMMENT");
+    expect(posted.body).toContain("**Not yet addressed from the discussion**");
+    expect(posted.body).toContain(
+      "- maintainer: Release the audio session when playback ends naturally.",
+    );
+  });
+  it("does not approve over a thread someone else left open", async () => {
     const f = await publicationFixture(true, 0);
     await github([{ isResolved: false }], { author: "maintainer" });
     await f.t.action(internal.pullRequests.internalAction.publish, {
@@ -1784,9 +1839,37 @@ describe("approval", () => {
       manual: false,
     });
     expect(JSON.parse(f.fetch.mock.calls[0][1]!.body as string).event).toBe(
-      "APPROVE",
+      "COMMENT",
     );
   });
+  it.each([
+    [["CHANGES_REQUESTED"], "COMMENT"],
+    [["CHANGES_REQUESTED", "COMMENTED"], "COMMENT"],
+    [["CHANGES_REQUESTED", "APPROVED"], "APPROVE"],
+    [["CHANGES_REQUESTED", "DISMISSED"], "APPROVE"],
+  ])(
+    "after a maintainer's reviews %j, a clean review posts %s",
+    async (states, event) => {
+      const f = await publicationFixture(true, 0);
+      await github([], {
+        reviews: states.map((state, i) => ({
+          id: 100 + i,
+          state,
+          body: "",
+          commit_id: "c".repeat(40),
+          html_url: "https://github.com/owner/repo/pull/12",
+          user: { type: "User", login: "maintainer" },
+        })),
+      });
+      await f.t.action(internal.pullRequests.internalAction.publish, {
+        actionId: f.actionId,
+        manual: false,
+      });
+      expect(JSON.parse(f.fetch.mock.calls[0][1]!.body as string).event).toBe(
+        event,
+      );
+    },
+  );
   it("approves a fully covered review with nothing found", async () => {
     const f = await publicationFixture(true, 0);
     const calls = await github([{ isResolved: true }]);

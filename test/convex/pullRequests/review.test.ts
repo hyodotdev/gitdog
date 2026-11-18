@@ -7,6 +7,7 @@ import {
   findingBody,
   OMITTED_SOURCE_MARKER,
   reviewBody,
+  validOpenRequests,
   validateFindings,
   REVIEW_RESPONSE_FORMAT,
   type Finding,
@@ -210,6 +211,34 @@ describe("commit-grounded PR finding validation", () => {
       validateFindings({ findings: [{ ...finding, title }] }, [file], reads)[0]
         .title,
     ).toBe(`@\u2060a ${"x".repeat(157)}`);
+  });
+  it("keeps only valid open requests from people in the discussion", () => {
+    const authors = new Set(["maintainer"]);
+    expect(
+      validOpenRequests(
+        {
+          openRequests: [
+            { author: "Maintainer", request: "Release the session on end." },
+            { author: "stranger", request: "Delete the whole module now." },
+            { author: "maintainer", request: "short" },
+            { author: "maintainer", request: "Release the session on end." },
+            { author: "maintainer", request: "Ask @octocat to verify iOS." },
+            ...Array.from({ length: 6 }, (_, i) => ({
+              author: "maintainer",
+              request: `Handle failure case number ${i}.`,
+            })),
+          ],
+        },
+        authors,
+      ),
+    ).toEqual([
+      { author: "Maintainer", request: "Release the session on end." },
+      { author: "maintainer", request: "Ask @\u2060octocat to verify iOS." },
+      { author: "maintainer", request: "Handle failure case number 0." },
+      { author: "maintainer", request: "Handle failure case number 1." },
+      { author: "maintainer", request: "Handle failure case number 2." },
+    ]);
+    expect(validOpenRequests({ findings: [] }, authors)).toEqual([]);
   });
   it("rejects an unread target and duplicate findings", () => {
     expect(() =>
@@ -555,8 +584,8 @@ describe("bounded review workflow", () => {
       tools: requestOptions[0].tools,
       responseFormat: requestOptions[0].responseFormat,
     }).length;
-    expect(payloadSize).toMatchInlineSnapshot(`10747`);
-    expect(payloadSize).toBeLessThan(11_000);
+    expect(payloadSize).toMatchInlineSnapshot(`11217`);
+    expect(payloadSize).toBeLessThan(11_500);
     expect(requestOptions[0].responseFormat).toEqual(REVIEW_RESPONSE_FORMAT);
     expect(requests).toHaveLength(1);
     expect(result.reads.find((r) => r.ref === "head")?.content).toBe(source);
@@ -1185,6 +1214,48 @@ describe("bounded review workflow", () => {
     expect(p.chat).toHaveBeenCalledTimes(10);
     expect(result.reads.some((r) => r.path === "src/more-7.ts")).toBe(false);
     expect(result.excludedPaths).toContain("src/more-7.ts");
+  });
+  it("shows the discussion and returns what it says is still open", async () => {
+    const p = provider([
+      {
+        content: JSON.stringify({
+          findings: [],
+          openRequests: [
+            {
+              author: "maintainer",
+              request: "Release the session when playback ends.",
+            },
+          ],
+        }),
+        finishReason: "stop",
+      },
+    ]);
+    const result = await run(
+      p,
+      vi.fn(async () => source),
+      {
+        discussion: [
+          {
+            author: "maintainer",
+            kind: "review",
+            text: "Release the session when playback ends, please.",
+          },
+        ],
+      },
+    );
+    expect(
+      (
+        reviewState(vi.mocked(p.chat).mock.calls[0][0]) as {
+          discussion: unknown[];
+        }
+      ).discussion,
+    ).toHaveLength(1);
+    expect(result.openRequests).toEqual([
+      {
+        author: "maintainer",
+        request: "Release the session when playback ends.",
+      },
+    ]);
   });
   describe("coverage passes", () => {
     // Too many changed files for the main conversation's source budget.

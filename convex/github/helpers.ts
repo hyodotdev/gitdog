@@ -520,6 +520,29 @@ export async function updateIssueComment(
   await response.body?.cancel().catch(() => undefined);
 }
 
+// A comment already gone counts as deleted.
+export async function deleteIssueComment(
+  owner: string,
+  repo: string,
+  commentId: number,
+  token: string,
+): Promise<void> {
+  const response = await fetchGitHubApi(
+    `https://api.github.com/repos/${owner}/${repo}/issues/comments/${commentId}`,
+    {
+      method: "DELETE",
+      headers: {
+        Accept: "application/vnd.github.v3+json",
+        Authorization: `Bearer ${token}`,
+        "User-Agent": "Gitdog",
+      },
+    },
+  );
+  await response.body?.cancel().catch(() => undefined);
+  if (!response.ok && response.status !== 404)
+    throw new Error(`Failed to delete issue comment (HTTP ${response.status})`);
+}
+
 // Update issue title and/or body
 export async function updateIssue(
   owner: string,
