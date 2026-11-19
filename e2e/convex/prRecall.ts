@@ -8,7 +8,10 @@ import { createMeteredProvider } from "../../convex/_ai/chatBilling";
 import { getDefaultAiModel } from "../../convex/_ai/model";
 import { CreditFallbackProvider } from "../../convex/_ai/providers";
 import { reviewWithContext } from "../../convex/pullRequests/workflow";
-import { ReviewContextLimitError } from "../../convex/pullRequests/errors";
+import {
+  ReviewContextLimitError,
+  reviewFailureDetails,
+} from "../../convex/pullRequests/errors";
 import {
   hasReviewablePatch,
   windowChangedSource,
@@ -160,6 +163,9 @@ export const replayReview = internalAction({
             )
           : readPublic(args.repository, path, args.baseSha),
       guard: async () => guard(),
+    }).catch((error) => {
+      // The same sanitized details a production review records.
+      throw new Error(reviewFailureDetails(error, "Replay"));
     });
     return {
       seconds: Math.round((Date.now() - started) / 1000),

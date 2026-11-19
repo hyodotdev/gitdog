@@ -822,25 +822,27 @@ export async function reviewWithContext(args: {
     );
   // A second model pass challenges candidates; deterministic quote/line checks
   // remain mandatory. This is self-critique, not an independent review.
-  const verify = async (
-    findings: Finding[],
+  type VerificationCandidate = {
+    id: string;
+    finding: Finding;
+    refutation?: string;
+  };
+  // One verification request: which candidates hold, and which are refuted by
+  // a quote of the shown source.
+  const askVerification = async (
+    instruction: string,
+    candidates: VerificationCandidate[],
     files: ChangedFile[],
     sources: ReadEvidence[],
     billingLabel: string,
     timeoutMs?: number,
-  ): Promise<Finding[]> => {
-    if (findings.length === 0) return findings;
-    await args.guard();
-    const candidates = findings.map((finding, index) => ({
-      id: `F${index + 1}`,
-      finding,
-    }));
+    // A second check must say what it refutes; without that list it has no
+    // decision, and the first one stands.
+    requireRefutations = false,
+  ) => {
     const critique = await chat(
       [
-        {
-          role: "system",
-          content: `${REVIEW_PROMPT}\nThis is the verification pass. Check each supplied candidate against the source. Return retainedFindingIds for the candidates that hold. A candidate may be dropped only when the source shows it is incorrect, pre-existing or already handled: for each such candidate add a refutation with its id and an exact quote of 12-1500 characters from the SOURCE blocks that shows it. A candidate without a quoted refutation is kept; uncertainty alone is not a reason to drop it. Do not rewrite findings, change anchors or confidence, add suggestions, or introduce new findings.`,
-        },
+        { role: "system", content: `${REVIEW_PROMPT}\n${instruction}` },
         reviewContextMessage(
           {
             candidates,
@@ -907,7 +909,9 @@ export async function reviewWithContext(args: {
         selection.retainedFindingIds.length ||
       selection.retainedFindingIds.some(
         (id: unknown) => !candidates.some((candidate) => candidate.id === id),
-      )
+      ) ||
+      (requireRefutations &&
+        !("refutations" in selection && Array.isArray(selection.refutations)))
     )
       throw new Error("Verification introduced an unreviewed finding");
     // A candidate is dropped only on a refutation quoting the shown source;
@@ -929,42 +933,91 @@ export async function reviewWithContext(args: {
         )
       );
     };
-    const refuted = new Set(
-      ("refutations" in selection && Array.isArray(selection.refutations)
-        ? selection.refutations
-        : []
+    const refuted = new Map<string, string>();
+    for (const r of "refutations" in selection &&
+    Array.isArray(selection.refutations)
+      ? selection.refutations
+      : [])
+      if (
+        r !== null &&
+        typeof r === "object" &&
+        "id" in r &&
+        typeof r.id === "string" &&
+        "quote" in r &&
+        typeof r.quote === "string" &&
+        r.quote.trim().length >= 12 &&
+        r.quote.length <= 1500 &&
+        !refuted.has(r.id) &&
+        refutes(r.id, r.quote)
       )
-        .filter(
-          (r: unknown): r is { id: string; quote: string } =>
-            r !== null &&
-            typeof r === "object" &&
-            "id" in r &&
-            typeof r.id === "string" &&
-            "quote" in r &&
-            typeof r.quote === "string" &&
-            r.quote.trim().length >= 12 &&
-            r.quote.length <= 1500 &&
-            refutes(r.id, r.quote),
-        )
-        .map((r: { id: string }) => r.id),
+        refuted.set(r.id, r.quote);
+    const retained = new Set(selection.retainedFindingIds as string[]);
+    return candidates
+      .filter((c) => !retained.has(c.id) && refuted.has(c.id))
+      .map((c) => ({ ...c, refutation: refuted.get(c.id) }));
+  };
+  // A second model pass challenges candidates; deterministic quote/line checks
+  // remain mandatory. This is self-critique, not an independent review.
+  const verify = async (
+    findings: Finding[],
+    files: ChangedFile[],
+    sources: ReadEvidence[],
+    billingLabel: string,
+    timeoutMs?: number,
+  ): Promise<Finding[]> => {
+    if (findings.length === 0) return findings;
+    await args.guard();
+    const candidates = findings.map((finding, index) => ({
+      id: `F${index + 1}`,
+      finding,
+    }));
+    let dropped = await askVerification(
+      "This is the verification pass. Check each supplied candidate against the source. Return retainedFindingIds for the candidates that hold. A candidate may be dropped only when the source shows it is incorrect, pre-existing or already handled: for each such candidate add a refutation with its id and an exact quote of 12-1500 characters from the SOURCE blocks that shows it. A candidate without a quoted refutation is kept; uncertainty alone is not a reason to drop it. Do not rewrite findings, change anchors or confidence, add suggestions, or introduce new findings.",
+      candidates,
+      files,
+      sources,
+      billingLabel,
+      timeoutMs,
     );
+    const trace = (step: string, checked: VerificationCandidate[]) =>
+      args.trace?.({
+        stage: "verified",
+        step,
+        kept: checked
+          .filter((c) => !dropped.some((d) => d.id === c.id))
+          .map((c) => c.finding.title),
+        discarded: dropped.map((c) => c.finding.title),
+      });
+    trace(billingLabel, candidates);
+    // A refuted candidate gets a second check of its refutation, so one
+    // misread of the source cannot drop a real defect. It is dropped only when
+    // that check refutes it again; if the check cannot run, the first
+    // decision stands.
+    if (
+      dropped.length > 0 &&
+      Date.now() - actionStarted <= COVERAGE_REQUEST_CUTOFF_MS
+    ) {
+      const appealed = dropped;
+      try {
+        await args.guard();
+        dropped = await askVerification(
+          "This is a second check of refutations. Each supplied candidate was dropped by an earlier check, which quoted the source in its refutation field. Re-check each refutation independently against the source: it holds only if the quoted code, read with the code around it, shows the candidate is incorrect, pre-existing or already handled on every path the candidate describes. A refutation that misreads the code, covers only some of those paths, or quotes code the defect does not depend on does not hold. Return retainedFindingIds for the candidates whose refutation does not hold, and a refutation with an exact quote of 12-1500 characters from the SOURCE blocks for each candidate that is still refuted. Do not rewrite findings or introduce new ones.",
+          appealed,
+          files,
+          sources,
+          `${billingLabel}/appeal`,
+          timeoutMs,
+          true,
+        );
+        trace(`${billingLabel}/appeal`, appealed);
+      } catch (error) {
+        if (isLifecycleChange(error)) throw error;
+        dropped = appealed;
+      }
+    }
     const retainedFindingIds = candidates
-      .filter(
-        (c) =>
-          (selection.retainedFindingIds as unknown[]).includes(c.id) ||
-          !refuted.has(c.id),
-      )
+      .filter((c) => !dropped.some((d) => d.id === c.id))
       .map((c) => c.id);
-    args.trace?.({
-      stage: "verified",
-      step: billingLabel,
-      kept: candidates
-        .filter((c) => retainedFindingIds.includes(c.id))
-        .map((c) => c.finding.title),
-      discarded: candidates
-        .filter((c) => !retainedFindingIds.includes(c.id))
-        .map((c) => c.finding.title),
-    });
     // Selection cannot mutate a previously validated candidate. Validate its
     // original evidence again rather than trusting generated replacement text.
     return validateFindings(
