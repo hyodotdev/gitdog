@@ -86,6 +86,8 @@ flowchart LR
 3. **Draft**: new issues, discussions and pull requests get a reply or review
    grounded in the indexed source.
 4. **Approve**: review the draft in Gitdog or the CLI, then publish it.
+   Pull request reviews post at once unless the owner turns on approval for
+   them.
 
 Gitdog reads the source of every changed file. Files that do not fit the main
 review are reviewed in further passes, and a review that still could not read
@@ -93,8 +95,8 @@ a file says so.
 
 A single review also reads the conversation: people's comments, review
 summaries and open review threads. A change a reviewer asked for that the code
-does not make yet is listed in the review as not yet addressed, and such a
-review waits for approval like one with findings. A large pull request reviewed
+does not make yet is listed in the review as not yet addressed, and with
+approval on such a review waits for approval like one with findings. A large pull request reviewed
 in batches does not read the conversation; open threads and requested changes
 still keep it from approving.
 

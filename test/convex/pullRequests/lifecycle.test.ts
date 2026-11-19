@@ -42,6 +42,9 @@ const settings = {
   requireApproval: true,
   requireApprovalForDiscussions: true,
   pullRequestReviewsEnabled: true,
+  // Most tests here exercise the approval path; reviews post at once when
+  // this is unset.
+  requireApprovalForPullRequests: true,
 };
 async function fixture() {
   const t = convexTest(schema, modules);
@@ -929,7 +932,27 @@ describe("PR review durable lifecycle", () => {
       "pending_approval",
     );
   });
-  it("defaults to human approval and uses the dedicated claim", async () => {
+  it("posts a review with findings at once when approval was never turned on", async () => {
+    const f = await fixture();
+    await f.t.run(async (ctx) => {
+      const repository = (await ctx.db.get(f.repositoryId))!;
+      const { requireApprovalForPullRequests: _unset, ...rest } =
+        repository.settings;
+      await ctx.db.patch(f.repositoryId, { settings: rest });
+    });
+    const actionId = (await f.observe())!;
+    await f.t.mutation(internal.pullRequests.internalMutation.propose, {
+      actionId,
+      source,
+      findings,
+      excludedPaths: [],
+      filesRead: ["head:src/main.ts"],
+    });
+    expect((await f.t.run((ctx) => ctx.db.get(actionId)))?.status).toBe(
+      "approved",
+    );
+  });
+  it("waits for human approval when it is on and uses the dedicated claim", async () => {
     const f = await fixture();
     const actionId = (await f.observe())!;
     await f.t.mutation(internal.pullRequests.internalMutation.propose, {
