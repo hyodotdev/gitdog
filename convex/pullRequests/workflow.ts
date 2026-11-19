@@ -879,6 +879,8 @@ export async function reviewWithContext(args: {
     // A second check must say what it refutes; without that list it has no
     // decision, and the first one stands.
     requireRefutations?: boolean;
+    // When it was computed earlier; otherwise computed when sent.
+    timing?: ReturnType<typeof lateRequest>;
   }) => {
     const { instruction, candidates, files, sources, billingLabel } = request;
     const critique = await chat(
@@ -895,7 +897,7 @@ export async function reviewWithContext(args: {
       {
         maxTokens: REVIEW_OUTPUT_TOKENS,
         billingLabel,
-        ...lateRequest(),
+        ...(request.timing ?? lateRequest()),
         responseFormat: {
           name: "pull_request_verification",
           schema: {
@@ -1003,6 +1005,8 @@ export async function reviewWithContext(args: {
     billingLabel: string,
   ): Promise<Finding[]> => {
     if (findings.length === 0) return findings;
+    // Timed from when verification was asked for, not after the guard.
+    const timing = lateRequest();
     await args.guard();
     const candidates = findings.map((finding, index) => ({
       id: `F${index + 1}`,
@@ -1027,6 +1031,7 @@ export async function reviewWithContext(args: {
       files,
       sources,
       billingLabel,
+      timing,
     });
     trace(billingLabel, candidates, dropped);
     // A refuted candidate gets a second check of its refutation, so one
