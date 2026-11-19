@@ -260,7 +260,7 @@ test("PR review settings accept old server defaults and strict booleans", () => 
   const current = validateSettings(legacy, true);
   assert.equal(current.pullRequestReviewsEnabled, false);
   assert.equal(current.pullRequestSuggestionsEnabled, true);
-  assert.equal(current.requireApprovalForPullRequests, true);
+  assert.equal(current.requireApprovalForPullRequests, false);
   assert.deepEqual(
     validateSettings({
       pullRequestReviewsEnabled: true,

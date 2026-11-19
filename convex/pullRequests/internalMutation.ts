@@ -967,7 +967,8 @@ export const propose = internalMutation({
     // A push that changed nothing in the PR diff, such as a base merge.
     const nothingNew = noFindings && args.coverage?.changedFiles === 0;
     const verificationOnly = action.reviewVerificationOnly === true;
-    const approval = repo.settings.requireApprovalForPullRequests !== false;
+    // Reviews post at once unless the owner asked to approve them first.
+    const approval = repo.settings.requireApprovalForPullRequests === true;
     const suggestions = repo.settings.pullRequestSuggestionsEnabled !== false;
     const coverage = batch ?? args.coverage;
     // Whether every file of the PR so far was reviewed: by this review, and
@@ -1126,7 +1127,7 @@ export const claim = internalMutation({
     // The no-findings summary is fixed text and is published without approval.
     if (
       !args.manual &&
-      repo.settings.requireApprovalForPullRequests !== false &&
+      repo.settings.requireApprovalForPullRequests === true &&
       action.proposedChanges?.findings?.length !== 0
     ) {
       await ctx.db.patch(action._id, { status: "pending_approval" });

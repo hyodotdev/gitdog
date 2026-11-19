@@ -149,7 +149,7 @@ async function guard(
     state.ticket.pullRequestBaseSha !== source.baseSha ||
     (!manual &&
       stage === "publication" &&
-      state.repository.settings.requireApprovalForPullRequests !== false &&
+      state.repository.settings.requireApprovalForPullRequests === true &&
       state.action.proposedChanges?.findings?.length !== 0)
   )
     throw new Error("Review source, settings or lifecycle changed");

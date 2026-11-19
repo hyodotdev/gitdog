@@ -98,7 +98,7 @@ export function validateSettings(
   if (complete) {
     settings.pullRequestReviewsEnabled ??= false;
     settings.pullRequestSuggestionsEnabled ??= true;
-    settings.requireApprovalForPullRequests ??= true;
+    settings.requireApprovalForPullRequests ??= false;
   }
   return settings;
 }

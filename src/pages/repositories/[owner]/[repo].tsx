@@ -503,7 +503,7 @@ export function RepositorySettingsPage() {
                 />
                 <Checkbox
                   checked={
-                    currentSettings.requireApprovalForPullRequests !== false
+                    currentSettings.requireApprovalForPullRequests === true
                   }
                   disabled={!isOwner}
                   onChange={(checked) =>
