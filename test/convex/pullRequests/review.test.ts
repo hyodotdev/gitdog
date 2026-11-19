@@ -1529,6 +1529,18 @@ describe("bounded review workflow", () => {
     ]);
     expect((await run(p)).findings).toEqual([finding]);
   });
+  it("keeps the first decision when the second check returns no refutation list", async () => {
+    const p = provider([
+      use,
+      stop([finding]),
+      verified([], [{ id: "F1", quote: "function find(key) {" }]),
+      {
+        content: JSON.stringify({ retainedFindingIds: [], refutations: null }),
+        finishReason: "stop",
+      },
+    ]);
+    expect((await run(p)).findings).toEqual([]);
+  });
   it("keeps the first decision when the second check cannot run", async () => {
     // The scripted provider has no answer for the second check.
     const p = provider([

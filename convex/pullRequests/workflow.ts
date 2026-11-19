@@ -836,6 +836,9 @@ export async function reviewWithContext(args: {
     sources: ReadEvidence[],
     billingLabel: string,
     timeoutMs?: number,
+    // A second check must say what it refutes; without that list it has no
+    // decision, and the first one stands.
+    requireRefutations = false,
   ) => {
     const critique = await chat(
       [
@@ -906,7 +909,9 @@ export async function reviewWithContext(args: {
         selection.retainedFindingIds.length ||
       selection.retainedFindingIds.some(
         (id: unknown) => !candidates.some((candidate) => candidate.id === id),
-      )
+      ) ||
+      (requireRefutations &&
+        !("refutations" in selection && Array.isArray(selection.refutations)))
     )
       throw new Error("Verification introduced an unreviewed finding");
     // A candidate is dropped only on a refutation quoting the shown source;
@@ -1002,6 +1007,7 @@ export async function reviewWithContext(args: {
           sources,
           `${billingLabel}/appeal`,
           timeoutMs,
+          true,
         );
         trace(`${billingLabel}/appeal`, appealed);
       } catch (error) {
