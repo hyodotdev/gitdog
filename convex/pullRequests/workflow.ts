@@ -190,33 +190,33 @@ const PRELOAD_READS = 8;
 const COVERAGE_PASS_SOURCE = 90_000;
 const COVERAGE_PASS_REQUEST = 150_000;
 const MAX_COVERAGE_PASSES = 8;
-// Convex stops an action after 10 minutes. A request may wait up to 90 seconds
-// for another on the account, once for each provider route, and then run for
-// up to 120. A coverage request starts only within 4 minutes of the action's
-// start, so even the slowest one ends before the action is stopped.
-const COVERAGE_REQUEST_CUTOFF_MS = 4 * 60_000;
-// The closing synthesis reads the whole review and can take a reasoning model
-// past the usual two minutes. It may run until this long after the action
-// started (never less than two minutes nor more than five), which still leaves
-// room for verification before Convex stops the action.
+// Request timing, measured from when the action started. Convex stops an
+// action at 10 minutes, and a request cut off mid-flight leaves its usage
+// unknown, which blocks the account's AI work for 30 minutes.
+// - No request runs past REQUEST_END_MS, however long it waited to start; the
+//   provider enforces it when sending, and does not send one that would get
+//   less than its minimum time (30 seconds, SLOW_REQUEST_MIN_MS for slow ones).
+// - Requests wait up to REQUEST_TIMEOUT_MS by default: a reasoning model can
+//   spend over two minutes on the turn that writes its findings.
+// - Slow requests after the main review aim to end by LATE_REQUEST_END_MS, and
+//   the closing synthesis by FINAL_REQUEST_END_MS (up to FINAL_TIMEOUT_MS),
+//   each getting at least MIN_SLOW_TIMEOUT_MS.
+// - Optional passes (coverage passes, second looks, the second check of a
+//   refutation) start only before OPTIONAL_PASS_CUTOFF_MS, leaving room for
+//   what has to follow.
+const REQUEST_END_MS = 9 * 60_000;
+const REQUEST_TIMEOUT_MS = 4 * 60_000;
 const FINAL_REQUEST_END_MS = 7 * 60_000;
+const FINAL_TIMEOUT_MS = 5 * 60_000;
+const LATE_REQUEST_END_MS = 8 * 60_000;
+const MIN_SLOW_TIMEOUT_MS = 2 * 60_000;
+const SLOW_REQUEST_MIN_MS = 90_000;
+const OPTIONAL_PASS_CUTOFF_MS = 4 * 60_000;
 // The main review's turns. The state each turn shows how many are left, so a
 // model that keeps exploring answers before the slower closing synthesis.
 const REVIEW_TURNS = 8;
-// Requests after the main review get a timeout that aims to end them by this
-// long after the action started (two to four minutes each), so a slower
-// reasoning model finishes instead of being cut off with its usage unknown.
-// The hard limit is ACTION_REQUEST_END_MS, enforced when a request is sent,
-// however long it waited to start; one that would get less than
-// SLOW_REQUEST_MIN_MS is not sent, since it would likely be cut off.
-const LATE_REQUEST_END_MS = 8 * 60_000;
-const SLOW_REQUEST_MIN_MS = 90_000;
-// A reasoning model can spend over two minutes on the turn that writes its
-// findings. Cutting it off leaves its usage unknown and blocks the account's
-// AI work for 30 minutes, so review requests wait this long by default,
-// still never past ACTION_REQUEST_END_MS.
-const REVIEW_REQUEST_TIMEOUT_MS = 4 * 60_000;
-const ACTION_REQUEST_END_MS = 9 * 60_000;
+// The largest request a review conversation may send.
+const CONVERSATION_BYTES = 180_000;
 // After the main review, focused second looks at the same source. Each one
 // resends the main review's last request with only its closing state
 // replaced, so the repository context and sources are read from the prompt
@@ -233,6 +233,40 @@ const SECOND_LOOKS = [
       "Edge cases and failure paths. For each changed line, find the input, state or timing that makes it wrong: missing, empty, zero or duplicate values, retries and idempotency, concurrent requests and races, partial failure, limits and truncation, and error handling that swallows or misreports a failure.",
   },
 ] as const;
+// The verification pass, and the second check a refuted candidate gets.
+const VERIFY_INSTRUCTION =
+  "This is the verification pass. Check each supplied candidate against the source. Return retainedFindingIds for the candidates that hold. A candidate may be dropped only when the source shows it is incorrect, pre-existing or already handled: for each such candidate add a refutation with its id and an exact quote of 12-1500 characters from the SOURCE blocks that shows it. A candidate without a quoted refutation is kept; uncertainty alone is not a reason to drop it. Do not rewrite findings, change anchors or confidence, add suggestions, or introduce new findings.";
+const RECHECK_INSTRUCTION =
+  "This is a second check of refutations. Each supplied candidate was dropped by an earlier check, which quoted the source in its refutation field. Re-check each refutation independently against the source: it holds only if the quoted code, read with the code around it, shows the candidate is incorrect, pre-existing or already handled on every path the candidate describes. A refutation that misreads the code, covers only some of those paths, or quotes code the defect does not depend on does not hold. Return retainedFindingIds for the candidates whose refutation does not hold, and a refutation with an exact quote of 12-1500 characters from the SOURCE blocks for each candidate that is still refuted. Do not rewrite findings or introduce new ones.";
+// The path a finding item names, if any.
+function findingPath(item: unknown): string | undefined {
+  return item !== null &&
+    typeof item === "object" &&
+    "path" in item &&
+    typeof item.path === "string"
+    ? item.path
+    : undefined;
+}
+
+// Keeps the candidates that validate, one at a time, and returns the rest.
+function validateEach(
+  items: unknown[],
+  files: ChangedFile[],
+  sources: ReadEvidence[],
+): { kept: Finding[]; rejected: unknown[] } {
+  let kept: Finding[] = [];
+  const rejected: unknown[] = [];
+  for (const item of items) {
+    try {
+      kept = validateFindings({ findings: [...kept, item] }, files, sources);
+    } catch (error) {
+      if (!isReviewGroupModelFailure(error)) throw error;
+      rejected.push(item);
+    }
+  }
+  return { kept, rejected };
+}
+
 // Implementation first, then tests, then documentation and data, so a pass
 // cut short by the limit or the time budget leaves the least important
 // files unreviewed.
@@ -293,9 +327,19 @@ export async function reviewWithContext(args: {
   openRequests: OpenRequest[];
 }> {
   const actionStarted = args.startedAt ?? Date.now();
-  // No request runs past this, however long it waited to start, which leaves
-  // the action time to save the review.
-  const endBy = actionStarted + ACTION_REQUEST_END_MS;
+  const endBy = actionStarted + REQUEST_END_MS;
+  const beforeOptionalCutoff = () =>
+    Date.now() - actionStarted <= OPTIONAL_PASS_CUTOFF_MS;
+  // Timing for a slow request that should end by endMs after the start.
+  const slowRequest = (endMs: number, maxMs: number) => ({
+    timeoutMs: Math.min(
+      maxMs,
+      Math.max(MIN_SLOW_TIMEOUT_MS, actionStarted + endMs - Date.now()),
+    ),
+    minTimeMs: SLOW_REQUEST_MIN_MS,
+  });
+  const lateRequest = () =>
+    slowRequest(LATE_REQUEST_END_MS, REQUEST_TIMEOUT_MS);
   const discussion = args.discussion ?? [];
   // The latest answer's unaddressed reviewer requests.
   let openRequests: OpenRequest[] = [];
@@ -355,7 +399,7 @@ export async function reviewWithContext(args: {
     messages: ChatMessage[],
     options: ChatCompletionOptions,
   ) => {
-    if (chatRequestBytes(messages, options) > 180_000)
+    if (chatRequestBytes(messages, options) > CONVERSATION_BYTES)
       throw new Error("Review conversation exceeds the context budget");
     return await runReviewRequest(
       {
@@ -364,7 +408,7 @@ export async function reviewWithContext(args: {
       () =>
         args.provider.chat(messages, {
           endBy,
-          timeoutMs: REVIEW_REQUEST_TIMEOUT_MS,
+          timeoutMs: REQUEST_TIMEOUT_MS,
           ...options,
         }),
     );
@@ -374,11 +418,6 @@ export async function reviewWithContext(args: {
   // so a review that lost a finding there can never approve.
   const doubtfulPaths = new Set<string>();
   let turnsLeft: number | undefined;
-  const lateRequestTimeout = () =>
-    Math.min(
-      4 * 60_000,
-      Math.max(2 * 60_000, actionStarted + LATE_REQUEST_END_MS - Date.now()),
-    );
   // A review's own changed files are bounded by its file count and the source
   // budget, so they do not use up the reads that guides and tools share.
   const groupSources = new Set(args.files.map((f) => `head:${f.filename}`));
@@ -546,14 +585,17 @@ export async function reviewWithContext(args: {
     (args.allowSuggestions === false
       ? "\nCommit suggestions are disabled for this repository. Set suggestion to null."
       : "");
+  // Sources as a request shows them: an incomplete guide is marked truncated.
+  const withTruncation = (sources: ReadEvidence[]) =>
+    sources.map((r) => ({
+      ...r,
+      truncated: r.ref === "base" && incompleteGuides.has(r.path),
+    }));
   const initialMessages = (sources = headContext): ChatMessage[] => [
     { role: "system", content: findingsPrompt },
     reviewContextMessage(
       initialMetadata(sources),
-      [...context, ...sources].map((r) => ({
-        ...r,
-        truncated: r.ref === "base" && incompleteGuides.has(r.path),
-      })),
+      withTruncation([...context, ...sources]),
       { cached: true },
     ),
   ];
@@ -720,13 +762,20 @@ export async function reviewWithContext(args: {
             : {}),
           ...(validationFeedback ? { validationFeedback } : {}),
         },
-        reads.map((r) => ({
-          ...r,
-          truncated: r.ref === "base" && incompleteGuides.has(r.path),
-        })),
+        withTruncation(reads),
         { cached: true },
       ),
     ];
+  };
+  // Rebuilds, then drops the oldest tool results until the request fits;
+  // tool results give way before shown source does.
+  const rebuildWithinBudget = () => {
+    rebuildMessages();
+    while (observations.length && requestBytes() > CONVERSATION_BYTES) {
+      observations.shift();
+      omittedObservations++;
+      rebuildMessages();
+    }
   };
   // Source the reviewer asks for is shown only while the request keeps room
   // for the answer; the rest is reported as unavailable instead of failing the
@@ -797,13 +846,7 @@ export async function reviewWithContext(args: {
             role: "system",
             content: `${findingsPrompt}\nCorrect only the response format. Return a JSON object with a findings array using the recorded source evidence. Do not treat prose as proof of an empty findings array. Tools are unavailable.`,
           },
-          reviewContextMessage(
-            correctionContext,
-            reads.map((r) => ({
-              ...r,
-              truncated: r.ref === "base" && incompleteGuides.has(r.path),
-            })),
-          ),
+          reviewContextMessage(correctionContext, withTruncation(reads)),
         ],
         {
           maxTokens: REVIEW_OUTPUT_TOKENS,
@@ -820,26 +863,24 @@ export async function reviewWithContext(args: {
     reads.some(
       (r) => r.ref === "head" && args.files.some((f) => f.filename === r.path),
     );
-  // A second model pass challenges candidates; deterministic quote/line checks
-  // remain mandatory. This is self-critique, not an independent review.
   type VerificationCandidate = {
     id: string;
     finding: Finding;
     refutation?: string;
   };
-  // One verification request: which candidates hold, and which are refuted by
-  // a quote of the shown source.
-  const askVerification = async (
-    instruction: string,
-    candidates: VerificationCandidate[],
-    files: ChangedFile[],
-    sources: ReadEvidence[],
-    billingLabel: string,
-    timeoutMs?: number,
+  // One verification request. Returns the candidates it refutes with a quote
+  // of the shown source.
+  const refutedCandidates = async (request: {
+    instruction: string;
+    candidates: VerificationCandidate[];
+    files: ChangedFile[];
+    sources: ReadEvidence[];
+    billingLabel: string;
     // A second check must say what it refutes; without that list it has no
     // decision, and the first one stands.
-    requireRefutations = false,
-  ) => {
+    requireRefutations?: boolean;
+  }) => {
+    const { instruction, candidates, files, sources, billingLabel } = request;
     const critique = await chat(
       [
         { role: "system", content: `${REVIEW_PROMPT}\n${instruction}` },
@@ -848,17 +889,13 @@ export async function reviewWithContext(args: {
             candidates,
             changedFiles: files,
           },
-          sources.map((r) => ({
-            ...r,
-            truncated: r.ref === "base" && incompleteGuides.has(r.path),
-          })),
+          withTruncation(sources),
         ),
       ],
       {
         maxTokens: REVIEW_OUTPUT_TOKENS,
         billingLabel,
-        timeoutMs: timeoutMs ?? lateRequestTimeout(),
-        minTimeMs: SLOW_REQUEST_MIN_MS,
+        ...lateRequest(),
         responseFormat: {
           name: "pull_request_verification",
           schema: {
@@ -909,10 +946,14 @@ export async function reviewWithContext(args: {
         selection.retainedFindingIds.length ||
       selection.retainedFindingIds.some(
         (id: unknown) => !candidates.some((candidate) => candidate.id === id),
-      ) ||
-      (requireRefutations &&
-        !("refutations" in selection && Array.isArray(selection.refutations)))
+      )
     )
+      throw new Error("Verification introduced an unreviewed finding");
+    const refutations =
+      "refutations" in selection && Array.isArray(selection.refutations)
+        ? (selection.refutations as unknown[])
+        : undefined;
+    if (request.requireRefutations && !refutations)
       throw new Error("Verification introduced an unreviewed finding");
     // A candidate is dropped only on a refutation quoting the shown source;
     // an unsupported "not retained" keeps it, since in practice verification
@@ -934,10 +975,7 @@ export async function reviewWithContext(args: {
       );
     };
     const refuted = new Map<string, string>();
-    for (const r of "refutations" in selection &&
-    Array.isArray(selection.refutations)
-      ? selection.refutations
-      : [])
+    for (const r of refutations ?? [])
       if (
         r !== null &&
         typeof r === "object" &&
@@ -963,7 +1001,6 @@ export async function reviewWithContext(args: {
     files: ChangedFile[],
     sources: ReadEvidence[],
     billingLabel: string,
-    timeoutMs?: number,
   ): Promise<Finding[]> => {
     if (findings.length === 0) return findings;
     await args.guard();
@@ -971,64 +1008,80 @@ export async function reviewWithContext(args: {
       id: `F${index + 1}`,
       finding,
     }));
-    let dropped = await askVerification(
-      "This is the verification pass. Check each supplied candidate against the source. Return retainedFindingIds for the candidates that hold. A candidate may be dropped only when the source shows it is incorrect, pre-existing or already handled: for each such candidate add a refutation with its id and an exact quote of 12-1500 characters from the SOURCE blocks that shows it. A candidate without a quoted refutation is kept; uncertainty alone is not a reason to drop it. Do not rewrite findings, change anchors or confidence, add suggestions, or introduce new findings.",
-      candidates,
-      files,
-      sources,
-      billingLabel,
-      timeoutMs,
-    );
-    const trace = (step: string, checked: VerificationCandidate[]) =>
+    const trace = (
+      step: string,
+      checked: VerificationCandidate[],
+      refuted: VerificationCandidate[],
+    ) =>
       args.trace?.({
         stage: "verified",
         step,
         kept: checked
-          .filter((c) => !dropped.some((d) => d.id === c.id))
+          .filter((c) => !refuted.some((r) => r.id === c.id))
           .map((c) => c.finding.title),
-        discarded: dropped.map((c) => c.finding.title),
+        discarded: refuted.map((c) => c.finding.title),
       });
-    trace(billingLabel, candidates);
+    let dropped = await refutedCandidates({
+      instruction: VERIFY_INSTRUCTION,
+      candidates,
+      files,
+      sources,
+      billingLabel,
+    });
+    trace(billingLabel, candidates, dropped);
     // A refuted candidate gets a second check of its refutation, so one
     // misread of the source cannot drop a real defect. It is dropped only when
     // that check refutes it again; if the check cannot run, the first
     // decision stands.
-    if (
-      dropped.length > 0 &&
-      Date.now() - actionStarted <= COVERAGE_REQUEST_CUTOFF_MS
-    ) {
-      const appealed = dropped;
+    if (dropped.length > 0 && beforeOptionalCutoff()) {
+      const refuted = dropped;
       try {
         await args.guard();
-        dropped = await askVerification(
-          "This is a second check of refutations. Each supplied candidate was dropped by an earlier check, which quoted the source in its refutation field. Re-check each refutation independently against the source: it holds only if the quoted code, read with the code around it, shows the candidate is incorrect, pre-existing or already handled on every path the candidate describes. A refutation that misreads the code, covers only some of those paths, or quotes code the defect does not depend on does not hold. Return retainedFindingIds for the candidates whose refutation does not hold, and a refutation with an exact quote of 12-1500 characters from the SOURCE blocks for each candidate that is still refuted. Do not rewrite findings or introduce new ones.",
-          appealed,
+        dropped = await refutedCandidates({
+          instruction: RECHECK_INSTRUCTION,
+          candidates: refuted,
           files,
           sources,
-          `${billingLabel}/appeal`,
-          timeoutMs,
-          true,
-        );
-        trace(`${billingLabel}/appeal`, appealed);
+          billingLabel: `${billingLabel}/appeal`,
+          requireRefutations: true,
+        });
+        trace(`${billingLabel}/appeal`, refuted, dropped);
       } catch (error) {
         if (isLifecycleChange(error)) throw error;
-        dropped = appealed;
+        dropped = refuted;
       }
     }
-    const retainedFindingIds = candidates
-      .filter((c) => !dropped.some((d) => d.id === c.id))
-      .map((c) => c.id);
     // Selection cannot mutate a previously validated candidate. Validate its
     // original evidence again rather than trusting generated replacement text.
+    const droppedIds = new Set(dropped.map((c) => c.id));
     return validateFindings(
       {
         findings: candidates
-          .filter((candidate) => retainedFindingIds.includes(candidate.id))
-          .map((candidate) => candidate.finding),
+          .filter((c) => !droppedIds.has(c.id))
+          .map((c) => c.finding),
       },
       files,
       sources,
     );
+  };
+  // A pass answer's findings at or above the confidence floor, capped; null
+  // when the answer has no findings list. Uncertain candidates are dropped
+  // before the cap, so they never displace a confident one.
+  const confidentItems = (step: string, content: string): unknown[] | null => {
+    const decoded = proposed(step, decode(content));
+    if (
+      decoded === null ||
+      typeof decoded !== "object" ||
+      !("findings" in decoded) ||
+      !Array.isArray(decoded.findings)
+    )
+      return null;
+    return decoded.findings
+      .filter(
+        (item: unknown) =>
+          !((confidenceOf(item) ?? 1) < MIN_FINDING_CONFIDENCE),
+      )
+      .slice(0, MAX_REVIEW_FINDINGS);
   };
   // Set once the account cannot afford another request in this review.
   let accountLimited = false;
@@ -1084,9 +1137,11 @@ export async function reviewWithContext(args: {
     // groups themselves are how a large change gets covered.
     if (accountLimited || args.batchGroup) return found;
     const skipped = new Set<string>();
-    const timeLeft = () =>
-      Date.now() - actionStarted <= COVERAGE_REQUEST_CUTOFF_MS;
-    for (let pass = 1; pass <= MAX_COVERAGE_PASSES && timeLeft(); pass++) {
+    for (
+      let pass = 1;
+      pass <= MAX_COVERAGE_PASSES && beforeOptionalCutoff();
+      pass++
+    ) {
       const pending = unread(skipped);
       if (pending.length === 0) break;
       await args.guard();
@@ -1131,62 +1186,38 @@ export async function reviewWithContext(args: {
       // reviewed, so a defect the model saw can never read as a clean file.
       const doubtful = new Set<string>();
       // Reading the files takes time too: check again right before the request.
-      if (!timeLeft()) break;
+      if (!beforeOptionalCutoff()) break;
       try {
         const response = await chat(coverageMessages(files, sources), {
           maxTokens: REVIEW_OUTPUT_TOKENS,
           billingLabel: `pr-review/coverage/${pass}`,
-          timeoutMs: lateRequestTimeout(),
-          minTimeMs: SLOW_REQUEST_MIN_MS,
+          ...lateRequest(),
           responseFormat: REVIEW_RESPONSE_FORMAT,
         });
         if (response.finishReason !== "stop")
           throw new Error("Review did not finish completely");
-        const decoded = proposed(`coverage/${pass}`, decode(response.content));
-        if (
-          decoded === null ||
-          typeof decoded !== "object" ||
-          !("findings" in decoded) ||
-          !Array.isArray(decoded.findings)
-        )
-          throw new Error("Invalid review result");
+        const items = confidentItems(`coverage/${pass}`, response.content);
+        if (items === null) throw new Error("Invalid review result");
         const value = confidentCandidates(
-          {
-            // Uncertain candidates go first, so they never displace a
-            // confident one past the cap.
-            findings: decoded.findings
-              .filter(
-                (item: unknown) =>
-                  !((confidenceOf(item) ?? 1) < MIN_FINDING_CONFIDENCE),
-              )
-              .slice(0, MAX_REVIEW_FINDINGS),
-          },
+          { findings: items },
           args.allowSuggestions,
           new Set(files.map((f) => f.filename)),
         ) as { findings: unknown[] };
-        let candidates: Finding[] = [];
-        for (const item of value.findings) {
-          try {
-            candidates = validateFindings(
-              { findings: [...candidates, item] },
-              files,
-              passReads,
-            );
-          } catch (error) {
-            if (!isReviewGroupModelFailure(error)) throw error;
-            const path =
-              item !== null && typeof item === "object" && "path" in item
-                ? item.path
-                : undefined;
-            for (const file of files)
-              if (typeof path !== "string" || file.filename === path)
-                doubtful.add(file.filename);
-          }
+        const { kept: candidates, rejected } = validateEach(
+          value.findings,
+          files,
+          passReads,
+        );
+        for (const item of rejected) {
+          const path = findingPath(item);
+          for (const file of files)
+            if (path === undefined || file.filename === path)
+              doubtful.add(file.filename);
         }
         if (candidates.length > 0) {
           // Verification needs room for the candidates as well as the source.
           if (
-            !timeLeft() ||
+            !beforeOptionalCutoff() ||
             JSON.stringify(sources).length + JSON.stringify(candidates).length >
               COVERAGE_PASS_REQUEST
           )
@@ -1197,7 +1228,6 @@ export async function reviewWithContext(args: {
               files,
               passReads,
               `pr-review/coverage/${pass}/critique`,
-              lateRequestTimeout(),
             )),
           );
         }
@@ -1256,10 +1286,8 @@ export async function reviewWithContext(args: {
       return found;
     }
     const prefix = last.slice(0, -1);
-    const timeLeft = () =>
-      Date.now() - actionStarted <= COVERAGE_REQUEST_CUTOFF_MS;
     for (const look of SECOND_LOOKS) {
-      if (!timeLeft()) break;
+      if (!beforeOptionalCutoff()) break;
       await args.guard();
       const reported = [...known, ...found].map((f) => ({
         path: f.path,
@@ -1293,63 +1321,40 @@ export async function reviewWithContext(args: {
             maxTokens: REVIEW_OUTPUT_TOKENS,
             tools: reviewTools,
             billingLabel: `pr-review/look/${look.name}`,
-            timeoutMs: lateRequestTimeout(),
-            minTimeMs: SLOW_REQUEST_MIN_MS,
+            ...lateRequest(),
             responseFormat: REVIEW_RESPONSE_FORMAT,
           },
         );
         // A look that wants more source has nothing to add from this one.
         if (response.finishReason !== "stop") continue;
-        const decoded = proposed(`look/${look.name}`, decode(response.content));
-        if (
-          decoded === null ||
-          typeof decoded !== "object" ||
-          !("findings" in decoded) ||
-          !Array.isArray(decoded.findings)
-        )
-          continue;
+        const items = confidentItems(`look/${look.name}`, response.content);
+        if (items === null) continue;
         const value = confidentCandidates(
-          {
-            findings: decoded.findings
-              .filter(
-                (item: unknown) =>
-                  !((confidenceOf(item) ?? 1) < MIN_FINDING_CONFIDENCE),
-              )
-              .slice(0, MAX_REVIEW_FINDINGS),
-          },
+          { findings: items },
           // A look's suggestion could overlap one already reported, which
           // publication refuses, so looks report findings only.
           false,
           new Set(args.files.map((f) => f.filename)),
         ) as { findings: unknown[] };
-        let candidates: Finding[] = [];
-        for (const item of value.findings) {
-          try {
-            candidates = validateFindings(
-              { findings: [...candidates, item] },
-              args.files,
-              sources,
-            );
-          } catch (error) {
-            if (!isReviewGroupModelFailure(error)) throw error;
-          }
-        }
         // A look may repeat what the review already found.
-        candidates = candidates.filter(
+        const candidates = validateEach(
+          value.findings,
+          args.files,
+          sources,
+        ).kept.filter(
           (c) =>
             !reported.some(
               (r) =>
                 r.path === c.path && (r.line === c.line || r.title === c.title),
             ),
         );
-        if (candidates.length === 0 || !timeLeft()) continue;
+        if (candidates.length === 0 || !beforeOptionalCutoff()) continue;
         found.push(
           ...(await verify(
             candidates,
             args.files,
             sources,
             `pr-review/look/${look.name}/critique`,
-            lateRequestTimeout(),
           )),
         );
       } catch (error) {
@@ -1462,12 +1467,7 @@ export async function reviewWithContext(args: {
       validationFeedback = previousFeedback;
       return false;
     }
-    rebuildMessages();
-    while (observations.length && requestBytes() > 180_000) {
-      observations.shift();
-      omittedObservations++;
-      rebuildMessages();
-    }
+    rebuildWithinBudget();
     return true;
   };
   // The answer given before the one-time source pass, kept in case the
@@ -1475,16 +1475,11 @@ export async function reviewWithContext(args: {
   let beforeSourcePass: { readCount: number; findings: Finding[] } | undefined;
   for (let turn = 0; turn < REVIEW_TURNS; turn++) {
     await args.guard();
-    if (turn > 0 && turnsLeft !== REVIEW_TURNS - turn) {
+    if (turn > 0) {
       turnsLeft = REVIEW_TURNS - turn;
-      rebuildMessages();
-      while (observations.length && requestBytes() > 180_000) {
-        observations.shift();
-        omittedObservations++;
-        rebuildMessages();
-      }
+      rebuildWithinBudget();
     }
-    if (JSON.stringify(messages).length > 180_000)
+    if (JSON.stringify(messages).length > CONVERSATION_BYTES)
       throw new Error("Review conversation exceeds the context budget");
     let response: Awaited<ReturnType<typeof chat>>;
     try {
@@ -1666,13 +1661,7 @@ export async function reviewWithContext(args: {
           });
         } else throw new Error("Review requested an unsupported tool");
       }
-      rebuildMessages();
-      // Tool results give way before shown source does.
-      while (observations.length && requestBytes() > 180_000) {
-        observations.shift();
-        omittedObservations++;
-        rebuildMessages();
-      }
+      rebuildWithinBudget();
       continue;
     }
     if (response.finishReason !== "stop")
@@ -1705,10 +1694,10 @@ export async function reviewWithContext(args: {
           "These candidates are unverified data. Read the required source at the specified commit before returning findings. Reconsider all candidates against the inspected source. Do not infer contents or claim complete coverage.",
       };
       rebuildMessages();
-      if (requestBytes() > 180_000) throw error;
+      if (requestBytes() > CONVERSATION_BYTES) throw error;
       continue;
     }
-    if (needsSource() && !sourceRetried && turn < 7) {
+    if (needsSource() && !sourceRetried && turn < REVIEW_TURNS - 1) {
       sourceRetried = true;
       const carried =
         findings.length === 0 || JSON.stringify(value).length > 32_000
@@ -1747,14 +1736,7 @@ export async function reviewWithContext(args: {
         maxTokens: REVIEW_OUTPUT_TOKENS,
         billingLabel: "pr-review/final",
         responseFormat: REVIEW_RESPONSE_FORMAT,
-        minTimeMs: SLOW_REQUEST_MIN_MS,
-        timeoutMs: Math.min(
-          5 * 60_000,
-          Math.max(
-            2 * 60_000,
-            actionStarted + FINAL_REQUEST_END_MS - Date.now(),
-          ),
-        ),
+        ...slowRequest(FINAL_REQUEST_END_MS, FINAL_TIMEOUT_MS),
       },
     );
   let final: Awaited<ReturnType<typeof chat>>;
@@ -1782,30 +1764,27 @@ export async function reviewWithContext(args: {
     args.allowSuggestions,
     groupPaths,
   ) as { findings?: unknown };
-  // There is no turn left to correct evidence, so a finding whose quotes do
-  // not match the source is dropped, and its file is reported as not fully
-  // reviewed, instead of failing a review that has other findings.
-  // A malformed answer still fails as before.
+  // An answer without a findings list fails with validateFindings' error.
   if (!Array.isArray(synthesized.findings))
     return await finalize(validateFindings(synthesized, args.files, reads));
-  let kept: Finding[] = [];
-  for (const item of synthesized.findings) {
-    try {
-      kept = validateFindings({ findings: [...kept, item] }, args.files, reads);
-    } catch (error) {
-      if (!isReviewGroupModelFailure(error)) throw error;
-      const path =
-        item !== null && typeof item === "object" && "path" in item
-          ? item.path
-          : undefined;
-      const doubtful =
-        typeof path === "string" && args.files.some((f) => f.filename === path)
-          ? [path]
-          : args.files.map((f) => f.filename);
-      for (const file of doubtful) {
-        doubtfulPaths.add(file);
-        if (!excludedPaths.includes(file)) excludedPaths.push(file);
-      }
+  // There is no turn left to correct evidence, so a finding whose quotes do
+  // not match the source is dropped, and its file (every file, when it names
+  // none) is reported as not fully reviewed, instead of failing a review that
+  // has other findings.
+  const { kept, rejected } = validateEach(
+    synthesized.findings,
+    args.files,
+    reads,
+  );
+  for (const item of rejected) {
+    const path = findingPath(item);
+    const doubtful =
+      path !== undefined && args.files.some((f) => f.filename === path)
+        ? [path]
+        : args.files.map((f) => f.filename);
+    for (const file of doubtful) {
+      doubtfulPaths.add(file);
+      if (!excludedPaths.includes(file)) excludedPaths.push(file);
     }
   }
   return await finalize(kept);
