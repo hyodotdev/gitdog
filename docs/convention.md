@@ -86,11 +86,11 @@
 
 ### Authentication in Convex Functions
 
-- Always use `getAuthUserId(ctx)` from `@convex-dev/auth/server` to check authentication
+- Always use `getAuthUserId(ctx)` from `convex/_utils/auth.ts` to check authentication
 - Example:
 
   ```typescript
-  import { getAuthUserId } from "@convex-dev/auth/server";
+  import { getAuthUserId } from "../_utils/auth";
 
   export const myFunction = query({
     args: {},

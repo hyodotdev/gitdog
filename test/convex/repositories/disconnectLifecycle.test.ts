@@ -7,6 +7,7 @@ import { api, internal } from "../../../convex/_generated/api";
 import { internalAction } from "../../../convex/_generated/server";
 import schema from "../../../convex/schema";
 import { CLAIMED_EXECUTION_RECOVERY_GRACE_MS } from "../../../convex/ticketActions/executionRecovery";
+import { asUser } from "../../helpers/auth";
 
 const noopIndexRepository = internalAction({
   args: {
@@ -127,7 +128,7 @@ describe("repository lifecycle fencing", () => {
   it("applies repeated desired activity states without toggling or duplicate jobs", async () => {
     const t = convexTest(schema, modules);
     const { userId, repositoryId } = await insertRepository(t);
-    const owner = t.withIdentity({ subject: `${userId}|test-session` });
+    const owner = await asUser(t, userId);
     for (let i = 0; i < 2; i++)
       await owner.mutation(api.repositories.mutation.toggleActive, {
         repositoryId,
@@ -157,9 +158,7 @@ describe("repository lifecycle fencing", () => {
   it("bumps on pause, schedules a fresh resume, and rejects stale publication", async () => {
     const t = convexTest(schema, modules);
     const { userId, repositoryId } = await insertRepository(t);
-    const authenticated = t.withIdentity({
-      subject: `${userId}|test-session`,
-    });
+    const authenticated = await asUser(t, userId);
 
     await authenticated.mutation(api.repositories.mutation.toggleActive, {
       repositoryId,
@@ -227,10 +226,8 @@ describe("repository lifecycle fencing", () => {
       });
       return { invitationId, inviteeUserId };
     });
-    const owner = t.withIdentity({ subject: `${userId}|test-session` });
-    const invitee = t.withIdentity({
-      subject: `${fixture.inviteeUserId}|test-session`,
-    });
+    const owner = await asUser(t, userId);
+    const invitee = await asUser(t, fixture.inviteeUserId);
 
     await owner.mutation(api.repositories.mutation.remove, { repositoryId });
 
@@ -563,9 +560,7 @@ describe("repository lifecycle fencing", () => {
       };
     });
 
-    const authenticated = t.withIdentity({
-      subject: `${userId}|test-session`,
-    });
+    const authenticated = await asUser(t, userId);
     await authenticated.mutation(api.repositories.mutation.remove, {
       repositoryId,
     });
@@ -756,9 +751,7 @@ describe("repository lifecycle fencing", () => {
       });
       return { foreignRepositoryId, otherUserId, storageId };
     });
-    const authenticated = t.withIdentity({
-      subject: `${userId}|test-session`,
-    });
+    const authenticated = await asUser(t, userId);
     await authenticated.mutation(api.repositories.mutation.remove, {
       repositoryId,
     });

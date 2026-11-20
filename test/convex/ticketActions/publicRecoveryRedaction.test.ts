@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { api, internal } from "../../../convex/_generated/api";
 import schema from "../../../convex/schema";
+import { asUser } from "../../helpers/auth";
 
 const modules = {
   "../../../convex/_generated/api.ts": () =>
@@ -83,9 +84,7 @@ describe("public ticket recovery redaction", () => {
       });
       return { userId, ticketId, actionId };
     });
-    const caller = t.withIdentity({
-      subject: `${fixture.userId}|test-session`,
-    });
+    const caller = await asUser(t, fixture.userId);
 
     const [tickets, ticket, actions, action] = await Promise.all([
       caller.query(api.tickets.query.list, {}),

@@ -6,6 +6,7 @@ import type { Doc, Id } from "../../../convex/_generated/dataModel";
 import { getCanonicalGitHubRepositoryFullNameKey } from "../../../convex/github/repositoryIdentity";
 import { REPOSITORY_ROUTE_DUPLICATE_LIMIT } from "../../../convex/repositories/query";
 import schema from "../../../convex/schema";
+import { asUser } from "../../helpers/auth";
 
 const modules = {
   "../../../convex/_generated/api.ts": () =>
@@ -231,7 +232,7 @@ describe("repository route access", () => {
       disconnectCleanupPhase: "tree",
     });
 
-    const caller = t.withIdentity({ subject: `${callerId}|test-session` });
+    const caller = await asUser(t, callerId);
     const [repositories, repositoryByRoute, repositoryById] = await Promise.all(
       [
         caller.query(api.repositories.query.list, {}),
@@ -293,9 +294,9 @@ describe("repository route access", () => {
         ragContinuationToken: "private-token",
       });
     });
-    const repo = await t
-      .withIdentity({ subject: `${userId}|test-session` })
-      .query(api.repositories.query.getById, { repositoryId });
+    const repo = await (
+      await asUser(t, userId)
+    ).query(api.repositories.query.getById, { repositoryId });
     expect(repo?.indexingProgress).toEqual({
       phase: "search",
       lastProgressAt: 1000,
@@ -314,9 +315,9 @@ describe("repository route access", () => {
     const callerId = await t.run(async (ctx) => ctx.db.insert("users", {}));
     const repositoryId = await insertRepository(t, callerId, "Owner/Repo");
 
-    const repository = await t
-      .withIdentity({ subject: `${callerId}|test-session` })
-      .query(api.repositories.query.get, { owner: "owner", repo: "repo" });
+    const repository = await (
+      await asUser(t, callerId)
+    ).query(api.repositories.query.get, { owner: "owner", repo: "repo" });
 
     expect(repository).toMatchObject({
       _id: repositoryId,
@@ -335,9 +336,9 @@ describe("repository route access", () => {
     await insertRepository(t, otherUserId);
     const ownedRepositoryId = await insertRepository(t, callerId);
 
-    const repository = await t
-      .withIdentity({ subject: `${callerId}|test-session` })
-      .query(api.repositories.query.get, { owner: "owner", repo: "repo" });
+    const repository = await (
+      await asUser(t, callerId)
+    ).query(api.repositories.query.get, { owner: "owner", repo: "repo" });
 
     expect(repository).toMatchObject({
       _id: ownedRepositoryId,
@@ -381,9 +382,9 @@ describe("repository route access", () => {
       });
     });
 
-    const repository = await t
-      .withIdentity({ subject: `${callerId}|test-session` })
-      .query(api.repositories.query.get, { owner: "owner", repo: "repo" });
+    const repository = await (
+      await asUser(t, callerId)
+    ).query(api.repositories.query.get, { owner: "owner", repo: "repo" });
 
     expect(repository).toMatchObject({
       _id: sharedRepositoryId,
@@ -397,9 +398,9 @@ describe("repository route access", () => {
     await insertRepository(t, callerId);
     await insertInstallation(t, callerId);
 
-    const repository = await t
-      .withIdentity({ subject: `${callerId}|test-session` })
-      .query(api.repositories.query.get, { owner: "owner", repo: "repo" });
+    const repository = await (
+      await asUser(t, callerId)
+    ).query(api.repositories.query.get, { owner: "owner", repo: "repo" });
 
     expect(repository).not.toHaveProperty("invitationUnavailableReason");
   });
@@ -425,9 +426,9 @@ describe("repository route access", () => {
       await insertRepository(t, callerId);
       await insertInstallation(t, callerId, state);
 
-      const repository = await t
-        .withIdentity({ subject: `${callerId}|test-session` })
-        .query(api.repositories.query.get, { owner: "owner", repo: "repo" });
+      const repository = await (
+        await asUser(t, callerId)
+      ).query(api.repositories.query.get, { owner: "owner", repo: "repo" });
 
       expect(repository).toMatchObject({
         invitationUnavailableReason: expectedReason,
@@ -444,9 +445,10 @@ describe("repository route access", () => {
     }
 
     await expect(
-      t
-        .withIdentity({ subject: `${callerId}|test-session` })
-        .query(api.repositories.query.get, { owner: "owner", repo: "repo" }),
+      (await asUser(t, callerId)).query(api.repositories.query.get, {
+        owner: "owner",
+        repo: "repo",
+      }),
     ).rejects.toThrow("repository lookup exceeded the duplicate safety limit");
   });
 });

@@ -1,30 +1,14 @@
-/** Keep web redirects same-origin and allow the CLI's exact loopback URL. */
-export function resolveAuthRedirect(
-  redirectTo: string,
-  siteUrl: string,
-): string {
-  const loopback =
-    /^http:\/\/127\.0\.0\.1:([1-9]\d{3,4})\/gitdog\/callback\?state=[a-f0-9]{64}$/.exec(
-      redirectTo,
-    );
-  if (
-    loopback &&
-    loopback[0] === redirectTo &&
-    Number(loopback[1]) >= 1024 &&
-    Number(loopback[1]) <= 65535
-  ) {
-    return redirectTo;
-  }
+/**
+ * Local ports the CLI listens on for its sign-in callback, tried in order.
+ * @convex-dev/auth 2.0 returns only to exact origins, so the CLI cannot pick
+ * a random port. packages/cli/src/auth.ts lists the same ports.
+ */
+export const CLI_LOGIN_PORTS = [41721, 41722, 41723, 41724, 41725] as const;
 
-  const base = new URL(siteUrl);
-  const target = new URL(redirectTo, base);
-  if (
-    (base.protocol === "https:" || base.protocol === "http:") &&
-    target.origin === base.origin &&
-    target.username === "" &&
-    target.password === ""
-  ) {
-    return target.toString();
-  }
-  throw new Error("Invalid authentication redirect destination");
+/** Where a sign-in may return: Gitdog's site or the CLI's loopback listener. */
+export function allowedSignInOrigins(siteUrl: string): string[] {
+  return [
+    new URL(siteUrl).origin,
+    ...CLI_LOGIN_PORTS.map((port) => `http://127.0.0.1:${port}`),
+  ];
 }

@@ -1,4 +1,5 @@
 import { useAuthActions } from "@convex-dev/auth/react";
+import { useSignInWithGithub } from "@convex-dev/auth/methods/github/react";
 import { SiGithub } from "@icons-pack/react-simple-icons";
 import { useConvexAuth, useMutation, useQuery } from "convex/react";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
@@ -31,7 +32,8 @@ export function LegalConsentPage() {
   const attestLegalEligibility = useMutation(
     api.users.mutation.attestLegalEligibility,
   );
-  const { signIn, signOut } = useAuthActions();
+  const { signOut } = useAuthActions();
+  const { signIn } = useSignInWithGithub(api.auth);
   const { isAuthenticated, isLoading: isAuthResolving } = useConvexAuth();
   // Captured once: the visitor already confirmed eligibility on this tab and is
   // coming back from the GitHub redirect, so the form must not restart empty.
@@ -207,11 +209,11 @@ export function LegalConsentPage() {
     setIsSubmitting(true);
     setError(null);
     markPendingLegalConsent();
-    try {
-      await signIn("github", {
-        redirectTo: `${location.pathname}${location.search}`,
-      });
-    } catch {
+    // Success leaves the page for GitHub; only a failure comes back here.
+    const started = await signIn({
+      redirectTo: `${window.location.origin}${location.pathname}${location.search}`,
+    });
+    if (started.status === "error") {
       clearPendingLegalConsent();
       setError(t("auth.legalConsent.signInError"));
       setIsSubmitting(false);

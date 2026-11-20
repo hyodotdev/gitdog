@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { api, internal } from "../../../convex/_generated/api";
 import schema from "../../../convex/schema";
+import { asUser } from "../../helpers/auth";
 
 const modules = {
   "../../../convex/_generated/api.ts": () =>
@@ -91,20 +92,20 @@ describe("repository query bounds", () => {
       return { userId, repositoryId };
     });
 
-    const files = await t
-      .withIdentity({ subject: `${userId}|test-session` })
-      .query(api.repoIndexing.query.getFileList, {
-        repositoryId,
-        limit: 1_000,
-      });
+    const files = await (
+      await asUser(t, userId)
+    ).query(api.repoIndexing.query.getFileList, {
+      repositoryId,
+      limit: 1_000,
+    });
 
     expect(files).toHaveLength(500);
-    const logs = await t
-      .withIdentity({ subject: `${userId}|test-session` })
-      .query(api.repoIndexing.query.getIndexingLogs, {
-        repositoryId,
-        limit: 1_000,
-      });
+    const logs = await (
+      await asUser(t, userId)
+    ).query(api.repoIndexing.query.getIndexingLogs, {
+      repositoryId,
+      limit: 1_000,
+    });
     expect(logs).toHaveLength(500);
   });
 
@@ -180,9 +181,7 @@ describe("repository query bounds", () => {
       });
       return { userId, installationId, repositoryId, now };
     });
-    const authenticated = t.withIdentity({
-      subject: `${fixture.userId}|test-session`,
-    });
+    const authenticated = await asUser(t, fixture.userId);
 
     await expect(
       authenticated.query(api.repoIndexing.query.getFileContent, {

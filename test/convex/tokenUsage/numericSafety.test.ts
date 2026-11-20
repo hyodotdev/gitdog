@@ -6,6 +6,7 @@ import { MAX_COLLECT_LIMIT } from "../../../convex/_utils/pagination";
 import schema from "../../../convex/schema";
 import { calculateSafeBillingCosts } from "../../../convex/subscriptions/query";
 import { readQuotaTokenUsage } from "../../../convex/tokenUsage/quota";
+import { asUser } from "../../helpers/auth";
 
 const modules = {
   "../../../convex/_generated/api.ts": () =>
@@ -173,7 +174,7 @@ describe("token usage numeric safety", () => {
         });
       }
     });
-    const authenticated = t.withIdentity({ subject: `${userId}|session` });
+    const authenticated = await asUser(t, userId);
 
     await expect(
       authenticated.query(api.tokenUsage.query.getCurrentMonthUsage, {}),
@@ -206,7 +207,7 @@ describe("token usage numeric safety", () => {
         createdAt: Date.now(),
       });
     });
-    const authenticated = t.withIdentity({ subject: `${userId}|session` });
+    const authenticated = await asUser(t, userId);
 
     await expect(
       authenticated.query(api.tokenUsage.query.getCurrentMonthUsage, {}),

@@ -5,7 +5,7 @@ import {
   fetchAccessibleGitHubInstallationIds,
   GITHUB_INSTALLATION_ATTESTATION_REQUEST_TIMEOUT_MS,
   GITHUB_INSTALLATION_ATTESTATION_TTL_MS,
-  persistGitHubInstallationAttestation,
+  saveInstallationAttestation,
 } from "../../../convex/github/oauthInstallationAttestation";
 import schema from "../../../convex/schema";
 
@@ -135,144 +135,72 @@ describe("GitHub OAuth installation access attestation", () => {
     ).rejects.toThrow("incomplete installation access data");
   });
 
-  it("stores one current snapshot and strips untrusted profile fields", async () => {
-    const now = 1_800_000_000_000;
-    vi.spyOn(Date, "now").mockReturnValue(now);
-    const t = convexTest(schema, modules);
-
-    const userId = await t.run(async (ctx) =>
-      persistGitHubInstallationAttestation(ctx, {
-        existingUserId: null,
-        type: "oauth",
-        provider: { id: "github", type: "oauth" },
-        profile: {
-          githubAccountId: "654",
-          githubInstallationIds: [321, 123],
-          name: "octocat",
-          email: "octocat@example.com",
-          image: "https://avatars.example/octocat",
-          accessToken: "must-not-be-stored",
-        },
-      }),
-    );
-    const state = await t.run(async (ctx) => ({
-      user: await ctx.db.get(userId),
-      attestations: await ctx.db
-        .query("githubOAuthInstallationAttestations")
-        .collect(),
-    }));
-
-    expect(state.user).toMatchObject({
-      name: "octocat",
-      email: "octocat@example.com",
-      image: "https://avatars.example/octocat",
-      emailVerificationTime: now,
-    });
-    expect(state.user).not.toHaveProperty("githubAccountId");
-    expect(state.user).not.toHaveProperty("githubInstallationIds");
-    expect(state.user).not.toHaveProperty("accessToken");
-    expect(state.attestations).toHaveLength(1);
-    expect(state.attestations[0]).toMatchObject({
-      userId,
-      githubAccountId: "654",
-      installationIds: [123, 321],
-      attestedAt: now,
-      expiresAt: now + GITHUB_INSTALLATION_ATTESTATION_TTL_MS,
-      updatedAt: now,
-    });
-    expect(state.attestations[0]).not.toHaveProperty("accessToken");
-  });
-
-  it("replaces the current snapshot only for the exact linked account", async () => {
+  it("stores one sorted snapshot per user for the linked account", async () => {
     const now = 1_800_000_000_000;
     const mockedNow = vi.spyOn(Date, "now").mockReturnValue(now);
     const t = convexTest(schema, modules);
-    const userId = await t.run(async (ctx) => {
-      const userId = await ctx.db.insert("users", { name: "before" });
-      await ctx.db.insert("authAccounts", {
-        userId,
-        provider: "github",
-        providerAccountId: "654",
-      });
-      return userId;
-    });
+    const userId = await t.run(async (ctx) =>
+      ctx.db.insert("users", { githubAccountId: "654" }),
+    );
 
-    await t.run(async (ctx) =>
-      persistGitHubInstallationAttestation(ctx, {
-        existingUserId: userId,
-        type: "oauth",
-        provider: { id: "github", type: "oauth" },
-        profile: {
-          githubAccountId: "654",
-          githubInstallationIds: [123],
-          name: "first",
-        },
+    await t.run((ctx) =>
+      saveInstallationAttestation(ctx, {
+        userId,
+        githubAccountId: "654",
+        installationIds: [321, 123],
+        now,
       }),
     );
     mockedNow.mockReturnValue(now + 1_000);
-    await t.run(async (ctx) =>
-      persistGitHubInstallationAttestation(ctx, {
-        existingUserId: userId,
-        type: "oauth",
-        provider: { id: "github", type: "oauth" },
-        profile: {
-          githubAccountId: "654",
-          githubInstallationIds: [456],
-          name: "second",
-        },
+    await t.run((ctx) =>
+      saveInstallationAttestation(ctx, {
+        userId,
+        githubAccountId: "654",
+        installationIds: [456],
+        now: now + 1_000,
       }),
     );
-    const state = await t.run(async (ctx) => ({
-      user: await ctx.db.get(userId),
-      attestations: await ctx.db
-        .query("githubOAuthInstallationAttestations")
-        .collect(),
-    }));
+    const attestations = await t.run((ctx) =>
+      ctx.db.query("githubOAuthInstallationAttestations").collect(),
+    );
 
-    expect(state.user?.name).toBe("second");
-    expect(state.attestations).toHaveLength(1);
-    expect(state.attestations[0]).toMatchObject({
+    expect(attestations).toHaveLength(1);
+    expect(attestations[0]).toMatchObject({
       userId,
       githubAccountId: "654",
       installationIds: [456],
       attestedAt: now + 1_000,
+      expiresAt: now + 1_000 + GITHUB_INSTALLATION_ATTESTATION_TTL_MS,
     });
   });
 
-  it("rolls back when the OAuth identity does not match the linked account", async () => {
+  it("refuses invalid ids and a snapshot owned by another account", async () => {
     const t = convexTest(schema, modules);
-    const userId = await t.run(async (ctx) => {
-      const userId = await ctx.db.insert("users", { name: "before" });
-      await ctx.db.insert("authAccounts", {
-        userId,
-        provider: "github",
-        providerAccountId: "654",
-      });
-      return userId;
-    });
-
-    await expect(
-      t.run(async (ctx) =>
-        persistGitHubInstallationAttestation(ctx, {
-          existingUserId: userId,
-          type: "oauth",
-          provider: { id: "github", type: "oauth" },
-          profile: {
-            githubAccountId: "999",
-            githubInstallationIds: [123],
-            name: "attacker",
-          },
+    const [first, second] = await t.run(async (ctx) => [
+      await ctx.db.insert("users", { githubAccountId: "654" }),
+      await ctx.db.insert("users", { githubAccountId: "777" }),
+    ]);
+    const save = (
+      userId: typeof first,
+      githubAccountId: string,
+      installationIds: unknown,
+    ) =>
+      t.run((ctx) =>
+        saveInstallationAttestation(ctx, {
+          userId,
+          githubAccountId,
+          installationIds,
+          now: Date.now(),
         }),
-      ),
-    ).rejects.toThrow("GitHub account identity changed during sign-in");
-    const state = await t.run(async (ctx) => ({
-      user: await ctx.db.get(userId),
-      attestations: await ctx.db
-        .query("githubOAuthInstallationAttestations")
-        .collect(),
-    }));
+      );
 
-    expect(state.user?.name).toBe("before");
-    expect(state.attestations).toHaveLength(0);
+    await expect(save(first, "not-a-number", [1])).rejects.toThrow(
+      "attestation is invalid",
+    );
+    await expect(save(first, "654", [1, 1])).rejects.toThrow(
+      "attestation is invalid",
+    );
+    await save(first, "654", [1]);
+    await expect(save(second, "654", [2])).rejects.toThrow("owner mismatch");
   });
 });

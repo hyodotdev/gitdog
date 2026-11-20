@@ -8,6 +8,7 @@ import {
   encryptProviderKey,
 } from "../../../convex/providerApiKeys/crypto";
 import schema from "../../../convex/schema";
+import { asUser } from "../../helpers/auth";
 
 const modules = {
   "../../../convex/_generated/api.ts": () =>
@@ -44,7 +45,7 @@ async function signedIn(t: ReturnType<typeof convexTest>) {
   const userId = await t.run(async (ctx) => ctx.db.insert("users", {}));
   return {
     userId,
-    as: t.withIdentity({ subject: `${userId}|session` }),
+    as: await asUser(t, userId),
   };
 }
 
@@ -151,9 +152,10 @@ describe("provider key management", () => {
     expect(listed[0]).not.toHaveProperty("ciphertext");
     expect(listed[0]).not.toHaveProperty("iv");
 
-    const other = t.withIdentity({
-      subject: `${await t.run(async (ctx) => ctx.db.insert("users", {}))}|other`,
-    });
+    const other = await asUser(
+      t,
+      await t.run(async (ctx) => ctx.db.insert("users", {})),
+    );
     await expect(
       other.query(api.providerApiKeys.query.list, {}),
     ).resolves.toEqual([]);

@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { api, internal } from "../../../convex/_generated/api";
 import type { Doc } from "../../../convex/_generated/dataModel";
 import schema from "../../../convex/schema";
+import { asUser } from "../../helpers/auth";
 
 const modules = {
   "../../../convex/_generated/api.ts": () =>
@@ -139,12 +140,8 @@ describe("invitation identity authorization", () => {
         createdAt: Date.now(),
       }),
     );
-    const invitee = t.withIdentity({
-      subject: `${inviteeUserId}|test-session`,
-    });
-    const attacker = t.withIdentity({
-      subject: `${attackerUserId}|test-session`,
-    });
+    const invitee = await asUser(t, inviteeUserId);
+    const attacker = await asUser(t, attackerUserId);
 
     await expect(
       invitee.query(api.invitations.query.listPending, {}),
@@ -224,9 +221,7 @@ describe("invitation identity authorization", () => {
         createdAt: Date.now(),
       });
     });
-    const invitee = t.withIdentity({
-      subject: `${inviteeUserId}|test-session`,
-    });
+    const invitee = await asUser(t, inviteeUserId);
 
     await expect(
       invitee.query(api.invitations.query.listPending, {}),
@@ -257,9 +252,7 @@ describe("invitation identity authorization", () => {
         createdAt: Date.now(),
       });
     });
-    const invitee = t.withIdentity({
-      subject: `${inviteeUserId}|test-session`,
-    });
+    const invitee = await asUser(t, inviteeUserId);
 
     await expect(
       invitee.query(api.invitations.query.listPending, {}),
@@ -306,9 +299,7 @@ describe("invitation identity authorization", () => {
           createdAt: Date.now(),
         });
       });
-      const invitee = t.withIdentity({
-        subject: `${inviteeUserId}|test-session`,
-      });
+      const invitee = await asUser(t, inviteeUserId);
 
       await expect(
         invitee.query(api.invitations.query.listPending, {}),
@@ -351,11 +342,7 @@ describe("invitation identity authorization", () => {
         status: "pending",
         createdAt: now,
       });
-      await ctx.db.insert("authAccounts", {
-        userId: inviteeUserId,
-        provider: "github",
-        providerAccountId: "777",
-      });
+      await ctx.db.patch(inviteeUserId, { githubAccountId: "777" });
     });
 
     await expect(
@@ -410,9 +397,7 @@ describe("invitation identity authorization", () => {
       });
       return id;
     });
-    const invitee = t.withIdentity({
-      subject: `${inviteeUserId}|test-session`,
-    });
+    const invitee = await asUser(t, inviteeUserId);
 
     await expect(
       invitee.mutation(api.invitations.mutation.accept, { invitationId }),

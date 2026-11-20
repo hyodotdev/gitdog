@@ -10,6 +10,7 @@ import {
 } from "../../../convex/github/accessVerification";
 import { GITHUB_INSTALLATION_ATTESTATION_TTL_MS } from "../../../convex/github/oauthInstallationAttestation";
 import schema from "../../../convex/schema";
+import { asUser } from "../../helpers/auth";
 
 const modules = {
   "../../../convex/_generated/api.ts": () =>
@@ -50,14 +51,10 @@ async function setup(linkedAccountId = "654") {
   const t = convexTest(schema, modules);
   const userId = await t.run(async (ctx) => {
     const userId = await ctx.db.insert("users", { name: "octocat" });
-    await ctx.db.insert("authAccounts", {
-      userId,
-      provider: "github",
-      providerAccountId: linkedAccountId,
-    });
+    await ctx.db.patch(userId, { githubAccountId: linkedAccountId });
     return userId;
   });
-  const as = t.withIdentity({ subject: `${userId}|session` });
+  const as = await asUser(t, userId);
   return { t, as, userId };
 }
 

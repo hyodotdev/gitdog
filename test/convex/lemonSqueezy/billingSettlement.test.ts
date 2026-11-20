@@ -21,6 +21,7 @@ import {
   type WebhookEnvelope,
 } from "../../../convex/lemonSqueezy/webhook";
 import schema from "../../../convex/schema";
+import { asUser } from "../../helpers/auth";
 
 const modules = {
   "../../../convex/_generated/api.ts": () =>
@@ -1771,9 +1772,7 @@ describe("authoritative subscription and invoice settlement", () => {
       status: "open",
     });
 
-    const authenticated = t.withIdentity({
-      subject: `${adminUserId}|admin-session`,
-    });
+    const authenticated = await asUser(t, adminUserId);
     await expect(
       authenticated.mutation(
         api.admin.paymentMutation.requeueSubscriptionInvoiceReview,
@@ -3178,9 +3177,7 @@ describe("authoritative subscription and invoice settlement", () => {
       attemptCount: 1,
     });
     const reviewId = firstAttemptReview.review._id;
-    const admin = t.withIdentity({
-      subject: `${adminUserId}|admin-session`,
-    });
+    const admin = await asUser(t, adminUserId);
 
     await expect(
       admin.mutation(api.admin.paymentMutation.addTokens, {
@@ -3415,9 +3412,7 @@ describe("authoritative subscription and invoice settlement", () => {
           boundaryId,
         };
       });
-    const admin = t.withIdentity({
-      subject: `${adminUserId}|admin-session`,
-    });
+    const admin = await asUser(t, adminUserId);
     const requeueArgs = {
       manualReviewId: reviewId,
       evidenceReference: "ls-support-case-underfunded-7193",

@@ -3,19 +3,18 @@ import { promisify } from "node:util";
 import { createServer, type ServerResponse } from "node:http";
 import { randomBytes } from "node:crypto";
 import { httpClient, invoke } from "./client.js";
-import {
-  DEFAULT_API_URL,
-  DEFAULT_AUTH_SITE_URL,
-  DEFAULT_SITE_URL,
-  SessionStore,
-  validTokens,
-  tokenExpiresSoon,
-} from "./storage.js";
+import { DEFAULT_SITE_URL, SessionStore, tokensFromBundle } from "./storage.js";
 import { asRecord, type Ui } from "./ui.js";
 
 const runFile = promisify(execFile);
 export const CALLBACK_PATH = "/gitdog/callback";
 export const LOGIN_RESULT_PATH = "/cli/login";
+// Gitdog's sign-in returns only to exact origins, so the listener uses one of
+// these ports. convex/_utils/authRedirect.ts allows the same list.
+export const LOGIN_CALLBACK_PORTS = [41721, 41722, 41723, 41724, 41725];
+// The query parameters @convex-dev/auth adds when it returns to the CLI.
+const CODE_PARAM = "convexAuthCode";
+const ERROR_PARAM = "convexAuthError";
 
 type LoginOutcome = "success" | "failed";
 
@@ -100,6 +99,8 @@ export async function createLoginListener(
     (request, response) => {
       response.setHeader("Content-Type", "text/plain; charset=utf-8");
       response.setHeader("Cache-Control", "no-store");
+      // One-shot listener on a fixed port: never leave a reusable socket.
+      response.setHeader("Connection", "close");
       response.setHeader("Referrer-Policy", "no-referrer");
       response.setHeader(
         "Content-Security-Policy",
@@ -134,14 +135,17 @@ export async function createLoginListener(
         response.writeHead(410).end("This sign-in has already completed.");
         return;
       }
-      if (url.searchParams.has("error") || !url.searchParams.has("code")) {
+      if (
+        url.searchParams.has(ERROR_PARAM) ||
+        !url.searchParams.has(CODE_PARAM)
+      ) {
         void sendToLoginResult(response, siteUrl, "failed");
         finish(new Error("GitHub sign-in was declined or failed."));
         return;
       }
-      const value = url.searchParams.get("code");
+      const value = url.searchParams.get(CODE_PARAM);
       if (
-        url.searchParams.getAll("code").length !== 1 ||
+        url.searchParams.getAll(CODE_PARAM).length !== 1 ||
         !value ||
         value.length > 4096
       ) {
@@ -161,14 +165,25 @@ export async function createLoginListener(
       ),
     timeoutMs,
   );
-  try {
-    await new Promise<void>((resolve, reject) => {
-      server.once("error", reject);
-      server.listen(0, "127.0.0.1", () => {
-        server.off("error", reject);
-        resolve();
+  const listenOn = (port: number) =>
+    new Promise<boolean>((resolve, reject) => {
+      const onError = (error: NodeJS.ErrnoException) =>
+        error.code === "EADDRINUSE" ? resolve(false) : reject(error);
+      server.once("error", onError);
+      server.listen(port, "127.0.0.1", () => {
+        server.off("error", onError);
+        resolve(true);
       });
     });
+  try {
+    let listening = false;
+    for (const port of LOGIN_CALLBACK_PORTS) {
+      if ((listening = await listenOn(port))) break;
+    }
+    if (!listening)
+      throw new Error(
+        `Ports ${LOGIN_CALLBACK_PORTS.join(", ")} are all in use. Free one and run npx gitdog@latest login again.`,
+      );
   } catch (error) {
     clearTimeout(timer);
     throw error;
@@ -202,16 +217,12 @@ export async function createLoginListener(
   };
 }
 
-export function validateAuthRedirect(value: string, apiUrl: string): void {
+/** GitHub's authorization page is the only place sign-in may send the user. */
+export function validateAuthRedirect(value: string): void {
   const url = new URL(value);
-  const api = new URL(apiUrl);
-  const siteOrigin = api.origin.replace(/\.convex\.cloud$/, ".convex.site");
-  const allowedOrigins = [api.origin, siteOrigin];
-  if (api.origin === new URL(DEFAULT_API_URL).origin)
-    allowedOrigins.push(new URL(DEFAULT_AUTH_SITE_URL).origin);
   if (
-    !allowedOrigins.includes(url.origin) ||
-    url.pathname !== "/api/auth/signin/github" ||
+    url.origin !== "https://github.com" ||
+    url.pathname !== "/login/oauth/authorize" ||
     url.username ||
     url.password ||
     url.hash
@@ -236,18 +247,17 @@ export async function login(
   try {
     ui.info("1 / 2  Sign in with your GitHub account");
     const result = asRecord(
-      await invoke(client, "action", "auth:signIn", {
-        provider: "github",
-        params: { redirectTo: listener.redirectTo },
+      await invoke(client, "mutation", "auth:startSignInWithGithub", {
+        redirectTo: listener.redirectTo,
       }),
     );
     listener.signal.throwIfAborted();
     if (
       typeof result?.redirect !== "string" ||
-      typeof result.verifier !== "string"
+      typeof result.state !== "string"
     )
       throw new Error("The server did not start GitHub sign-in.");
-    validateAuthRedirect(result.redirect, apiUrl);
+    validateAuthRedirect(result.redirect);
     ui.info(
       `Open this URL in a browser on this computer:\n${result.redirect}\n`,
     );
@@ -259,18 +269,24 @@ export async function login(
     ui.info("2 / 2  Securely save your Gitdog session");
     let exchange: unknown;
     try {
-      exchange = await invoke(client, "action", "auth:signIn", {
-        params: { code },
-        verifier: result.verifier,
-      });
+      exchange = await invoke(
+        client,
+        "mutation",
+        "auth:completeSignInWithGithub",
+        { code, state: result.state },
+      );
     } catch {
       listener.signal.throwIfAborted();
       throw new Error(
         "Could not finish sign-in. Check that the CLI loopback callback is deployed, then run npx gitdog@latest login again.",
       );
     }
-    const tokens = asRecord(exchange)?.tokens;
-    if (!validTokens(tokens))
+    const completed = asRecord(exchange);
+    const tokens =
+      completed?.status === "complete"
+        ? tokensFromBundle(completed.tokens)
+        : null;
+    if (!tokens)
       throw new Error(
         "Sign-in did not return a session. Run npx gitdog@latest login again.",
       );
@@ -310,24 +326,15 @@ export async function logout(
     );
   let revoked = false;
   await store.locked(async () => {
-    let session = localOnly ? undefined : await store.read();
+    const session = localOnly ? undefined : await store.read();
     if (session) {
-      const client = httpClient(session.apiUrl, 30_000);
-      if (tokenExpiresSoon(session.token)) {
-        const result = asRecord(
-          await invoke(client, "action", "auth:signIn", {
-            refreshToken: session.refreshToken,
-          }),
-        );
-        if (!validTokens(result?.tokens))
-          throw new Error(
-            "Could not refresh this session to revoke it. Run logout --local to remove only local credentials.",
-          );
-        session = { ...session, ...result.tokens };
-        await store.save(session);
-      }
-      client.setAuth(session.token);
-      await invoke(client, "action", "auth:signOut");
+      // Signing out needs only the refresh token, not a fresh access token.
+      await invoke(
+        httpClient(session.apiUrl, 30_000),
+        "mutation",
+        "auth:signOut",
+        { refreshToken: session.refreshToken },
+      );
       revoked = true;
     }
     await store.clear();

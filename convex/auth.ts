@@ -1,43 +1,27 @@
-import { convexAuth } from "@convex-dev/auth/server";
-import GitHub from "@auth/core/providers/github";
-import type { MutationCtx } from "./_generated/server";
-import { resolveAuthRedirect } from "./_utils/authRedirect";
-import {
-  fetchAccessibleGitHubInstallationIds,
-  persistGitHubInstallationAttestation,
-} from "./github/oauthInstallationAttestation";
+import { setupConvexAuth } from "@convex-dev/auth/server";
+import { setupGithub } from "@convex-dev/auth/methods/github/server";
+import { components, internal } from "./_generated/api";
+import { allowedSignInOrigins } from "./_utils/authRedirect";
 
-export const { auth, signIn, signOut, store } = convexAuth({
-  providers: [
-    GitHub({
-      clientId: process.env.GITHUB_APP_CLIENT_ID,
-      clientSecret: process.env.GITHUB_APP_CLIENT_SECRET,
-      async profile(profile, tokens) {
-        const githubAccountId = profile.id.toString();
-        const accessToken = tokens.access_token;
-        if (typeof accessToken !== "string" || accessToken.trim() === "") {
-          throw new Error("GitHub user authorization is unavailable");
-        }
-        const githubInstallationIds =
-          await fetchAccessibleGitHubInstallationIds(accessToken);
-        return {
-          id: githubAccountId,
-          name: profile.login, // Use login (username) instead of display name
-          email: typeof profile.email === "string" ? profile.email : undefined,
-          image: profile.avatar_url,
-          githubAccountId,
-          githubInstallationIds,
-        };
-      },
-    }),
-  ],
-  callbacks: {
-    redirect: async ({ redirectTo }) => {
-      const siteUrl = process.env.SITE_URL;
-      if (!siteUrl) throw new Error("SITE_URL is not configured");
-      return resolveAuthRedirect(redirectTo, siteUrl);
-    },
-    createOrUpdateUser: async (ctx, args) =>
-      await persistGitHubInstallationAttestation(ctx as MutationCtx, args),
+const siteUrl = process.env.SITE_URL;
+if (!siteUrl) throw new Error("SITE_URL is not configured");
+
+// One-hour access tokens, as before 2.0: GITDOG_TOKEN automation sends one
+// without refreshing it.
+const core = setupConvexAuth({
+  component: components.auth,
+  accessTokenTtlSeconds: 60 * 60,
+});
+
+export const { signOut, refreshSession, isAuthenticated } = core;
+
+export const { startSignInWithGithub, completeSignInWithGithub } = setupGithub(
+  core,
+  {
+    component: components.authGithub,
+    allowedRedirectOrigins: allowedSignInOrigins(siteUrl),
   },
+).attachUserCallbacks({
+  createUser: internal.users.internalMutation.createUserFromGithub,
+  onSignIn: internal.users.internalMutation.updateUserFromGithub,
 });

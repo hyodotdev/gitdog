@@ -5,6 +5,7 @@ import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import type { MutationCtx } from "../../../convex/_generated/server";
 import schema from "../../../convex/schema";
+import { asUser } from "../../helpers/auth";
 
 const modules = {
   "../../../convex/_generated/api.ts": () =>
@@ -158,11 +159,12 @@ async function expectDeniedWithoutSideEffects(
   fixture: Awaited<ReturnType<typeof insertFixture>>,
 ) {
   await expect(
-    t
-      .withIdentity({ subject: `${fixture.memberUserId}|member-session` })
-      .mutation(api.invitations.mutation.accept, {
+    (await asUser(t, fixture.memberUserId)).mutation(
+      api.invitations.mutation.accept,
+      {
         invitationId: fixture.invitationId,
-      }),
+      },
+    ),
   ).rejects.toThrow();
 
   const state = await t.run(async (ctx) => ({
@@ -196,11 +198,12 @@ describe("repository owner team entitlement", () => {
       const fixture = await insertFixture(t, kind);
 
       await expect(
-        t
-          .withIdentity({ subject: `${fixture.memberUserId}|member-session` })
-          .mutation(api.invitations.mutation.accept, {
+        (await asUser(t, fixture.memberUserId)).mutation(
+          api.invitations.mutation.accept,
+          {
             invitationId: fixture.invitationId,
-          }),
+          },
+        ),
       ).resolves.toBe(fixture.invitationId);
 
       await expect(
@@ -258,12 +261,8 @@ describe("repository owner team entitlement", () => {
         joinedAt: Date.now(),
       });
     });
-    const member = t.withIdentity({
-      subject: `${fixture.memberUserId}|member-session`,
-    });
-    const owner = t.withIdentity({
-      subject: `${fixture.ownerUserId}|owner-session`,
-    });
+    const member = await asUser(t, fixture.memberUserId);
+    const owner = await asUser(t, fixture.ownerUserId);
 
     await expect(
       member.query(api.repositoryMembers.query.getMyRole, {
@@ -367,9 +366,7 @@ describe("repository owner team entitlement", () => {
       });
     });
 
-    const member = t.withIdentity({
-      subject: `${fixture.memberUserId}|member-session`,
-    });
+    const member = await asUser(t, fixture.memberUserId);
     await expect(
       member.query(api.repositoryMembers.query.getMyRole, {
         repositoryId: fixture.repositoryId,

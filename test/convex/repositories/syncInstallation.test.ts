@@ -8,6 +8,7 @@ import type { Id } from "../../../convex/_generated/dataModel";
 import { internalMutation } from "../../../convex/_generated/server";
 import * as githubHelpers from "../../../convex/github/helpers";
 import schema from "../../../convex/schema";
+import { asUser } from "../../helpers/auth";
 
 let mockedFetchGitHubAppJsonWithRetry: MockedFunction<
   typeof githubHelpers.fetchGitHubAppJsonWithRetry
@@ -201,14 +202,15 @@ describe("repository installation recovery", () => {
       });
     });
 
-    const result = await t
-      .withIdentity({ subject: `${ownerId}|test-session` })
-      .action(api.repositories.action.syncRepository, { repositoryId });
+    const result = await (
+      await asUser(t, ownerId)
+    ).action(api.repositories.action.syncRepository, { repositoryId });
 
     await expect(
-      t
-        .withIdentity({ subject: `${ownerId}|test-session` })
-        .mutation(api.repositories.mutation.toggleActive, { repositoryId }),
+      (await asUser(t, ownerId)).mutation(
+        api.repositories.mutation.toggleActive,
+        { repositoryId },
+      ),
     ).rejects.toThrow("GitHub App repository access has been removed");
 
     expect(result).toEqual({
@@ -233,9 +235,9 @@ describe("repository installation recovery", () => {
       stargazers_count: 10,
     });
 
-    const result = await t
-      .withIdentity({ subject: `${ownerId}|test-session` })
-      .action(api.repositories.action.syncRepository, { repositoryId });
+    const result = await (
+      await asUser(t, ownerId)
+    ).action(api.repositories.action.syncRepository, { repositoryId });
 
     expect(result).toEqual({ success: true, message: "Sync started" });
     expect(mockedFetchGitHubAppJsonWithRetry.mock.calls[0]?.[0]).toBe(
@@ -302,9 +304,10 @@ describe("repository installation recovery", () => {
     });
 
     await expect(
-      t
-        .withIdentity({ subject: `${ownerId}|test-session` })
-        .action(api.repositories.action.syncRepository, { repositoryId }),
+      (await asUser(t, ownerId)).action(
+        api.repositories.action.syncRepository,
+        { repositoryId },
+      ),
     ).resolves.toEqual({ success: true, message: "Sync started" });
 
     const state = await t.run(async (ctx) => ({
@@ -336,9 +339,9 @@ describe("repository installation recovery", () => {
     await insertInstallation(t, otherUserId, 222);
     const repositoryId = await insertRepository(t, ownerId, 222);
 
-    const result = await t
-      .withIdentity({ subject: `${ownerId}|test-session` })
-      .action(api.repositories.action.syncRepository, { repositoryId });
+    const result = await (
+      await asUser(t, ownerId)
+    ).action(api.repositories.action.syncRepository, { repositoryId });
 
     expect(result).toEqual({
       success: false,
@@ -361,9 +364,9 @@ describe("repository installation recovery", () => {
     await t.run(async (ctx) => {
       await ctx.db.patch(repositoryId, { githubRepositoryId: 999 });
     });
-    const result = await t
-      .withIdentity({ subject: `${ownerId}|test-session` })
-      .action(api.repositories.action.syncRepository, { repositoryId });
+    const result = await (
+      await asUser(t, ownerId)
+    ).action(api.repositories.action.syncRepository, { repositoryId });
     const repository = await t.run(async (ctx) => ctx.db.get(repositoryId));
 
     expect(result).toEqual({
@@ -388,9 +391,9 @@ describe("repository installation recovery", () => {
     );
     const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
 
-    const result = await t
-      .withIdentity({ subject: `${ownerId}|test-session` })
-      .action(api.repositories.action.syncRepository, { repositoryId });
+    const result = await (
+      await asUser(t, ownerId)
+    ).action(api.repositories.action.syncRepository, { repositoryId });
 
     expect(result.success).toBe(false);
     expect(result.message).not.toContain("sensitive");

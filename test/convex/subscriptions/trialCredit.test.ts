@@ -13,6 +13,7 @@ import {
 } from "../../../convex/_ai/config";
 import { getEffectiveSubscriptionEntitlement } from "../../../convex/subscriptions/entitlement";
 import schema from "../../../convex/schema";
+import { asUser } from "../../helpers/auth";
 
 const modules = import.meta.glob("../../../convex/**/*.ts");
 const AFTER_CUTOFF = Date.parse("2026-12-15T12:00:00Z");
@@ -23,7 +24,7 @@ afterEach(() => {
 
 async function signedIn(t: ReturnType<typeof convexTest>) {
   const userId = await t.run(async (ctx) => ctx.db.insert("users", {}));
-  return { userId, as: t.withIdentity({ subject: `${userId}|session` }) };
+  return { userId, as: await asUser(t, userId) };
 }
 
 async function wallet(t: ReturnType<typeof convexTest>) {
@@ -117,7 +118,7 @@ describe("one-time trial credit", () => {
     const userId = await t.run(async (ctx) =>
       ctx.db.insert("users", { name: "octocat" }),
     );
-    const as = t.withIdentity({ subject: `${userId}|session` });
+    const as = await asUser(t, userId);
     const { CURRENT_PRIVACY_POLICY_VERSION, CURRENT_TERMS_VERSION } =
       await import("../../../convex/users/legal");
     vi.useFakeTimers();

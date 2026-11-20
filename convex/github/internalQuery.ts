@@ -12,6 +12,10 @@ import {
   GITHUB_INSTALLATION_ATTESTATION_MAX_INSTALLATIONS,
   GITHUB_INSTALLATION_ATTESTATION_TTL_MS,
 } from "./oauthInstallationAttestation";
+import {
+  readLinkedGitHubAccountId,
+  readUserIdByGitHubAccountId,
+} from "../users/githubAccount";
 
 type StaleRepositoryAccessReconciliation =
   | {
@@ -64,51 +68,29 @@ async function readFreshOAuthInstallationAttestation(
     return null;
   }
 
-  const [user, accounts, attestations] = await Promise.all([
-    ctx.db.get(userId),
-    ctx.db
-      .query("authAccounts")
-      .withIndex("userIdAndProvider", (q) =>
-        q.eq("userId", userId).eq("provider", "github"),
-      )
-      .take(2),
+  const [githubAccountId, attestations] = await Promise.all([
+    readLinkedGitHubAccountId(ctx, userId),
     ctx.db
       .query("githubOAuthInstallationAttestations")
       .withIndex("by_user", (q) => q.eq("userId", userId))
       .take(2),
   ]);
-  if (!user || accounts.length !== 1 || attestations.length !== 1) {
+  if (githubAccountId === null || attestations.length !== 1) {
     return null;
   }
 
-  const account = accounts[0];
   const attestation = attestations[0];
-  if (!/^[1-9]\d*$/.test(account.providerAccountId)) {
-    return null;
-  }
-  const [matchingAccounts, matchingAttestations] = await Promise.all([
-    ctx.db
-      .query("authAccounts")
-      .withIndex("providerAndAccountId", (q) =>
-        q
-          .eq("provider", "github")
-          .eq("providerAccountId", account.providerAccountId),
-      )
-      .take(2),
-    ctx.db
-      .query("githubOAuthInstallationAttestations")
-      .withIndex("by_github_account", (q) =>
-        q.eq("githubAccountId", account.providerAccountId),
-      )
-      .take(2),
-  ]);
+  const matchingAttestations = await ctx.db
+    .query("githubOAuthInstallationAttestations")
+    .withIndex("by_github_account", (q) =>
+      q.eq("githubAccountId", githubAccountId),
+    )
+    .take(2);
   if (
-    matchingAccounts.length !== 1 ||
-    matchingAccounts[0]._id !== account._id ||
     matchingAttestations.length !== 1 ||
     matchingAttestations[0]._id !== attestation._id ||
     attestation.userId !== userId ||
-    attestation.githubAccountId !== account.providerAccountId ||
+    attestation.githubAccountId !== githubAccountId ||
     !Number.isSafeInteger(attestation.attestedAt) ||
     attestation.attestedAt <= 0 ||
     !Number.isSafeInteger(attestation.expiresAt) ||
@@ -130,7 +112,7 @@ async function readFreshOAuthInstallationAttestation(
   }
 
   return {
-    githubAccountId: account.providerAccountId,
+    githubAccountId,
     installationIds: attestation.installationIds,
     attestedAt: attestation.attestedAt,
     expiresAt: attestation.expiresAt,
@@ -218,19 +200,7 @@ export const getUserIdByGithubAccountId = internalQuery({
     githubAccountId: v.string(),
   },
   handler: async (ctx, args) => {
-    const accounts = await ctx.db
-      .query("authAccounts")
-      .withIndex("providerAndAccountId", (q) =>
-        q
-          .eq("provider", "github")
-          .eq("providerAccountId", args.githubAccountId),
-      )
-      .take(2);
-    if (accounts.length !== 1) {
-      return null;
-    }
-
-    return (await ctx.db.get(accounts[0].userId)) ? accounts[0].userId : null;
+    return await readUserIdByGitHubAccountId(ctx, args.githubAccountId);
   },
 });
 
@@ -371,18 +341,8 @@ export const getLegallyEligibleUserIdByGithubAccountId = internalQuery({
     githubAccountId: v.string(),
   },
   handler: async (ctx, args) => {
-    if (!/^[1-9]\d*$/.test(args.githubAccountId)) return null;
-    const accounts = await ctx.db
-      .query("authAccounts")
-      .withIndex("providerAndAccountId", (q) =>
-        q
-          .eq("provider", "github")
-          .eq("providerAccountId", args.githubAccountId),
-      )
-      .take(2);
-    if (accounts.length !== 1) return null;
-    const userId = accounts[0].userId;
-    if (!(await ctx.db.get(userId))) return null;
+    const userId = await readUserIdByGitHubAccountId(ctx, args.githubAccountId);
+    if (userId === null) return null;
     const profiles = await ctx.db
       .query("userProfiles")
       .withIndex("by_user", (q) => q.eq("userId", userId))

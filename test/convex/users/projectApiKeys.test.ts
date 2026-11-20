@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { api, internal } from "../../../convex/_generated/api";
 import schema from "../../../convex/schema";
 import { hashApiKey } from "../../../convex/apiKeys/security";
+import { asUser } from "../../helpers/auth";
 
 const modules = {
   "../../../convex/_generated/api.ts": () =>
@@ -108,8 +109,8 @@ async function fixture() {
       foreignTicketId,
     };
   });
-  const owner = t.withIdentity({ subject: ids.owner });
-  const viewer = t.withIdentity({ subject: ids.viewer });
+  const owner = await asUser(t, ids.owner);
+  const viewer = await asUser(t, ids.viewer);
   const create = (scopes: Array<"read" | "write"> = ["read"]) =>
     owner.action(api.apiKeys.action.create, {
       repositoryId: ids.repositoryId,

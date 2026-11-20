@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { query, type QueryCtx } from "../_generated/server";
 import type { Doc, Id } from "../_generated/dataModel";
-import { getAuthUserId } from "@convex-dev/auth/server";
+import { getAuthUserId } from "../_utils/auth";
 import { MAX_COLLECT_LIMIT } from "../_utils/pagination";
 import { getSubscriptionForEntitlement } from "../subscriptions/entitlement";
 import { readEffectiveSubscriptionQuota } from "../subscriptions/quotaEntitlement";

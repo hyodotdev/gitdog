@@ -23,6 +23,7 @@ import {
   guardAiProviderWithCurrentLegalAttestation,
 } from "../../../convex/_ai/legalAttestation";
 import type { AiProvider } from "../../../convex/_ai/model";
+import { asUser } from "../../helpers/auth";
 
 const noopGenerateChunkEmbeddings = internalAction({
   args: {
@@ -149,9 +150,7 @@ describe("user legal eligibility attestation", () => {
     const userId = await t.run(async (ctx) =>
       ctx.db.insert("users", { name: "octocat" }),
     );
-    const authenticated = t.withIdentity({
-      subject: `${userId}|test-session`,
-    });
+    const authenticated = await asUser(t, userId);
 
     await expect(
       authenticated.mutation(api.users.mutation.attestLegalEligibility, {
@@ -172,9 +171,7 @@ describe("user legal eligibility attestation", () => {
     const userId = await t.run(async (ctx) =>
       ctx.db.insert("users", { name: "octocat" }),
     );
-    const authenticated = t.withIdentity({
-      subject: `${userId}|test-session`,
-    });
+    const authenticated = await asUser(t, userId);
 
     await expect(
       authenticated.mutation(api.users.mutation.attestLegalEligibility, {
@@ -204,9 +201,7 @@ describe("user legal eligibility attestation", () => {
     const userId = await t.run(async (ctx) =>
       ctx.db.insert("users", { name: "octocat" }),
     );
-    const authenticated = t.withIdentity({
-      subject: `${userId}|test-session`,
-    });
+    const authenticated = await asUser(t, userId);
 
     await expect(
       authenticated.mutation(api.users.mutation.attestLegalEligibility, {
@@ -233,9 +228,7 @@ describe("user legal eligibility attestation", () => {
         image: "https://avatars.example/octocat.png",
       }),
     );
-    const authenticated = t.withIdentity({
-      subject: `${userId}|test-session`,
-    });
+    const authenticated = await asUser(t, userId);
 
     await expect(
       t.query(internal.users.internalQuery.hasCurrentLegalAttestation, {
@@ -339,9 +332,7 @@ describe("user legal eligibility attestation", () => {
       });
       return userId;
     });
-    const authenticated = t.withIdentity({
-      subject: `${userId}|test-session`,
-    });
+    const authenticated = await asUser(t, userId);
 
     await expect(
       authenticated.query(api.users.query.getCurrentUser, {}),
@@ -384,12 +375,7 @@ describe("user legal eligibility attestation", () => {
       const insertAccount = async (
         userId: Id<"users">,
         providerAccountId: string,
-      ) =>
-        await ctx.db.insert("authAccounts", {
-          userId,
-          provider: "github",
-          providerAccountId,
-        });
+      ) => await ctx.db.patch(userId, { githubAccountId: providerAccountId });
 
       const currentUserId = await ctx.db.insert("users", {});
       await insertAccount(currentUserId, "77");
@@ -528,9 +514,7 @@ describe("user legal eligibility attestation", () => {
       }
       return { userId, repositoryIds };
     });
-    const authenticated = t.withIdentity({
-      subject: `${userId}|test-session`,
-    });
+    const authenticated = await asUser(t, userId);
 
     await authenticated.mutation(
       api.users.mutation.attestLegalEligibility,

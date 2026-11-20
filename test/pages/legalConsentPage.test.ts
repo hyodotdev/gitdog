@@ -20,10 +20,11 @@ vi.mock("convex/react", () => ({
 }));
 
 vi.mock("@convex-dev/auth/react", () => ({
-  useAuthActions: () => ({
-    signIn: vi.fn(),
-    signOut: vi.fn(),
-  }),
+  useAuthActions: () => ({ signOut: vi.fn() }),
+}));
+
+vi.mock("@convex-dev/auth/methods/github/react", () => ({
+  useSignInWithGithub: () => ({ signIn: vi.fn() }),
 }));
 
 vi.mock("react-i18next", () => ({
