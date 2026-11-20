@@ -500,7 +500,12 @@
       "reviewExcluded": "完全に確認できなかったファイル",
       "reviewNotPublished": "レビュー完了・GitHubへの投稿なし",
       "reviewFailureDetails": "失敗の詳細",
-      "emptyBody": "（空）"
+      "emptyBody": "（空）",
+      "usage": {
+        "userKey": "自分の API キーで {{cost}}",
+        "gitdog": "Gitdog トークン {{tokens}}",
+        "requests_other": "AI リクエスト {{count}} 件"
+      }
     }
   },
   "usage": {
@@ -551,8 +556,30 @@
     },
     "userKey": {
       "title": "自分の API キー",
-      "description": "今期間、自分のキーで {{count}} 件のリクエスト、プロバイダー価格で約 {{cost}}。上限には含まれません。",
-      "repositoryTokens": "+ 自分の API キーで {{tokens}}"
+      "runsOn": "レビューは {{provider}} キー ••••{{last4}} で実行されます",
+      "effort": "推論の強さ: {{effort}}",
+      "backup": "クレジットが切れると {{provider}} キーの {{model}} が引き継ぎます。",
+      "noActiveKey": "使えるキーがないため、レビューは Gitdog のトークンで実行されます。",
+      "changeModel": "モデルを変更",
+      "manageKeys": "キーを管理",
+      "costLabel": "今期間のプロバイダー費用",
+      "costNote": "定価での見積もりです。実際の金額はプロバイダーの請求に従います。",
+      "runsLabel": "レビューと回答",
+      "requests_other": "AI リクエスト {{count}} 件",
+      "averageLabel": "1 回あたりの平均",
+      "tokens": "入力 {{input}} · 出力 {{output}}",
+      "byModel": "モデル別",
+      "columns": {
+        "model": "モデル",
+        "runs": "使用した実行",
+        "tokens": "トークン",
+        "average": "1 回あたり",
+        "cost": "費用"
+      },
+      "recent": "自分のキーで実行した最近の作業",
+      "noRuns": "今期間、自分のキーでの実行はまだありません。",
+      "partial": "今期間の利用が多く一部のみ表示しているため、合計は下限値です。",
+      "repositoryUsage": "+ 自分の API キーで {{tokens}}({{cost}})"
     }
   },
   "profile": {
@@ -620,7 +647,20 @@
       "modelLabel": "モデル",
       "effortLabel": "推論の強さ",
       "modelHint": "このキーで実行され、{{provider}} から請求されます。Gitdog のトークンは使いません。",
-      "modelSaved": "保存しました"
+      "modelSaved": "保存しました",
+      "role": {
+        "primary": "レビューに使用中",
+        "backup": "予備"
+      },
+      "defaultModel": "デフォルト",
+      "price": "100万トークンあたり 入力 {{input}} · 出力 {{output}}",
+      "efforts": {
+        "low": "低",
+        "medium": "中",
+        "high": "高"
+      },
+      "effortHint": "強さを上げるほど多く読み、1 回あたりの費用が増えます。",
+      "thisPeriod": "今期間このキーで {{cost}}"
     }
   },
   "footer": {

@@ -12,7 +12,6 @@ import {
   FileText,
   Zap,
   DollarSign,
-  KeyRound,
 } from "lucide-react";
 import { SiGithub } from "@icons-pack/react-simple-icons";
 import { useTranslation } from "react-i18next";
@@ -23,6 +22,8 @@ import {
   calculateTokenAvailability,
   getUtcMonthlyPeriod,
 } from "../../utils/pricingConfig";
+import { formatTokens, formatUsdCents } from "../../utils/usageFormat";
+import { UserKeyUsageSection } from "./UserKeyUsageSection";
 
 export function UsagePage() {
   const { t } = useTranslation();
@@ -37,6 +38,7 @@ export function UsagePage() {
   );
   const tokenUsage = useQuery(api.tokenUsage.query.getCurrentMonthUsage);
   const usageByRepository = useQuery(api.tokenUsage.query.getUsageByRepository);
+  const userKeyUsage = useQuery(api.tokenUsage.query.getUserKeyUsage);
 
   // Redirect to home if not logged in (null means not logged in, undefined means loading)
   useEffect(() => {
@@ -106,22 +108,6 @@ export function UsagePage() {
 
   // Both plans stop at their included and prepaid token limit.
   const estimatedCost = calculateEstimatedAdditionalUsageCharge();
-
-  // Format currency
-  const formatCurrency = (cents: number) => {
-    return `$${(cents / 100).toFixed(2)}`;
-  };
-
-  // Format token count
-  const formatTokens = (tokens: number) => {
-    if (tokens >= 1000000) {
-      return `${(tokens / 1000000).toFixed(2)}M`;
-    }
-    if (tokens >= 1000) {
-      return `${(tokens / 1000).toFixed(1)}k`;
-    }
-    return tokens.toString();
-  };
 
   // Get current period dates
   const periodStart =
@@ -234,7 +220,7 @@ export function UsagePage() {
                   "dark:text-white",
                 )}
               >
-                {formatCurrency(estimatedCost)}
+                {formatUsdCents(estimatedCost)}
               </div>
               <div className={cn("text-sm text-gray-500 mt-1")}>
                 {t("usage.stats.prepaidOnly")}
@@ -314,45 +300,7 @@ export function UsagePage() {
             </div>
           )}
 
-          {/* Usage on the user's own provider keys (not counted in quota) */}
-          {tokenUsage?.userKey && tokenUsage.userKey.totalActions > 0 && (
-            <div
-              className={cn(
-                "p-6 mb-8",
-                "border border-gray-200",
-                "dark:border-gray-800",
-              )}
-            >
-              <div className={cn("flex items-center gap-3 mb-2")}>
-                <KeyRound
-                  size={20}
-                  className={cn("text-gray-600", "dark:text-gray-400")}
-                />
-                <span
-                  className={cn("text-sm text-gray-600", "dark:text-gray-400")}
-                >
-                  {t("usage.userKey.title")}
-                </span>
-              </div>
-              <div
-                className={cn(
-                  "text-3xl font-brand font-bold text-black",
-                  "dark:text-white",
-                )}
-              >
-                {formatTokens(tokenUsage.userKey.totalTokens)}
-                {tokenUsage.userKey.isPartial ? "+" : ""}
-              </div>
-              <div className={cn("text-sm text-gray-500 mt-1")}>
-                {t("usage.userKey.description", {
-                  count: tokenUsage.userKey.totalActions,
-                  cost: formatCurrency(
-                    tokenUsage.userKey.estimatedProviderCostCents,
-                  ),
-                })}
-              </div>
-            </div>
-          )}
+          <UserKeyUsageSection />
 
           {/* Token Usage Progress */}
           <div
@@ -517,6 +465,15 @@ export function UsagePage() {
                   );
                   const repoTokens = repoUsage?.totalTokens ?? 0;
                   const repoUserKeyTokens = repoUsage?.userKeyTokens ?? 0;
+                  // Own-key cost may still be loading, and a capped read
+                  // makes it a lower bound.
+                  const repoUserKeyCost = userKeyUsage
+                    ? `${formatUsdCents(
+                        userKeyUsage.repositories.find(
+                          (u) => u.repositoryId === repo._id,
+                        )?.costCents ?? 0,
+                      )}${userKeyUsage.isPartial ? "+" : ""}`
+                    : "…";
 
                   return (
                     <div
@@ -585,8 +542,9 @@ export function UsagePage() {
                                   "dark:text-gray-400",
                                 )}
                               >
-                                {t("usage.userKey.repositoryTokens", {
+                                {t("usage.userKey.repositoryUsage", {
                                   tokens: formatTokens(repoUserKeyTokens),
+                                  cost: repoUserKeyCost,
                                 })}
                               </div>
                             )}

@@ -418,7 +418,7 @@ test("all catalog paths are unique public functions and version matches the npm 
     new Set(API_CATALOG.map((entry) => entry.path)).size,
     API_CATALOG.length,
   );
-  assert.equal(API_CATALOG.length, 95);
+  assert.equal(API_CATALOG.length, 97);
   assert.equal(
     API_CATALOG.every(
       (entry) =>

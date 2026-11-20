@@ -7,6 +7,9 @@ import { AlertTriangle, Check, ExternalLink, KeyRound } from "lucide-react";
 import { api } from "../../../convex/_generated/api";
 import { LoadingIndicator } from "../../components/uis/LoadingIndicator";
 import { cn } from "../../utils/cn";
+import { summarizeProviderKeys } from "../../utils/providerKeyState";
+import { useRelativeTime } from "../../hooks/useRelativeTime";
+import { formatPerMillion, formatUsdCents } from "../../utils/usageFormat";
 
 export const PROVIDER_KEYS_ANCHOR = "ai-keys";
 
@@ -28,15 +31,12 @@ type ModelOption = {
   name: string;
   efforts: readonly string[];
   defaultEffort: string;
+  inputPer1M: number;
+  outputPer1M: number;
 };
 
-const selectClass = cn(
-  "w-full px-3 py-2 text-sm",
-  "border border-gray-300 dark:border-gray-700",
-  "bg-white dark:bg-gray-900",
-  "focus:outline-hidden focus:border-black dark:focus:border-white",
-  "disabled:opacity-50",
-);
+// Which saved key reviews run on: Claude first, OpenAI when Claude cannot.
+type KeyRole = "primary" | "backup";
 
 const PROVIDERS: Record<
   KeyProvider,
@@ -67,24 +67,26 @@ function serverReason(error: unknown): string | null {
   return typeof data?.reason === "string" ? data.reason : null;
 }
 
-function useRelativeTime() {
-  const { i18n } = useTranslation();
-  return (timestamp: number) => {
-    const format = new Intl.RelativeTimeFormat(i18n.language, {
-      numeric: "auto",
-    });
-    const seconds = Math.round((timestamp - Date.now()) / 1000);
-    const units: Array<[Intl.RelativeTimeFormatUnit, number]> = [
-      ["day", 86_400],
-      ["hour", 3_600],
-      ["minute", 60],
-    ];
-    for (const [unit, size] of units) {
-      if (Math.abs(seconds) >= size)
-        return format.format(Math.round(seconds / size), unit);
-    }
-    return format.format(0, "minute");
-  };
+// A labelled native radio drawn as a square choice, with a visible focus ring.
+const choiceClass = cn(
+  "flex items-center text-sm cursor-pointer border",
+  "has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2",
+  "has-[:focus-visible]:outline-black dark:has-[:focus-visible]:outline-white",
+  "has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-50",
+);
+
+function SquareMark({ checked }: { checked: boolean }) {
+  return (
+    <span
+      aria-hidden="true"
+      className={cn(
+        "flex h-3.5 w-3.5 shrink-0 items-center justify-center border",
+        "border-black dark:border-white",
+      )}
+    >
+      {checked && <span className="h-2 w-2 bg-black dark:bg-white" />}
+    </span>
+  );
 }
 
 const buttonClass = cn(
@@ -109,10 +111,15 @@ function ProviderKeyCard({
   editing,
   onEditingChange,
   onMoveToOther,
+  role,
+  periodCost,
 }: {
   provider: KeyProvider;
   saved: SavedKey | undefined;
   models: ModelOption[] | undefined;
+  role: KeyRole | undefined;
+  // What this key's provider billed this period, formatted; unset when nothing.
+  periodCost: string | undefined;
   draft: string;
   onDraftChange: (value: string) => void;
   editing: boolean;
@@ -224,6 +231,16 @@ function ProviderKeyCard({
           <h3 className={cn("text-lg font-bold text-black", "dark:text-white")}>
             {label}
           </h3>
+          {role && (
+            <span
+              className={cn(
+                "px-2 py-0.5 text-xs border border-gray-300 text-gray-600",
+                "dark:border-gray-700 dark:text-gray-400",
+              )}
+            >
+              {t(`profile.providerKeys.role.${role}`)}
+            </span>
+          )}
         </div>
         <span
           className={cn(
@@ -258,47 +275,104 @@ function ProviderKeyCard({
       )}
 
       {saved?.readable && !saved.serviceUnavailable && models && !showForm && (
-        <div className={cn("grid grid-cols-2 gap-2")}>
-          <label className={cn("flex flex-col gap-1 text-sm font-medium")}>
-            {t("profile.providerKeys.modelLabel")}
-            <select
-              value={saved.modelId}
-              disabled={busy}
-              onChange={(event) => void chooseModel(event.target.value)}
-              className={selectClass}
-            >
-              {models.map((m) => (
-                <option key={m.modelId} value={m.modelId}>
-                  {m.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className={cn("flex flex-col gap-1 text-sm font-medium")}>
-            {t("profile.providerKeys.effortLabel")}
-            <select
-              value={saved.effort}
-              disabled={busy || !chosen}
-              onChange={(event) =>
-                void chooseModel(saved.modelId, event.target.value)
-              }
-              className={selectClass}
-            >
-              {(chosen?.efforts ?? [saved.effort]).map((effort) => (
-                <option key={effort} value={effort}>
-                  {effort}
-                </option>
-              ))}
-            </select>
-          </label>
-          <p
-            className={cn(
-              "col-span-2 text-xs text-gray-600 dark:text-gray-400",
-            )}
-          >
-            {t("profile.providerKeys.modelHint", { provider: label })}
+        <div className={cn("flex flex-col gap-3")}>
+          <fieldset disabled={busy} className={cn("flex flex-col gap-2")}>
+            <legend className={cn("mb-2 text-sm font-medium")}>
+              {t("profile.providerKeys.modelLabel")}
+            </legend>
+            {models.map((model, index) => {
+              const selected = model.modelId === saved.modelId;
+              return (
+                <label
+                  key={model.modelId}
+                  className={cn(
+                    choiceClass,
+                    "gap-3 px-3 py-2",
+                    selected
+                      ? "border-black dark:border-white"
+                      : "border-gray-200 hover:border-gray-400 dark:border-gray-800 dark:hover:border-gray-600",
+                  )}
+                >
+                  <input
+                    type="radio"
+                    name={`model-${provider}`}
+                    value={model.modelId}
+                    checked={selected}
+                    onChange={() => void chooseModel(model.modelId)}
+                    className="sr-only"
+                  />
+                  <SquareMark checked={selected} />
+                  <span className={cn("flex flex-1 flex-col")}>
+                    <span className="font-medium">
+                      {model.name}
+                      {index === 0 && (
+                        <span
+                          className={cn(
+                            "ml-2 text-xs font-normal text-gray-500",
+                          )}
+                        >
+                          {t("profile.providerKeys.defaultModel")}
+                        </span>
+                      )}
+                    </span>
+                    <span
+                      className={cn(
+                        "text-xs text-gray-600 tabular-nums",
+                        "dark:text-gray-400",
+                      )}
+                    >
+                      {t("profile.providerKeys.price", {
+                        input: formatPerMillion(model.inputPer1M),
+                        output: formatPerMillion(model.outputPer1M),
+                      })}
+                    </span>
+                  </span>
+                </label>
+              );
+            })}
+          </fieldset>
+          <fieldset disabled={busy || !chosen} className={cn("flex flex-col")}>
+            <legend className={cn("mb-2 text-sm font-medium")}>
+              {t("profile.providerKeys.effortLabel")}
+            </legend>
+            <div className={cn("flex")}>
+              {(chosen?.efforts ?? [saved.effort]).map((effort) => {
+                const selected = effort === saved.effort;
+                return (
+                  <label
+                    key={effort}
+                    className={cn(
+                      choiceClass,
+                      "flex-1 justify-center px-3 py-1.5 -ml-px first:ml-0",
+                      selected
+                        ? "relative border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
+                        : "border-gray-300 hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-800",
+                    )}
+                  >
+                    <input
+                      type="radio"
+                      name={`effort-${provider}`}
+                      value={effort}
+                      checked={selected}
+                      onChange={() => void chooseModel(saved.modelId, effort)}
+                      className="sr-only"
+                    />
+                    {t(`profile.providerKeys.efforts.${effort}`)}
+                  </label>
+                );
+              })}
+            </div>
+          </fieldset>
+          <p className={cn("text-xs text-gray-600 dark:text-gray-400")}>
+            {t("profile.providerKeys.modelHint", { provider: label })}{" "}
+            {t("profile.providerKeys.effortHint")}
             {modelSaved && ` ${t("profile.providerKeys.modelSaved")}`}
           </p>
+          {periodCost && (
+            <p className={cn("text-sm text-gray-700 dark:text-gray-300")}>
+              {t("profile.providerKeys.thisPeriod", { cost: periodCost })}
+            </p>
+          )}
         </div>
       )}
 
@@ -480,6 +554,7 @@ export function ProviderKeysSection() {
   const { t } = useTranslation();
   const keys = useQuery(api.providerApiKeys.query.list);
   const models = useQuery(api.providerApiKeys.query.models);
+  const usage = useQuery(api.tokenUsage.query.getUserKeyUsage);
   const [drafts, setDrafts] = useState<Record<KeyProvider, string>>({
     anthropic: "",
     openai: "",
@@ -491,6 +566,20 @@ export function ProviderKeysSection() {
 
   const savedKey = (provider: KeyProvider) =>
     keys?.find((key) => key.provider === provider);
+  const { activeKey, backupKey } = summarizeProviderKeys(keys);
+  const roleOf = (provider: KeyProvider): KeyRole | undefined =>
+    activeKey?.provider === provider
+      ? "primary"
+      : backupKey?.provider === provider
+        ? "backup"
+        : undefined;
+  const periodCostOf = (provider: KeyProvider) => {
+    const cents = usage?.models
+      .filter((model) => model.provider === provider)
+      .reduce((sum, model) => sum + model.costCents, 0);
+    if (!usage || !cents) return undefined;
+    return `${formatUsdCents(cents)}${usage.isPartial ? "+" : ""}`;
+  };
 
   // "Add your own key" links land here from other pages.
   const location = useLocation();
@@ -553,6 +642,8 @@ export function ProviderKeysSection() {
                 provider={provider}
                 saved={savedKey(provider)}
                 models={models?.[provider]}
+                role={roleOf(provider)}
+                periodCost={periodCostOf(provider)}
                 draft={drafts[provider]}
                 onDraftChange={(value) =>
                   setDrafts((current) => ({ ...current, [provider]: value }))
