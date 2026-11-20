@@ -22,6 +22,7 @@ new GitHub repository. GitHub App permissions remain controlled by GitHub.
 
 ```sh
 gitdog github install
+gitdog github verify
 gitdog github recover
 gitdog projects available
 gitdog projects create owner/repo
@@ -212,7 +213,7 @@ are excluded. All authorization is enforced by the backend.
 | Usage and quota          | `usage summary/projects/estimate/quota`                                                                    |
 | Plans and token packs    | `billing status/pricing/checkout`                                                                          |
 | Account                  | `account profile/sync/consent`                                                                             |
-| GitHub App access        | `github install/installations/recover/bind/retry`                                                          |
+| GitHub App access        | `github install/installations/verify/recover/bind/retry`                                                   |
 | Complete public API      | `api list/describe/call`                                                                                   |
 
 `repos` is an alias for `projects`. Firebase-style colon commands work too:

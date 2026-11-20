@@ -9,7 +9,10 @@ import { LoadingIndicator } from "../../components/uis/LoadingIndicator";
 import { showToast } from "../../utils/signals/toast";
 import { useTranslation } from "react-i18next";
 import { cn } from "../../utils/cn";
-import { createGitHubReauthorizationConsentUrl } from "../../utils/legalConsent";
+import {
+  ACCESS_VERIFICATION_PROBLEMS,
+  ACCESS_VERIFICATION_RESULT_PARAM,
+} from "../../../convex/github/accessVerificationResult";
 import {
   clearPendingReconnectMapping,
   consumePendingReconnectMapping,
@@ -66,6 +69,10 @@ export function RepositoryConnect() {
   );
   const ensureProfile = useMutation(api.users.mutation.ensureProfileFromAuth);
   const refreshInstallation = useAction(api.github.action.saveInstallation);
+  const startAccessVerification = useAction(
+    api.github.action.startAccessVerification,
+  );
+  const [isStartingVerification, setIsStartingVerification] = useState(false);
   const recoverOAuthInstallation = useAction(
     api.github.action.recoverOAuthInstallation,
   );
@@ -451,12 +458,34 @@ export function RepositoryConnect() {
     }
   };
 
-  const handleRefreshGitHubAuthorization = () => {
-    navigate(
-      createGitHubReauthorizationConsentUrl(
-        `${window.location.pathname}${window.location.search}`,
-      ),
+  // "Verify GitHub access" returns here with its outcome; report it once.
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const result = url.searchParams.get(ACCESS_VERIFICATION_RESULT_PARAM);
+    if (result === null) return;
+    url.searchParams.delete(ACCESS_VERIFICATION_RESULT_PARAM);
+    window.history.replaceState({}, "", `${url.pathname}${url.search}`);
+    const problem = ACCESS_VERIFICATION_PROBLEMS.find(
+      (known) => known === result,
     );
+    if (result !== "verified")
+      showToast(
+        t(`repositories.connect.accessVerification.${problem ?? "failed"}`),
+        "error",
+      );
+  }, [t]);
+
+  const handleRefreshGitHubAuthorization = async () => {
+    setIsStartingVerification(true);
+    try {
+      const { url } = await startAccessVerification({
+        returnPath: `${window.location.pathname}${window.location.search}`,
+      });
+      window.location.assign(url);
+    } catch {
+      setIsStartingVerification(false);
+      showToast(t("repositories.connect.accessVerification.failed"), "error");
+    }
   };
 
   const handleRetryReconciliation = async (installationId: number) => {
@@ -595,7 +624,8 @@ export function RepositoryConnect() {
               <div className={cn("flex flex-wrap justify-center gap-3")}>
                 {installationVerificationRequiresReauth ? (
                   <button
-                    onClick={handleRefreshGitHubAuthorization}
+                    onClick={() => void handleRefreshGitHubAuthorization()}
+                    disabled={isStartingVerification}
                     className={cn(
                       "px-6 py-2",
                       "text-white bg-black",
@@ -603,7 +633,13 @@ export function RepositoryConnect() {
                       "dark:text-black dark:bg-white dark:hover:bg-gray-200",
                     )}
                   >
-                    {t("repositories.connect.verificationPending.reauthorize")}
+                    {isStartingVerification
+                      ? t(
+                          "repositories.connect.verificationPending.reauthorizing",
+                        )
+                      : t(
+                          "repositories.connect.verificationPending.reauthorize",
+                        )}
                   </button>
                 ) : null}
                 <button

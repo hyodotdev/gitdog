@@ -15,6 +15,10 @@ import {
 } from "./github/webhook";
 import { handleLemonSqueezyWebhook } from "./lemonSqueezy/webhook";
 import { getWorkloadJwks, WORKLOAD_JWKS_PATH } from "./_ai/federation";
+import {
+  ACCESS_VERIFICATION_CALLBACK_PATH,
+  accessVerificationCallback,
+} from "./github/accessVerification";
 
 import { handlePullRequestEvent } from "./pullRequests/webhook";
 
@@ -22,6 +26,11 @@ const http = httpRouter();
 
 auth.addHttpRoutes(http);
 http.route({ path: "/v1/cli", method: "POST", handler: projectApi });
+http.route({
+  path: ACCESS_VERIFICATION_CALLBACK_PATH,
+  method: "GET",
+  handler: accessVerificationCallback,
+});
 
 http.route({
   path: WORKLOAD_JWKS_PATH,

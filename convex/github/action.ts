@@ -18,6 +18,14 @@ import {
 } from "./repositoryIdentity";
 import { INSTALLATION_WEBHOOK_STATE_MAX_RETRY_COUNT } from "./webhookAccessStateAttestation";
 import { REPOSITORY_ACCESS_RECONCILIATION_MAX_RETRY_COUNT } from "./repositoryAccessReconciliation";
+import {
+  ACCESS_VERIFICATION_TTL_MS,
+  accessVerificationRedirectUri,
+  buildAuthorizeUrl,
+  generateSecret,
+  hashState,
+  readReturnPath,
+} from "./accessVerification";
 
 const RECONCILIATION_PAGE_SIZE = 50;
 const RECONCILIATION_STALE_AFTER_MS = 10 * 60 * 1_000;
@@ -1322,5 +1330,47 @@ export const recoverOAuthInstallation = action({
         return refreshedTarget;
       }
     }
+  },
+});
+
+/**
+ * Start "Verify GitHub access": returns the GitHub authorization URL that
+ * records which installations the signed-in user can reach, then returns to
+ * `returnPath` on Gitdog's site.
+ */
+export const startAccessVerification = action({
+  args: { returnPath: v.string() },
+  returns: v.object({ url: v.string() }),
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+    const returnPath = readReturnPath(args.returnPath);
+    if (returnPath === null) throw new Error("Invalid return path");
+    const clientId = process.env.GITHUB_APP_CLIENT_ID;
+    const redirectUri = accessVerificationRedirectUri();
+    if (!clientId || !redirectUri)
+      throw new Error("GitHub access verification is not configured");
+
+    const state = generateSecret();
+    const codeVerifier = generateSecret();
+    await ctx.runMutation(
+      internal.github.internalMutation.createAccessVerification,
+      {
+        userId,
+        stateHash: await hashState(state),
+        codeVerifier,
+        returnPath,
+        now: Date.now(),
+        ttlMs: ACCESS_VERIFICATION_TTL_MS,
+      },
+    );
+    return {
+      url: await buildAuthorizeUrl({
+        clientId,
+        redirectUri,
+        state,
+        codeVerifier,
+      }),
+    };
   },
 });

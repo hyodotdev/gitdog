@@ -140,6 +140,11 @@
     "args": "{\n    installationId: v.number(),\n  }"
   },
   {
+    "path": "github/action:startAccessVerification",
+    "kind": "action",
+    "args": "{ returnPath: v.string() }"
+  },
+  {
     "path": "github/query:getInstallation",
     "kind": "query",
     "args": "{\n    installationId: v.number(),\n  }"

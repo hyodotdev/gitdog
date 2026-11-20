@@ -17,7 +17,6 @@ import {
   getLegalConsentReturnPath,
   hasPendingLegalConsent,
   isLegalPolicyVersionMismatch,
-  isGitHubReauthorizationRequested,
   markPendingLegalConsent,
   resolveLegalConsentView,
   shouldAutoAttestAfterSignIn,
@@ -62,11 +61,7 @@ export function LegalConsentPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const automaticAttestationAttempted = useRef(false);
-  const authorizationRefreshAttempted = useRef(false);
   const returnPath = getLegalConsentReturnPath(location.search);
-  const refreshGitHubAuthorizationRequested = isGitHubReauthorizationRequested(
-    location.search,
-  );
 
   const completeAuthenticatedAttestation = useCallback(async () => {
     setIsSubmitting(true);
@@ -141,37 +136,10 @@ export function LegalConsentPage() {
     }
   }, [isAuthResolving, isAuthenticated, returningFromConsentedSignIn]);
 
-  const refreshGitHubAuthorization = useCallback(async () => {
-    authorizationRefreshAttempted.current = true;
-    setIsSubmitting(true);
-    setError(null);
-    try {
-      await signIn("github", { redirectTo: returnPath });
-    } catch {
-      setError(t("auth.legalConsent.signInError"));
-      setIsSubmitting(false);
-    }
-  }, [returnPath, signIn, t]);
-
-  useEffect(() => {
-    if (
-      currentUser?.hasCurrentLegalAttestation &&
-      refreshGitHubAuthorizationRequested &&
-      !authorizationRefreshAttempted.current
-    ) {
-      void refreshGitHubAuthorization();
-    }
-  }, [
-    currentUser,
-    refreshGitHubAuthorization,
-    refreshGitHubAuthorizationRequested,
-  ]);
-
   const view = resolveLegalConsentView({
     currentUserLoaded: currentUser !== undefined,
     hasCurrentLegalAttestation:
       currentUser?.hasCurrentLegalAttestation ?? false,
-    refreshGitHubAuthorizationRequested,
     returningFromConsentedSignIn,
     signInCompletionFailed,
   });
@@ -190,58 +158,7 @@ export function LegalConsentPage() {
     );
   }
 
-  if (view === "reauthorize" || view === "redirectToReturnPath") {
-    if (view === "reauthorize") {
-      return (
-        <main
-          className={cn(
-            "flex items-center justify-center min-h-screen px-6",
-            "bg-[#F5F5F5] dark:bg-[#1a1a1a]",
-          )}
-        >
-          <div
-            className={cn(
-              "w-full max-w-xl p-8 text-center",
-              "bg-white border border-gray-200 shadow-xl",
-              "dark:bg-[#0a0a0a] dark:border-gray-800",
-            )}
-          >
-            <SiGithub size={40} className="mx-auto mb-4" />
-            <h1
-              className={cn(
-                "font-brand font-bold text-2xl text-black mb-3",
-                "dark:text-white",
-              )}
-            >
-              {t("repositories.connect.verificationPending.reauthorize")}
-            </h1>
-            <p
-              className={cn(
-                "text-gray-600 mb-6",
-                "dark:text-gray-400",
-                error ? "text-red-600 dark:text-red-400" : undefined,
-              )}
-              role={error ? "alert" : undefined}
-            >
-              {error ??
-                t("repositories.connect.verificationPending.reauthDescription")}
-            </p>
-            <Button
-              variant="auth"
-              size="lg"
-              loading={isSubmitting}
-              icon={<SiGithub size={20} />}
-              className="w-full"
-              onClick={() => void refreshGitHubAuthorization()}
-            >
-              {isSubmitting
-                ? t("repositories.connect.verificationPending.reauthorizing")
-                : t("repositories.connect.verificationPending.reauthorize")}
-            </Button>
-          </div>
-        </main>
-      );
-    }
+  if (view === "redirectToReturnPath") {
     return <Navigate to={returnPath} replace />;
   }
 

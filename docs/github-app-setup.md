@@ -24,12 +24,16 @@ Go to: <https://github.com/settings/apps/new>
 - **GitHub App name**: Choose a unique name whose slug matches
   `VITE_GITHUB_APP_SLUG` (the local default slug is `gitdogbot-dev`)
 - **Homepage URL**: `http://localhost:5173` (production: `https://gitdog.dev`)
-- **Callback URL**:
-  `${CUSTOM_AUTH_SITE_URL ?? CONVEX_SITE_URL}/api/auth/callback/github`
+- **Callback URLs** (add both):
+  - `${CUSTOM_AUTH_SITE_URL ?? CONVEX_SITE_URL}/api/auth/callback/github`, the
+    sign-in callback
+  - `${CUSTOM_AUTH_SITE_URL ?? CONVEX_SITE_URL}/github/access/callback`, the
+    "Verify GitHub access" callback that records which installations a
+    signed-in user can reach
   - Use the concrete `CUSTOM_AUTH_SITE_URL` when it is configured; otherwise,
     use the target deployment's concrete `CONVEX_SITE_URL`, such as
     `https://example-deployment.convex.site`
-  - This is the OAuth authentication callback; it is not the frontend Setup URL
+  - These are OAuth callbacks; they are not the frontend Setup URL
 - **Setup URL**: `http://localhost:5173/repositories/connect`
   - ✅ Check "Redirect on update"
 
@@ -233,7 +237,8 @@ For production deployment:
 1. Update GitHub App settings:
    - Homepage URL: `https://gitdog.dev`
    - Callback URL:
-     `${CUSTOM_AUTH_SITE_URL ?? CONVEX_SITE_URL}/api/auth/callback/github`,
+     `${CUSTOM_AUTH_SITE_URL ?? CONVEX_SITE_URL}/api/auth/callback/github` and
+     `${CUSTOM_AUTH_SITE_URL ?? CONVEX_SITE_URL}/github/access/callback`,
      using the concrete production custom auth site URL when configured and the
      concrete production Convex site URL otherwise
    - Setup URL: `https://gitdog.dev/repositories/connect`

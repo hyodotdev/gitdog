@@ -56,6 +56,16 @@ function readOptionalProfileString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() !== "" ? value : undefined;
 }
 
+/** Headers for GitHub's REST API with the given Authorization value. */
+export function githubApiHeaders(authorization: string): HeadersInit {
+  return {
+    Accept: "application/vnd.github+json",
+    Authorization: authorization,
+    "User-Agent": "Gitdog",
+    "X-GitHub-Api-Version": "2022-11-28",
+  };
+}
+
 /**
  * Resolve every GitHub App installation currently associated with one user
  * access token. The token remains local to this request and is never returned.
@@ -94,12 +104,7 @@ export async function fetchAccessibleGitHubInstallationIds(
     );
     try {
       const response = await request(url, {
-        headers: {
-          Accept: "application/vnd.github+json",
-          Authorization: `Bearer ${accessToken}`,
-          "User-Agent": "Gitdog",
-          "X-GitHub-Api-Version": "2022-11-28",
-        },
+        headers: githubApiHeaders(`Bearer ${accessToken}`),
         signal: abortController.signal,
       });
       if (!response.ok) {
@@ -187,23 +192,62 @@ export async function persistGitHubInstallationAttestation(
   if (userId === null) {
     userId = await ctx.db.insert("users", userFields);
   } else {
-    const [user, accounts] = await Promise.all([
+    const [user, linkedAccountId] = await Promise.all([
       ctx.db.get(userId),
-      ctx.db
-        .query("authAccounts")
-        .withIndex("userIdAndProvider", (q) =>
-          q.eq("userId", userId!).eq("provider", "github"),
-        )
-        .take(2),
+      readLinkedGitHubAccountId(ctx, userId),
     ]);
-    if (
-      !user ||
-      accounts.length !== 1 ||
-      accounts[0].providerAccountId !== githubAccountId
-    ) {
+    if (!user || linkedAccountId !== githubAccountId) {
       throw new Error("GitHub account identity changed during sign-in");
     }
     await ctx.db.patch(userId, userFields);
+  }
+
+  await saveInstallationAttestation(ctx, {
+    userId,
+    githubAccountId,
+    installationIds,
+    now,
+  });
+  return userId;
+}
+
+/**
+ * The GitHub account id linked to a Gitdog user, or null when the user has
+ * none or more than one. Installation access is attested against it.
+ */
+export async function readLinkedGitHubAccountId(
+  ctx: Pick<MutationCtx, "db">,
+  userId: Id<"users">,
+): Promise<string | null> {
+  const accounts = await ctx.db
+    .query("authAccounts")
+    .withIndex("userIdAndProvider", (q) =>
+      q.eq("userId", userId).eq("provider", "github"),
+    )
+    .take(2);
+  return accounts.length === 1
+    ? readGitHubAccountId(accounts[0].providerAccountId)
+    : null;
+}
+
+/**
+ * Replace the user's short-lived installation snapshot. One snapshot exists
+ * per user and per GitHub account, and they must be the same row.
+ */
+export async function saveInstallationAttestation(
+  ctx: MutationCtx,
+  args: {
+    userId: Id<"users">;
+    githubAccountId: string;
+    installationIds: unknown;
+    now: number;
+  },
+): Promise<void> {
+  const { userId, now } = args;
+  const githubAccountId = readGitHubAccountId(args.githubAccountId);
+  const installationIds = normalizeInstallationIds(args.installationIds);
+  if (githubAccountId === null || installationIds === null) {
+    throw new Error("GitHub installation attestation is invalid");
   }
 
   const [byUser, byAccount] = await Promise.all([
@@ -243,5 +287,4 @@ export async function persistGitHubInstallationAttestation(
   } else {
     await ctx.db.insert("githubOAuthInstallationAttestations", snapshot);
   }
-  return userId;
 }

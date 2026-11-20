@@ -3,6 +3,10 @@ import { v } from "convex/values";
 import { internal } from "../_generated/api";
 import { getExactGitHubInstallation } from "./installationAccess";
 import {
+  readLinkedGitHubAccountId,
+  saveInstallationAttestation,
+} from "./oauthInstallationAttestation";
+import {
   getInstallationWebhookStateRetryDelayMs,
   INSTALLATION_WEBHOOK_STATE_ATTEMPT_LEASE_MS,
   INSTALLATION_WEBHOOK_STATE_MAX_RETRY_COUNT,
@@ -1208,5 +1212,86 @@ export const markInstallationActiveAfterReconciliation = internalMutation({
       updatedAt: Math.max(Date.now(), installation.updatedAt + 1),
     });
     return true;
+  },
+});
+
+/**
+ * Record a pending "Verify GitHub access" authorization. A user has at most
+ * one; starting another replaces it.
+ */
+export const createAccessVerification = internalMutation({
+  args: {
+    userId: v.id("users"),
+    stateHash: v.string(),
+    codeVerifier: v.string(),
+    returnPath: v.string(),
+    now: v.number(),
+    ttlMs: v.number(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const previous = await ctx.db
+      .query("githubAccessVerifications")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .first();
+    if (previous) await ctx.db.delete(previous._id);
+    await ctx.db.insert("githubAccessVerifications", {
+      userId: args.userId,
+      stateHash: args.stateHash,
+      codeVerifier: args.codeVerifier,
+      returnPath: args.returnPath,
+      createdAt: args.now,
+      expiresAt: args.now + args.ttlMs,
+    });
+    return null;
+  },
+});
+
+/** Take a pending verification by its state; each state works once. */
+export const consumeAccessVerification = internalMutation({
+  args: { stateHash: v.string(), now: v.number() },
+  returns: v.union(
+    v.null(),
+    v.object({
+      userId: v.id("users"),
+      codeVerifier: v.string(),
+      returnPath: v.string(),
+      expired: v.boolean(),
+    }),
+  ),
+  handler: async (ctx, args) => {
+    const row = await ctx.db
+      .query("githubAccessVerifications")
+      .withIndex("by_state_hash", (q) => q.eq("stateHash", args.stateHash))
+      .unique();
+    if (!row) return null;
+    await ctx.db.delete(row._id);
+    return {
+      userId: row.userId,
+      codeVerifier: row.codeVerifier,
+      returnPath: row.returnPath,
+      expired: row.expiresAt <= args.now,
+    };
+  },
+});
+
+/**
+ * Save the installations GitHub reported for the user who started the
+ * verification, only when the authorizing GitHub account is the one linked
+ * to that user.
+ */
+export const saveVerifiedInstallationAccess = internalMutation({
+  args: {
+    userId: v.id("users"),
+    githubAccountId: v.string(),
+    installationIds: v.array(v.number()),
+  },
+  returns: v.union(v.literal("verified"), v.literal("account_mismatch")),
+  handler: async (ctx, args) => {
+    const linked = await readLinkedGitHubAccountId(ctx, args.userId);
+    if (linked === null || linked !== args.githubAccountId)
+      return "account_mismatch" as const;
+    await saveInstallationAttestation(ctx, { ...args, now: Date.now() });
+    return "verified" as const;
   },
 });

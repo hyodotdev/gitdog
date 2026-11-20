@@ -61,6 +61,8 @@ import type * as apiKeys_query from "../apiKeys/query.js";
 import type * as apiKeys_security from "../apiKeys/security.js";
 import type * as auth from "../auth.js";
 import type * as crons from "../crons.js";
+import type * as github_accessVerification from "../github/accessVerification.js";
+import type * as github_accessVerificationResult from "../github/accessVerificationResult.js";
 import type * as github_action from "../github/action.js";
 import type * as github_botIdentity from "../github/botIdentity.js";
 import type * as github_helpers from "../github/helpers.js";
@@ -234,6 +236,8 @@ declare const fullApi: ApiFromModules<{
   "apiKeys/security": typeof apiKeys_security;
   auth: typeof auth;
   crons: typeof crons;
+  "github/accessVerification": typeof github_accessVerification;
+  "github/accessVerificationResult": typeof github_accessVerificationResult;
   "github/action": typeof github_action;
   "github/botIdentity": typeof github_botIdentity;
   "github/helpers": typeof github_helpers;
