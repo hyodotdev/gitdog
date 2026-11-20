@@ -20,8 +20,9 @@ export const ACCESS_VERIFICATION_TTL_MS = 10 * 60 * 1_000;
 const DEFAULT_RETURN_PATH = "/repositories/connect";
 
 /**
- * Where GitHub sends the user back: the same site as sign-in's OAuth
- * callback, so one GitHub App lists both under one host.
+ * Where GitHub sends the user back. Sign-in's callback always uses
+ * CONVEX_SITE_URL; a CUSTOM_AUTH_SITE_URL moves only this one, and the
+ * GitHub App must list both.
  */
 export function accessVerificationRedirectUri(): string | null {
   const site =

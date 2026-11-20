@@ -35,7 +35,7 @@ import {
 import { useState, useMemo } from "react";
 import { parseGitdogBody } from "../../utils/parseGitdogContent";
 import { ActionUsageChip } from "./ActionUsageChip";
-import { actionTypeLabelKey } from "../../utils/actionTypes";
+import { actionTypeLabel } from "../../utils/actionTypes";
 
 export function TicketDetailPage() {
   const { t, i18n } = useTranslation();
@@ -232,11 +232,6 @@ export function TicketDetailPage() {
       default:
         return <MessageCircle size={16} />;
     }
-  };
-
-  const getActionTypeName = (actionType: string) => {
-    const key = actionTypeLabelKey(actionType);
-    return key ? t(key) : actionType;
   };
 
   if (!id) {
@@ -618,7 +613,7 @@ export function TicketDetailPage() {
                           <span className={cn("font-medium")}>
                             {action.reviewVerificationOnly === true
                               ? t("tickets.detail.reviewVerification")
-                              : getActionTypeName(action.actionType)}
+                              : actionTypeLabel(t, action.actionType)}
                           </span>
                         </div>
                         <div

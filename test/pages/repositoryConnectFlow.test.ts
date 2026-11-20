@@ -16,6 +16,7 @@ import {
   groupRepositoriesByInstallation,
   type InstallationBindingRefreshResult,
   needsGitHubAppInstallation,
+  resolveConnectScreen,
   OAUTH_INSTALLATION_RECOVERY_MAX_INSTALLATIONS,
   type OAuthInstallationRecoveryOutcome,
   PENDING_RECONNECT_STORAGE_KEY,
@@ -950,5 +951,64 @@ describe("repository connection flow", () => {
         createTestReconnectState(),
       ),
     ).toBe(false);
+  });
+});
+
+describe("resolveConnectScreen", () => {
+  const installed = [{ installationId: 1 }];
+  const base = {
+    loading: false,
+    installations: [] as { installationId: number }[],
+    recovery: { status: "none", recoveredCount: 0 },
+    verificationPending: false,
+    hasError: false,
+  };
+
+  it.each([
+    ["loading", { loading: true }],
+    ["loading", { installations: undefined }],
+    ["loading", { recovery: { status: "pending", recoveredCount: 0 } }],
+    ["loading", { recovery: { status: "complete", recoveredCount: 1 } }],
+    [
+      "verification",
+      {
+        recovery: { status: "pending", recoveredCount: 0 },
+        verificationPending: true,
+      },
+    ],
+    [
+      "verification",
+      {
+        recovery: { status: "configure_required", recoveredCount: 0 },
+        verificationPending: true,
+      },
+    ],
+    [
+      "error",
+      {
+        recovery: { status: "unavailable", recoveredCount: 0 },
+        hasError: true,
+      },
+    ],
+    // A new user without a fresh attestation must still be offered Install.
+    ["install", { recovery: { status: "reauth_required", recoveredCount: 0 } }],
+    ["install", {}],
+    [
+      "repositories",
+      {
+        installations: installed,
+        recovery: { status: "reauth_required", recoveredCount: 0 },
+      },
+    ],
+    [
+      "repositories",
+      {
+        installations: installed,
+        recovery: { status: "configure_required", recoveredCount: 0 },
+      },
+    ],
+    ["repositories", { recovery: { status: "complete", recoveredCount: 0 } }],
+  ] as const)("shows %s for %j", (screen, overrides) => {
+    expect(resolveConnectScreen({ ...base, ...overrides })).toBe(screen);
   });
 });

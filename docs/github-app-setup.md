@@ -282,10 +282,10 @@ For production deployment:
 
 ```text
 User Login Flow:
-GitHub App → convex/auth.ts → User session created
+GitHub OAuth → convex/auth.ts (@convex-dev/auth 2.0) → User session created
 
 Repository Access Flow:
-GitHub OAuth login → Short-lived `/user/installations` attestation → Recover personal installations
+Verify GitHub access (`/github/access/callback`) → Short-lived `/user/installations` attestation → Recover personal installations
 Organization installation/update → Signed webhook → Save installation
 Setup callback → Coordinate verification and repository reconnect UI
 User requests repos → convex/github/action.ts → Generate JWT → Get installation token → Fetch repos

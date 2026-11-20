@@ -17,8 +17,6 @@ export async function asUser<T extends AnyTestConvex>(
   t: T,
   userId: Id<"users">,
 ): Promise<ReturnType<T["withIdentity"]>> {
-  // Convex Auth checks token issuers against the deployment's cloud URL.
-  process.env.CONVEX_CLOUD_URL ??= "https://gitdog-test.convex.cloud";
   if (!withCore.has(t)) {
     registerCore(t);
     withCore.add(t);

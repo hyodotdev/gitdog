@@ -6,7 +6,7 @@ import { api } from "../../../convex/_generated/api";
 import { cn } from "../../utils/cn";
 import { useRelativeTime } from "../../hooks/useRelativeTime";
 import { summarizeProviderKeys } from "../../utils/providerKeyState";
-import { actionTypeLabelKey } from "../../utils/actionTypes";
+import { actionTypeLabel } from "../../utils/actionTypes";
 import { formatTokens, formatUsdCents } from "../../utils/usageFormat";
 
 const PROVIDER_LABELS: Record<string, string> = {
@@ -61,7 +61,15 @@ export function UserKeyUsageSection() {
   if (keys === undefined || usage === undefined || usage === null) return null;
   if (keys.length === 0 && usage.totals.requests === 0) return null;
 
-  const { activeKey, backupKey } = summarizeProviderKeys(keys);
+  const { keyChecksUnavailable, activeKey, backupKey } =
+    summarizeProviderKeys(keys);
+  // Saved keys never fall back to Gitdog tokens: reviews stop until one works.
+  const inactiveKeyMessage =
+    keys.length === 0
+      ? "noKey"
+      : keyChecksUnavailable
+        ? "keyChecksUnavailable"
+        : "noWorkingKey";
   const { totals } = usage;
   const average = totals.actions > 0 ? totals.costCents / totals.actions : 0;
 
@@ -117,7 +125,7 @@ export function UserKeyUsageSection() {
           </div>
         ) : (
           <p className={cn("text-sm text-gray-700", "dark:text-gray-300")}>
-            {t("usage.userKey.noActiveKey")}
+            {t(`usage.userKey.${inactiveKeyMessage}`)}
           </p>
         )}
         <Link to="/profile#ai-keys" className={linkClass}>
@@ -233,7 +241,7 @@ export function UserKeyUsageSection() {
                 >
                   <div className="min-w-0 flex-1">
                     <span className={cn("mr-2", mutedClass)}>
-                      {t(actionTypeLabelKey(run.actionType) ?? run.actionType)}
+                      {actionTypeLabel(t, run.actionType)}
                     </span>
                     {run.ticketId ? (
                       <Link

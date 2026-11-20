@@ -55,11 +55,7 @@ export function summarizeUserKeyUsage(rows: UsageRow[]) {
   const models = new Map<string, ModelUsage & { actionIds: Set<string> }>();
   const repositories = new Map<
     string,
-    {
-      repositoryId?: Id<"repositories">;
-      costCents: number;
-      actionIds: Set<string>;
-    }
+    { repositoryId?: Id<"repositories">; costCents: number }
   >();
   const actions = new Map<string, ActionUsage>();
 
@@ -83,10 +79,8 @@ export function summarizeUserKeyUsage(rows: UsageRow[]) {
     const repository = repositories.get(repositoryKey) ?? {
       ...(row.repositoryId ? { repositoryId: row.repositoryId } : {}),
       costCents: 0,
-      actionIds: new Set<string>(),
     };
     repository.costCents += row.baseCostCents;
-    if (row.ticketActionId) repository.actionIds.add(row.ticketActionId);
     repositories.set(repositoryKey, repository);
 
     if (!row.ticketActionId) continue;
@@ -108,12 +102,7 @@ export function summarizeUserKeyUsage(rows: UsageRow[]) {
     models: [...models.values()]
       .map(({ actionIds, ...model }) => ({ ...model, actions: actionIds.size }))
       .sort((a, b) => b.costCents - a.costCents),
-    repositories: [...repositories.values()].map(
-      ({ actionIds, ...repository }) => ({
-        ...repository,
-        actions: actionIds.size,
-      }),
-    ),
+    repositories: [...repositories.values()],
     actions: [...actions.values()].sort((a, b) => b.lastAt - a.lastAt),
   };
 }

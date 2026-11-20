@@ -28,6 +28,7 @@ import {
   needsGitHubAppInstallation,
   type OAuthInstallationRecoveryOutcome,
   recoverOAuthInstallations,
+  resolveConnectScreen,
   resolveGitHubAppSlug,
   resolveInstallationReconnect,
   storePendingReconnectMapping,
@@ -135,29 +136,14 @@ export function RepositoryConnect() {
           ? "invalid"
           : "ready";
 
-  const hasNoDurableInstallations =
-    installations !== undefined && installations.length === 0;
-  const needsOAuthReauthorization =
-    hasNoDurableInstallations &&
-    oauthInstallationRecovery.status === "reauth_required";
-  const needsInstallation =
-    oauthInstallationRecovery.status === "none" &&
-    oauthInstallationRecovery.recoveredCount === 0 &&
-    needsGitHubAppInstallation(installations);
-  const waitingForRecoveredInstallations =
-    hasNoDurableInstallations &&
-    oauthInstallationRecovery.recoveredCount > 0 &&
-    error === null;
-  const oauthRecoveryLoading =
-    oauthInstallationRecovery.status === "pending" &&
-    verificationPendingInstallationId === null &&
-    error === null;
-  const showInstallationVerification =
-    verificationPendingInstallationId !== null || needsOAuthReauthorization;
-  const installationVerificationRequiresReauth =
-    verificationPendingInstallationId === null
-      ? needsOAuthReauthorization
-      : verificationReauthRequired;
+  const screen = resolveConnectScreen({
+    loading,
+    installations,
+    recovery: oauthInstallationRecovery,
+    verificationPending: verificationPendingInstallationId !== null,
+    hasError: error !== null,
+  });
+  const hasNoDurableInstallations = needsGitHubAppInstallation(installations);
   const installationVerificationRequiresConfiguration =
     hasNoDurableInstallations &&
     oauthInstallationRecovery.status === "configure_required";
@@ -475,7 +461,7 @@ export function RepositoryConnect() {
       );
   }, [t]);
 
-  const handleRefreshGitHubAuthorization = async () => {
+  const handleVerifyGitHubAccess = async () => {
     setIsStartingVerification(true);
     try {
       const { url } = await startAccessVerification({
@@ -557,10 +543,7 @@ export function RepositoryConnect() {
             </p>
           </div>
 
-          {loading ||
-          installations === undefined ||
-          oauthRecoveryLoading ||
-          waitingForRecoveredInstallations ? (
+          {screen === "loading" ? (
             <div
               className={cn(
                 "p-12 text-center",
@@ -574,7 +557,7 @@ export function RepositoryConnect() {
                 {t("repositories.connect.loadingRepos")}
               </p>
             </div>
-          ) : showInstallationVerification ? (
+          ) : screen === "verification" ? (
             <div
               className={cn(
                 "p-12 text-center",
@@ -603,12 +586,12 @@ export function RepositoryConnect() {
                 {t(
                   installationVerificationRequiresConfiguration
                     ? "repositories.connect.verificationPending.organizationDescription"
-                    : installationVerificationRequiresReauth
+                    : verificationReauthRequired
                       ? "repositories.connect.verificationPending.reauthDescription"
                       : "repositories.connect.verificationPending.description",
                 )}
               </p>
-              {installationVerificationRequiresReauth ||
+              {verificationReauthRequired ||
               installationVerificationRequiresConfiguration ? (
                 <p
                   className={cn(
@@ -622,9 +605,9 @@ export function RepositoryConnect() {
                 </p>
               ) : null}
               <div className={cn("flex flex-wrap justify-center gap-3")}>
-                {installationVerificationRequiresReauth ? (
+                {verificationReauthRequired ? (
                   <button
-                    onClick={() => void handleRefreshGitHubAuthorization()}
+                    onClick={() => void handleVerifyGitHubAccess()}
                     disabled={isStartingVerification}
                     className={cn(
                       "px-6 py-2",
@@ -635,10 +618,10 @@ export function RepositoryConnect() {
                   >
                     {isStartingVerification
                       ? t(
-                          "repositories.connect.verificationPending.reauthorizing",
+                          "repositories.connect.verificationPending.verifyingAccess",
                         )
                       : t(
-                          "repositories.connect.verificationPending.reauthorize",
+                          "repositories.connect.verificationPending.verifyAccess",
                         )}
                   </button>
                 ) : null}
@@ -657,25 +640,23 @@ export function RepositoryConnect() {
                 >
                   {t("repositories.connect.verificationPending.manageAccess")}
                 </button>
-                {verificationPendingInstallationId !== null ? (
-                  <button
-                    onClick={() => void handleRetryInstallationVerification()}
-                    disabled={isRetryingVerification}
-                    className={cn(
-                      "px-6 py-2",
-                      "text-gray-700 border border-gray-300",
-                      "hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed",
-                      "dark:text-gray-300 dark:border-gray-700 dark:hover:bg-gray-900",
-                    )}
-                  >
-                    {isRetryingVerification
-                      ? t("repositories.connect.verificationPending.retrying")
-                      : t("repositories.connect.verificationPending.retry")}
-                  </button>
-                ) : null}
+                <button
+                  onClick={() => void handleRetryInstallationVerification()}
+                  disabled={isRetryingVerification}
+                  className={cn(
+                    "px-6 py-2",
+                    "text-gray-700 border border-gray-300",
+                    "hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed",
+                    "dark:text-gray-300 dark:border-gray-700 dark:hover:bg-gray-900",
+                  )}
+                >
+                  {isRetryingVerification
+                    ? t("repositories.connect.verificationPending.retrying")
+                    : t("repositories.connect.verificationPending.retry")}
+                </button>
               </div>
             </div>
-          ) : error ? (
+          ) : screen === "error" ? (
             <div
               className={cn(
                 "p-12 text-center",
@@ -697,7 +678,7 @@ export function RepositoryConnect() {
                 {t("common.goBack")}
               </button>
             </div>
-          ) : needsInstallation ? (
+          ) : screen === "install" ? (
             <div
               className={cn(
                 "p-12 text-center",
@@ -753,6 +734,23 @@ export function RepositoryConnect() {
                     {t("repositories.connect.install.installButton")}
                   </button>
                 </div>
+                {oauthInstallationRecovery.status === "reauth_required" ? (
+                  <button
+                    onClick={() => void handleVerifyGitHubAccess()}
+                    disabled={isStartingVerification}
+                    className={cn(
+                      "text-sm text-gray-600 underline",
+                      "hover:text-black disabled:opacity-50 disabled:cursor-not-allowed",
+                      "dark:text-gray-400 dark:hover:text-white",
+                    )}
+                  >
+                    {isStartingVerification
+                      ? t(
+                          "repositories.connect.verificationPending.verifyingAccess",
+                        )
+                      : t("repositories.connect.install.alreadyInstalled")}
+                  </button>
+                ) : null}
               </>
             </div>
           ) : (

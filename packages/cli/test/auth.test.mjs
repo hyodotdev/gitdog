@@ -2,8 +2,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdir, readFile, rmdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { createServer } from "node:net";
 import {
   createLoginListener,
+  LOGIN_CALLBACK_PORTS,
   login,
   logout,
   validateAuthRedirect,
@@ -82,6 +84,41 @@ test("loopback listener times out and supports cancellation", async () => {
   const cancelled = await createLoginListener();
   await cancelled.close();
   await assert.rejects(cancelled.code, /cancelled/);
+});
+
+// Holds each port another process is not already using.
+async function occupy(ports) {
+  const servers = [];
+  for (const port of ports) {
+    const server = createServer();
+    const bound = await new Promise((resolve, reject) => {
+      server.once("error", (error) =>
+        error.code === "EADDRINUSE" ? resolve(false) : reject(error),
+      );
+      server.listen(port, "127.0.0.1", () => resolve(true));
+    });
+    if (bound) servers.push(server);
+  }
+  return async () => {
+    await Promise.all(
+      servers.map((server) => new Promise((resolve) => server.close(resolve))),
+    );
+  };
+}
+
+test("loopback listener falls back to the next fixed port", async (t) => {
+  const release = await occupy(LOGIN_CALLBACK_PORTS.slice(0, 1));
+  t.after(release);
+  const listener = await createLoginListener(5000);
+  t.after(listener.close);
+  const port = Number(new URL(listener.redirectTo).port);
+  assert.ok(LOGIN_CALLBACK_PORTS.slice(1).includes(port));
+});
+
+test("loopback listener fails clearly when every fixed port is busy", async (t) => {
+  const release = await occupy(LOGIN_CALLBACK_PORTS);
+  t.after(release);
+  await assert.rejects(createLoginListener(5000), /are all in use/);
 });
 
 test("Convex OAuth cancellation without a code fails immediately", async (t) => {

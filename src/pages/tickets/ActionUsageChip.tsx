@@ -30,12 +30,13 @@ export function ActionUsageChip({ usage }: { usage: ActionUsage | undefined }) {
         tokens: `${formatTokens(gitdog.quotaTokens)}${more}`,
       }),
   ].filter(Boolean);
+  const requests = t("tickets.detail.usage.requests", {
+    count: (userKey?.requests ?? 0) + (gitdog?.requests ?? 0),
+  });
 
   return (
     <span
-      title={t("tickets.detail.usage.requests", {
-        count: (userKey?.requests ?? 0) + (gitdog?.requests ?? 0),
-      })}
+      title={requests}
       className={cn(
         "inline-flex items-center gap-1 px-2 py-0.5 text-xs tabular-nums border",
         "border-gray-300 text-gray-700",
@@ -46,6 +47,7 @@ export function ActionUsageChip({ usage }: { usage: ActionUsage | undefined }) {
         <KeyRound size={12} className="shrink-0" aria-hidden="true" />
       )}
       {[...new Set(models)].join(", ")} · {parts.join(" + ")}
+      <span className="sr-only"> · {requests}</span>
     </span>
   );
 }

@@ -372,8 +372,9 @@ export const getUserKeyUsage = query({
         return {
           ...usage,
           actionType: action.actionType,
-          // Deleted tickets keep their cost but no longer link anywhere.
-          ticketId: ticket.deletedAt ? null : ticket._id,
+          // Hidden tickets keep their cost but no longer link anywhere.
+          ticketId:
+            ticket.deletedAt || ticket.githubLifecycleOnly ? null : ticket._id,
           ticketType: ticket.ticketType,
           githubRepo: ticket.githubRepo,
           githubNumber: ticket.githubNumber,
@@ -402,7 +403,13 @@ export const getTicketUsage = query({
     const userId = await getAuthUserId(ctx);
     if (!userId) return [];
     const ticket = await ctx.db.get(args.ticketId);
-    if (!ticket || ticket.userId !== userId || ticket.deletedAt) return [];
+    if (
+      !ticket ||
+      ticket.userId !== userId ||
+      ticket.deletedAt ||
+      ticket.githubLifecycleOnly === true
+    )
+      return [];
 
     const actions = await ctx.db
       .query("ticketActions")

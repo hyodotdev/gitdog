@@ -1,5 +1,9 @@
 import { useAuthActions } from "@convex-dev/auth/react";
-import { useSignInWithGithub } from "@convex-dev/auth/methods/github/react";
+import {
+  useOauth,
+  useSignInWithGithub,
+  type OauthFlowError,
+} from "@convex-dev/auth/methods/github/react";
 import { SiGithub } from "@icons-pack/react-simple-icons";
 import { useConvexAuth, useMutation, useQuery } from "convex/react";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
@@ -24,6 +28,13 @@ import {
   shouldReleasePendingConsent,
 } from "../../utils/legalConsent";
 
+const SIGN_IN_FLOW_ERRORS: Record<OauthFlowError["error"], string> = {
+  ACCESS_DENIED: "auth.legalConsent.signInCancelled",
+  EXPIRED: "auth.legalConsent.signInExpired",
+  INVALID_FLOW: "auth.legalConsent.signInFailed",
+  OTHER_ERROR: "auth.legalConsent.signInFailed",
+};
+
 export function LegalConsentPage() {
   const { t } = useTranslation();
   const location = useLocation();
@@ -34,6 +45,7 @@ export function LegalConsentPage() {
   );
   const { signOut } = useAuthActions();
   const { signIn } = useSignInWithGithub(api.auth);
+  const { flowError } = useOauth();
   const { isAuthenticated, isLoading: isAuthResolving } = useConvexAuth();
   // Captured once: the visitor already confirmed eligibility on this tab and is
   // coming back from the GitHub redirect, so the form must not restart empty.
@@ -220,6 +232,9 @@ export function LegalConsentPage() {
     }
   };
 
+  const alertMessage =
+    error ?? (flowError ? t(SIGN_IN_FLOW_ERRORS[flowError.error]) : null);
+
   const handleSignOut = async () => {
     clearPendingLegalConsent();
     await signOut();
@@ -330,12 +345,12 @@ export function LegalConsentPage() {
               </Link>
             </div>
 
-            {error && (
+            {alertMessage && (
               <p
                 role="alert"
                 className={cn("text-sm text-red-600 mb-4", "dark:text-red-400")}
               >
-                {error}
+                {alertMessage}
               </p>
             )}
 

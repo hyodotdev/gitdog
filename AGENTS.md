@@ -45,7 +45,7 @@ Gitdog is an AI-powered GitHub assistant for repository automation. It is built 
 - Do not create barrel export files in the `convex/` root.
 - Organize functions in subdirectories with `query.ts`, `mutation.ts`, and `action.ts`.
 - Use the new Convex function syntax with validators.
-- Authenticate with `getAuthUserId(ctx)` from `@convex-dev/auth/server`.
+- Authenticate with `getAuthUserId(ctx)` from `convex/_utils/auth.ts`; it works in queries, mutations and actions.
 - Use dot-notation API references such as `api.repositories.query.list`.
 - Use `.withIndex()` instead of `.filter()` for database queries.
 - Avoid unbounded `.collect()`; use `paginatedCollect()` for large reads.

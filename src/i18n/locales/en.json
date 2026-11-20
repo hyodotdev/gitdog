@@ -73,7 +73,10 @@
       "signOut": "Sign out instead",
       "policyChangedError": "The Terms or Privacy Policy changed while this page was open. Reloading the current policies…",
       "saveError": "We could not save your confirmation. Please try again.",
-      "signInError": "We could not start GitHub sign-in. Please try again."
+      "signInError": "We could not start GitHub sign-in. Please try again.",
+      "signInCancelled": "GitHub sign-in was cancelled.",
+      "signInExpired": "GitHub sign-in took too long. Please try again.",
+      "signInFailed": "GitHub sign-in did not finish. Please try again."
     }
   },
   "home": {
@@ -220,16 +223,17 @@
         "title": "Install Gitdog GitHub App",
         "description": "To access your repositories (including private and organization repos), you need to install the Gitdog GitHub App.",
         "maybeLater": "Maybe later",
-        "installButton": "Install GitHub App"
+        "installButton": "Install GitHub App",
+        "alreadyInstalled": "Already installed? Verify GitHub access"
       },
       "verificationPending": {
         "title": "Finishing GitHub connection",
         "description": "Gitdog is waiting for GitHub to confirm this installation. Keep this page open and retry verification shortly.",
         "organizationDescription": "For security, GitHub must confirm organization access through a signed installation update before Gitdog can connect it.",
-        "reauthDescription": "Gitdog needs a fresh GitHub authorization to verify this existing installation.",
-        "recoveryInstructions": "Refresh GitHub authorization, or use Manage GitHub access and make an actual repository selection change. If access is already correct, uninstall and reinstall the GitHub App before retrying.",
-        "reauthorize": "Refresh GitHub authorization",
-        "reauthorizing": "Opening GitHub...",
+        "reauthDescription": "Gitdog needs to confirm your GitHub access to this installation.",
+        "recoveryInstructions": "Verify GitHub access, or use Manage GitHub access and make an actual repository selection change. If access is already correct, uninstall and reinstall the GitHub App before retrying.",
+        "verifyAccess": "Verify GitHub access",
+        "verifyingAccess": "Opening GitHub...",
         "retry": "Retry verification",
         "retrying": "Checking...",
         "manageAccess": "Manage GitHub access",
@@ -566,7 +570,9 @@
       "runsOn": "Reviews run on your {{provider}} key ••••{{last4}}",
       "effort": "{{effort}} effort",
       "backup": "If it runs out of credit, your {{provider}} key takes over with {{model}}.",
-      "noActiveKey": "No key is working right now, so reviews run on Gitdog tokens.",
+      "noKey": "No key is saved, so reviews run on Gitdog tokens.",
+      "noWorkingKey": "None of your saved keys works right now, so reviews stop until you fix or replace one.",
+      "keyChecksUnavailable": "Your saved keys can't be used right now because of a temporary Gitdog problem. Reviews resume once it is fixed.",
       "changeModel": "Change model",
       "manageKeys": "Manage keys",
       "costLabel": "Provider cost this period",
@@ -662,13 +668,14 @@
       },
       "defaultModel": "Default",
       "price": "{{input}} in · {{output}} out per 1M tokens",
+      "longContextPrice": "Higher rate above {{tokens}} input tokens",
       "efforts": {
         "low": "Low",
         "medium": "Medium",
         "high": "High"
       },
       "effortHint": "Higher effort reads more and costs more per run.",
-      "thisPeriod": "This period: {{cost}} on this key"
+      "thisPeriod": "{{provider}} cost this period: {{cost}}"
     }
   },
   "footer": {

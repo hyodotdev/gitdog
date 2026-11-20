@@ -16,6 +16,8 @@ process.env.GITHUB_APP_ID = "test-app-id";
 process.env.GITHUB_APP_PRIVATE_KEY = "test-private-key";
 process.env.GITHUB_APP_SLUG = "gitdogbot";
 process.env.FREE_TIER_ENABLED = "true";
+// Convex Auth checks token issuers against the deployment's cloud URL.
+process.env.CONVEX_CLOUD_URL = "https://gitdog-test.convex.cloud";
 process.env.PAID_PROJECT_BILLING_ENABLED = "true";
 
 // Unit tests must never inherit a real provider key from local development files.

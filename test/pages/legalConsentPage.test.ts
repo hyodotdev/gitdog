@@ -7,6 +7,7 @@ const convexMocks = {
   currentUser: null as unknown,
   attestLegalEligibility: vi.fn(),
   authState: { isAuthenticated: false, isLoading: false },
+  flowError: null as { error: string } | null,
 };
 
 const legalConsentMocks = {
@@ -25,6 +26,7 @@ vi.mock("@convex-dev/auth/react", () => ({
 
 vi.mock("@convex-dev/auth/methods/github/react", () => ({
   useSignInWithGithub: () => ({ signIn: vi.fn() }),
+  useOauth: () => ({ flowError: convexMocks.flowError }),
 }));
 
 vi.mock("react-i18next", () => ({
@@ -59,6 +61,7 @@ describe("legal consent page", () => {
   beforeEach(() => {
     convexMocks.currentUser = null;
     convexMocks.authState = { isAuthenticated: false, isLoading: false };
+    convexMocks.flowError = null;
     legalConsentMocks.hasPendingLegalConsent = false;
   });
 
@@ -86,6 +89,16 @@ describe("legal consent page", () => {
     expect(html).toContain('href="/legal/privacy-policy"');
     expect(html).toContain("disabled");
     expect(html).toContain("auth.legalConsent.continueWithGitHub");
+  });
+
+  it("explains why the last GitHub sign-in failed", () => {
+    expect(renderConsentPage()).not.toContain('role="alert"');
+
+    convexMocks.flowError = { error: "ACCESS_DENIED" };
+    expect(renderConsentPage()).toContain("auth.legalConsent.signInCancelled");
+
+    convexMocks.flowError = { error: "OTHER_ERROR" };
+    expect(renderConsentPage()).toContain("auth.legalConsent.signInFailed");
   });
 
   it("keeps the confirmation form for a current backend requiring consent", () => {

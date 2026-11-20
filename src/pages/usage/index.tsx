@@ -55,6 +55,7 @@ export function UsagePage() {
       (billingEstimate === undefined ||
         tokenUsage === undefined ||
         usageByRepository === undefined ||
+        userKeyUsage === undefined ||
         repositories === undefined))
   ) {
     return (
@@ -465,15 +466,15 @@ export function UsagePage() {
                   );
                   const repoTokens = repoUsage?.totalTokens ?? 0;
                   const repoUserKeyTokens = repoUsage?.userKeyTokens ?? 0;
-                  // Own-key cost may still be loading, and a capped read
-                  // makes it a lower bound.
+                  // Own-key cost is unknown until the quota is verified, and
+                  // a capped read makes it a lower bound.
                   const repoUserKeyCost = userKeyUsage
                     ? `${formatUsdCents(
                         userKeyUsage.repositories.find(
                           (u) => u.repositoryId === repo._id,
                         )?.costCents ?? 0,
                       )}${userKeyUsage.isPartial ? "+" : ""}`
-                    : "…";
+                    : "—";
 
                   return (
                     <div
