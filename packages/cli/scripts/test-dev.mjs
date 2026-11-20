@@ -318,15 +318,7 @@ async function cleanup() {
   const tables = [...schema.matchAll(/^  (\w+): defineTable\(/gm)].map(
     (match) => match[1],
   );
-  tables.push(
-    "users",
-    "authAccounts",
-    "authSessions",
-    "authRefreshTokens",
-    "authVerificationCodes",
-    "authVerifiers",
-    "authRateLimits",
-  );
+  tables.push("users");
   const readAll = () =>
     query(
       `const result={};for(const table of ${JSON.stringify(tables)})result[table]=await ctx.db.query(table).take(1001);return result;`,
