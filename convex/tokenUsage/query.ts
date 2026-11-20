@@ -1,3 +1,4 @@
+import { v } from "convex/values";
 import { query, type QueryCtx } from "../_generated/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import { getAuthUserId } from "@convex-dev/auth/server";
@@ -5,6 +6,7 @@ import { MAX_COLLECT_LIMIT } from "../_utils/pagination";
 import { getSubscriptionForEntitlement } from "../subscriptions/entitlement";
 import { readEffectiveSubscriptionQuota } from "../subscriptions/quotaEntitlement";
 import { readCompletePeriodTotals } from "./periodTotals";
+import { summarizeActionUsage, summarizeUserKeyUsage } from "./usageSummary";
 
 export const MAX_TOKEN_USAGE_AGGREGATION_RECORDS = MAX_COLLECT_LIMIT;
 
@@ -55,7 +57,8 @@ export function assertCompleteUsageAggregation(recordCount: number): void {
 
 /**
  * Usage on the user's own provider keys. It never counts toward quota, so a
- * busy period is reported as a floor instead of failing the usage page.
+ * busy period is reported as a floor instead of failing the usage page. Rows
+ * come newest first, so a partial read still holds the latest actions.
  */
 async function readUserKeyUsage(
   ctx: QueryCtx,
@@ -72,6 +75,7 @@ async function readUserKeyUsage(
         .gte("createdAt", periodStart)
         .lt("createdAt", periodEnd),
     )
+    .order("desc")
     .take(MAX_TOKEN_USAGE_AGGREGATION_RECORDS + 1);
   return {
     rows: rows.slice(0, MAX_TOKEN_USAGE_AGGREGATION_RECORDS),
@@ -118,14 +122,6 @@ export const getCurrentMonthUsage = query({
         totalCostCents: period.gitdog.totalCostCents,
         totalActions: period.gitdog.chatActions,
         totalEmbeddingTokens: period.gitdog.embeddingTokens,
-        userKey: {
-          inputTokens: period.userKey.inputTokens,
-          outputTokens: period.userKey.outputTokens,
-          totalTokens: period.userKey.totalTokens,
-          totalActions: period.userKey.rowCount,
-          estimatedProviderCostCents: period.userKey.baseCostCents,
-          isPartial: false,
-        },
         paymentStatus: paymentStatus as "waived" | "pending" | "paid",
       };
     }
@@ -142,12 +138,6 @@ export const getCurrentMonthUsage = query({
       )
       .take(MAX_TOKEN_USAGE_AGGREGATION_RECORDS + 1);
     assertCompleteUsageAggregation(usageRecords.length);
-    const userKeyRecords = await readUserKeyUsage(
-      ctx,
-      userId,
-      periodStart,
-      periodEnd,
-    );
 
     // `totalTokens` keeps cost-equivalent quota usage, while
     // `embeddingTokens` preserves the provider's actual embedding input count.
@@ -198,38 +188,9 @@ export const getCurrentMonthUsage = query({
       );
     }
 
-    const userKey = {
-      inputTokens: 0,
-      outputTokens: 0,
-      totalTokens: 0,
-      totalActions: 0,
-      estimatedProviderCostCents: 0,
-      isPartial: userKeyRecords.isPartial,
-    };
-    for (const record of userKeyRecords.rows) {
-      userKey.inputTokens = checkedTokenSum(
-        userKey.inputTokens,
-        record.inputTokens,
-      );
-      userKey.outputTokens = checkedTokenSum(
-        userKey.outputTokens,
-        record.outputTokens,
-      );
-      userKey.totalTokens = checkedTokenSum(
-        userKey.totalTokens,
-        record.totalTokens,
-      );
-      userKey.totalActions = checkedTokenSum(userKey.totalActions, 1);
-      userKey.estimatedProviderCostCents = checkedCostSum(
-        userKey.estimatedProviderCostCents,
-        record.baseCostCents,
-      );
-    }
-
     return {
       yearMonth,
       ...totals,
-      userKey,
       paymentStatus: paymentStatus as "waived" | "pending" | "paid",
     };
   },
@@ -373,5 +334,95 @@ export const getUsageByRepository = query({
     }
 
     return Array.from(usageByRepo.values());
+  },
+});
+
+const RECENT_USER_KEY_ACTIONS = 10;
+
+/**
+ * This period's usage on the owner's own keys, priced as the provider bills
+ * it: totals, each model, each repository and the most recent actions.
+ */
+export const getUserKeyUsage = query({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return null;
+
+    const subscription = await getSubscriptionForEntitlement(ctx, userId);
+    const quota = await readEffectiveSubscriptionQuota(ctx, subscription);
+    // Own-key usage never touches quota, so a quota problem only hides it;
+    // the keys page that shows it must keep working.
+    if (!quota.verified) return null;
+    const { periodStart, periodEnd } = quota.entitlement;
+
+    const { rows, isPartial } = await readUserKeyUsage(
+      ctx,
+      userId,
+      periodStart,
+      periodEnd,
+    );
+    const { actions, ...summary } = summarizeUserKeyUsage(rows);
+
+    const recentActions = await Promise.all(
+      actions.slice(0, RECENT_USER_KEY_ACTIONS).map(async (usage) => {
+        const action = await ctx.db.get(usage.ticketActionId);
+        const ticket = action && (await ctx.db.get(action.ticketId));
+        if (!action || !ticket || ticket.userId !== userId) return null;
+        return {
+          ...usage,
+          actionType: action.actionType,
+          // Deleted tickets keep their cost but no longer link anywhere.
+          ticketId: ticket.deletedAt ? null : ticket._id,
+          ticketType: ticket.ticketType,
+          githubRepo: ticket.githubRepo,
+          githubNumber: ticket.githubNumber,
+          githubTitle: ticket.githubTitle,
+        };
+      }),
+    );
+
+    return {
+      isPartial,
+      ...summary,
+      recentActions: recentActions.filter((entry) => entry !== null),
+    };
+  },
+});
+
+// Bounded well under a query's read limit: the newest actions, and more rows
+// per action than the largest batched review writes.
+const MAX_TICKET_USAGE_ACTIONS = 40;
+const MAX_ACTION_USAGE_ROWS = 300;
+
+/** What each action on a ticket used and whose key paid for it. */
+export const getTicketUsage = query({
+  args: { ticketId: v.id("tickets") },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return [];
+    const ticket = await ctx.db.get(args.ticketId);
+    if (!ticket || ticket.userId !== userId || ticket.deletedAt) return [];
+
+    const actions = await ctx.db
+      .query("ticketActions")
+      .withIndex("by_ticket", (q) => q.eq("ticketId", ticket._id))
+      .order("desc")
+      .take(MAX_TICKET_USAGE_ACTIONS);
+    return await Promise.all(
+      actions.map(async (action) => {
+        const rows = await ctx.db
+          .query("tokenUsage")
+          .withIndex("by_ticket_action", (q) =>
+            q.eq("ticketActionId", action._id),
+          )
+          .take(MAX_ACTION_USAGE_ROWS + 1);
+        return {
+          ticketActionId: action._id,
+          isPartial: rows.length > MAX_ACTION_USAGE_ROWS,
+          ...summarizeActionUsage(rows.slice(0, MAX_ACTION_USAGE_ROWS)),
+        };
+      }),
+    );
   },
 });

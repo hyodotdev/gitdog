@@ -501,7 +501,13 @@
       "reviewExcluded": "Files without complete coverage",
       "reviewNotPublished": "Review completed without a GitHub post",
       "reviewFailureDetails": "Failure details",
-      "emptyBody": "(Empty)"
+      "emptyBody": "(Empty)",
+      "usage": {
+        "userKey": "{{cost}} on your API key",
+        "gitdog": "{{tokens}} Gitdog tokens",
+        "requests_one": "{{count}} AI request",
+        "requests_other": "{{count}} AI requests"
+      }
     }
   },
   "usage": {
@@ -552,8 +558,31 @@
     },
     "userKey": {
       "title": "Your API keys",
-      "description": "{{count}} requests on your own keys this period, about {{cost}} at provider prices. Not counted toward your quota.",
-      "repositoryTokens": "+ {{tokens}} on your API key"
+      "runsOn": "Reviews run on your {{provider}} key ••••{{last4}}",
+      "effort": "{{effort}} effort",
+      "backup": "If it runs out of credit, your {{provider}} key takes over with {{model}}.",
+      "noActiveKey": "No key is working right now, so reviews run on Gitdog tokens.",
+      "changeModel": "Change model",
+      "manageKeys": "Manage keys",
+      "costLabel": "Provider cost this period",
+      "costNote": "Estimated at list prices; your provider's bill is final.",
+      "runsLabel": "Reviews and replies",
+      "requests_one": "{{count}} AI request",
+      "requests_other": "{{count}} AI requests",
+      "averageLabel": "Average per run",
+      "tokens": "{{input}} in · {{output}} out",
+      "byModel": "By model",
+      "columns": {
+        "model": "Model",
+        "runs": "Runs using it",
+        "tokens": "Tokens",
+        "average": "Avg per run",
+        "cost": "Cost"
+      },
+      "recent": "Recent runs on your keys",
+      "noRuns": "Nothing has run on your keys yet this period.",
+      "partial": "This period has more usage than can be shown, so totals are a lower bound.",
+      "repositoryUsage": "+ {{tokens}} on your API key ({{cost}})"
     }
   },
   "profile": {
@@ -621,7 +650,20 @@
       "modelLabel": "Model",
       "effortLabel": "Effort",
       "modelHint": "Runs on this key and is billed by {{provider}}. It never uses Gitdog tokens.",
-      "modelSaved": "Saved"
+      "modelSaved": "Saved",
+      "role": {
+        "primary": "Runs reviews",
+        "backup": "Backup"
+      },
+      "defaultModel": "Default",
+      "price": "{{input}} in · {{output}} out per 1M tokens",
+      "efforts": {
+        "low": "Low",
+        "medium": "Medium",
+        "high": "High"
+      },
+      "effortHint": "Higher effort reads more and costs more per run.",
+      "thisPeriod": "This period: {{cost}} on this key"
     }
   },
   "footer": {
