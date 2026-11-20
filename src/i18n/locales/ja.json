@@ -261,6 +261,11 @@
         "recoveryUnavailable": "GitHubインストールの復旧を一時的に利用できません。ページを更新してもう一度お試しください。",
         "recoveryLimitExceeded": "GitHubインストールの復旧がサポート上限を超えました。続行するにはサポートへお問い合わせください。",
         "reconnectTargetUnavailable": "このリポジトリは再接続できなくなりました。"
+      },
+      "accessVerification": {
+        "failed": "GitHub のアクセスを確認できませんでした。もう一度お試しください。",
+        "cancelled": "GitHub のアクセス確認がキャンセルされました。",
+        "account_mismatch": "サインインした GitHub アカウントと異なります。同じアカウントで確認してください。"
       }
     },
     "settings": {

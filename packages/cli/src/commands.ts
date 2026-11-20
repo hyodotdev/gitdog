@@ -1441,6 +1441,26 @@ export function createProgram(
     .option("--print", "Print the installation URL");
   command(
     github,
+    "verify",
+    "Open GitHub to verify which installations you can access",
+    async ({ api, ui }, _args, opts) => {
+      const result = asRecord(
+        await api.call("action", "github/action:startAccessVerification", {
+          returnPath: "/repositories/connect",
+        }),
+      );
+      const url = typeof result?.url === "string" ? result.url : undefined;
+      if (!url?.startsWith("https://github.com/"))
+        throw new Error("Gitdog returned an invalid GitHub authorization URL.");
+      if (!ui.json && !flag(opts.print)) await openBrowser(url);
+      ui.output({
+        url,
+        next: "After GitHub returns you to Gitdog, run npx gitdog@latest github recover.",
+      });
+    },
+  ).option("--print", "Print the GitHub authorization URL");
+  command(
+    github,
     "recover",
     "Recover installation bindings after GitHub authorization",
     async ({ api, ui }) => {
@@ -1452,7 +1472,7 @@ export function createProgram(
           ui.output({ ...result, recoveredCount: count });
           if (result?.status === "reauth_required")
             throw new Error(
-              "Refresh GitHub authorization with npx gitdog@latest login, then run github recover again.",
+              "Verify GitHub access with npx gitdog@latest github verify, then run github recover again.",
             );
           return;
         }

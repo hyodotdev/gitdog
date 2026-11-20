@@ -261,6 +261,11 @@
         "recoveryUnavailable": "GitHub installation recovery is temporarily unavailable. Refresh the page and try again.",
         "recoveryLimitExceeded": "GitHub installation recovery exceeded the supported limit. Contact support to continue.",
         "reconnectTargetUnavailable": "This repository is no longer available to reconnect."
+      },
+      "accessVerification": {
+        "failed": "GitHub access could not be verified. Try again.",
+        "cancelled": "GitHub access verification was cancelled.",
+        "account_mismatch": "That GitHub account is not the one you signed in with. Verify with the same account."
       }
     },
     "settings": {

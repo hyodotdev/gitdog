@@ -12,17 +12,14 @@ function everyViewInput(): LegalConsentViewInput[] {
   const inputs: LegalConsentViewInput[] = [];
   for (const currentUserLoaded of BOOLS) {
     for (const hasCurrentLegalAttestation of BOOLS) {
-      for (const refreshGitHubAuthorizationRequested of BOOLS) {
-        for (const returningFromConsentedSignIn of BOOLS) {
-          for (const signInCompletionFailed of BOOLS) {
-            inputs.push({
-              currentUserLoaded,
-              hasCurrentLegalAttestation,
-              refreshGitHubAuthorizationRequested,
-              returningFromConsentedSignIn,
-              signInCompletionFailed,
-            });
-          }
+      for (const returningFromConsentedSignIn of BOOLS) {
+        for (const signInCompletionFailed of BOOLS) {
+          inputs.push({
+            currentUserLoaded,
+            hasCurrentLegalAttestation,
+            returningFromConsentedSignIn,
+            signInCompletionFailed,
+          });
         }
       }
     }
@@ -33,7 +30,7 @@ function everyViewInput(): LegalConsentViewInput[] {
 describe("legal consent view resolution", () => {
   it("covers every input combination without falling through", () => {
     const inputs = everyViewInput();
-    expect(inputs).toHaveLength(32);
+    expect(inputs).toHaveLength(16);
     for (const input of inputs) {
       expect(resolveLegalConsentView(input)).toBeTypeOf("string");
     }
@@ -58,7 +55,6 @@ describe("legal consent view resolution", () => {
       resolveLegalConsentView({
         currentUserLoaded: true,
         hasCurrentLegalAttestation: false,
-        refreshGitHubAuthorizationRequested: false,
         returningFromConsentedSignIn: true,
         signInCompletionFailed: false,
       }),
@@ -70,7 +66,6 @@ describe("legal consent view resolution", () => {
       resolveLegalConsentView({
         currentUserLoaded: true,
         hasCurrentLegalAttestation: false,
-        refreshGitHubAuthorizationRequested: false,
         returningFromConsentedSignIn: true,
         signInCompletionFailed: true,
       }),
@@ -81,7 +76,7 @@ describe("legal consent view resolution", () => {
     const undecided = everyViewInput().filter(
       (input) => !input.currentUserLoaded,
     );
-    expect(undecided).toHaveLength(16);
+    expect(undecided).toHaveLength(8);
     for (const input of undecided) {
       expect(resolveLegalConsentView(input)).toBe("loading");
     }
@@ -91,13 +86,9 @@ describe("legal consent view resolution", () => {
     const attested = everyViewInput().filter(
       (input) => input.currentUserLoaded && input.hasCurrentLegalAttestation,
     );
-    expect(attested).toHaveLength(8);
+    expect(attested).toHaveLength(4);
     for (const input of attested) {
-      expect(resolveLegalConsentView(input)).toBe(
-        input.refreshGitHubAuthorizationRequested
-          ? "reauthorize"
-          : "redirectToReturnPath",
-      );
+      expect(resolveLegalConsentView(input)).toBe("redirectToReturnPath");
     }
   });
 
@@ -106,7 +97,6 @@ describe("legal consent view resolution", () => {
       resolveLegalConsentView({
         currentUserLoaded: true,
         hasCurrentLegalAttestation: false,
-        refreshGitHubAuthorizationRequested: false,
         returningFromConsentedSignIn: false,
         signInCompletionFailed: false,
       }),

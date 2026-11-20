@@ -1118,6 +1118,20 @@ const applicationTables = {
     .index("by_user", ["userId"])
     .index("by_github_account", ["githubAccountId"]),
 
+  // Pending "Verify GitHub access" authorizations, keyed by a hash of the
+  // OAuth state so the state itself is never stored.
+  githubAccessVerifications: defineTable({
+    userId: v.id("users"),
+    stateHash: v.string(),
+    // The PKCE verifier GitHub checks when the code is exchanged.
+    codeVerifier: v.string(),
+    returnPath: v.string(),
+    createdAt: v.number(),
+    expiresAt: v.number(),
+  })
+    .index("by_state_hash", ["stateHash"])
+    .index("by_user", ["userId"]),
+
   githubInstallations: defineTable({
     userId: v.id("users"),
     installationId: v.number(),

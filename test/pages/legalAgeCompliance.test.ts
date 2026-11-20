@@ -8,11 +8,9 @@ import {
   DISPLAYED_TERMS_VERSION,
   clearPendingLegalConsent,
   createLegalConsentUrl,
-  createGitHubReauthorizationConsentUrl,
   getLegalConsentReturnPath,
   hasPendingLegalConsent,
   isLegalConsentExemptPath,
-  isGitHubReauthorizationRequested,
   markPendingLegalConsent,
   shouldShowLegalConsentLoadingState,
 } from "../../src/utils/legalConsent";
@@ -106,19 +104,6 @@ describe("legal age compliance", () => {
       "/",
     );
     expect(getLegalConsentReturnPath("?redirectTo=//evil.example")).toBe("/");
-
-    const reauthorizationUrl = createGitHubReauthorizationConsentUrl(
-      "/repositories/connect?installation_id=123",
-    );
-    const reauthorizationSearch = new URL(
-      reauthorizationUrl,
-      "https://gitdog.dev",
-    ).search;
-    expect(isGitHubReauthorizationRequested(reauthorizationSearch)).toBe(true);
-    expect(getLegalConsentReturnPath(reauthorizationSearch)).toBe(
-      "/repositories/connect?installation_id=123",
-    );
-    expect(isGitHubReauthorizationRequested("?reauthorize=other")).toBe(false);
   });
 
   it.each([

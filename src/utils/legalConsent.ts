@@ -6,8 +6,6 @@ export const LEGAL_POLICY_VERSION_MISMATCH_CODE =
   "LEGAL_POLICY_VERSION_MISMATCH";
 
 const PENDING_LEGAL_CONSENT_KEY = "gitdog:pending-legal-consent";
-const GITHUB_REAUTHORIZATION_PARAM = "reauthorize";
-const GITHUB_REAUTHORIZATION_VALUE = "github";
 
 type LegalConsentStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
@@ -92,44 +90,18 @@ export function createLegalConsentUrl(returnPath: string): string {
   return `${LEGAL_CONSENT_PATH}?redirectTo=${encodeURIComponent(returnPath)}`;
 }
 
-export function createGitHubReauthorizationConsentUrl(
-  returnPath: string,
-): string {
-  const consentUrl = new URL(
-    createLegalConsentUrl(returnPath),
-    "https://gitdog.invalid",
-  );
-  consentUrl.searchParams.set(
-    GITHUB_REAUTHORIZATION_PARAM,
-    GITHUB_REAUTHORIZATION_VALUE,
-  );
-  return `${consentUrl.pathname}?${consentUrl.searchParams.toString()}`;
-}
-
-export function isGitHubReauthorizationRequested(search: string): boolean {
-  return (
-    new URLSearchParams(search).get(GITHUB_REAUTHORIZATION_PARAM) ===
-    GITHUB_REAUTHORIZATION_VALUE
-  );
-}
-
 /**
  * What the consent page renders. `completingSignIn` is the state that keeps a
  * visitor who already confirmed eligibility from being asked a second time
  * while the GitHub token handshake is still in flight.
  */
 export type LegalConsentView =
-  | "loading"
-  | "reauthorize"
-  | "redirectToReturnPath"
-  | "completingSignIn"
-  | "form";
+  "loading" | "redirectToReturnPath" | "completingSignIn" | "form";
 
 export type LegalConsentViewInput = {
   /** False while the `getCurrentUser` query is still resolving. */
   currentUserLoaded: boolean;
   hasCurrentLegalAttestation: boolean;
-  refreshGitHubAuthorizationRequested: boolean;
   /** The visitor confirmed eligibility on this tab before the GitHub redirect. */
   returningFromConsentedSignIn: boolean;
   /** The redirect came back without a session, or the attestation failed. */
@@ -139,7 +111,6 @@ export type LegalConsentViewInput = {
 export function resolveLegalConsentView({
   currentUserLoaded,
   hasCurrentLegalAttestation,
-  refreshGitHubAuthorizationRequested,
   returningFromConsentedSignIn,
   signInCompletionFailed,
 }: LegalConsentViewInput): LegalConsentView {
@@ -148,9 +119,7 @@ export function resolveLegalConsentView({
   }
 
   if (hasCurrentLegalAttestation) {
-    return refreshGitHubAuthorizationRequested
-      ? "reauthorize"
-      : "redirectToReturnPath";
+    return "redirectToReturnPath";
   }
 
   if (returningFromConsentedSignIn && !signInCompletionFailed) {

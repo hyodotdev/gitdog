@@ -100,25 +100,6 @@ describe("legal consent page", () => {
     expect(html).toContain("auth.legalConsent.confirmAndContinue");
   });
 
-  it("keeps GitHub reauthorization on the consent-gated route", () => {
-    convexMocks.currentUser = {
-      name: "current-user",
-      hasCurrentLegalAttestation: true,
-      requiresCurrentLegalAttestation: false,
-    };
-
-    const html = renderConsentPage(
-      "/legal/consent?redirectTo=%2Frepositories%2Fconnect%3Finstallation_id%3D123&reauthorize=github",
-    );
-
-    expect(html).toContain(
-      "repositories.connect.verificationPending.reauthorize",
-    );
-    expect(html).toContain(
-      "repositories.connect.verificationPending.reauthDescription",
-    );
-  });
-
   it("sizes every eligibility checkbox identically regardless of label length", () => {
     const html = renderConsentPage();
     const checkboxClasses = [

@@ -292,6 +292,42 @@ for (const [input, expectedKind, expectedPath, expectedArgs] of scenarios) {
   });
 }
 
+test("github verify starts access verification and accepts only GitHub URLs", async () => {
+  const run = async (url) => {
+    const calls = [];
+    const api = {
+      async call(kind, path, args = {}) {
+        calls.push({ kind, path, args });
+        return { url };
+      },
+    };
+    const ui = new CaptureUi();
+    await createProgram({ api, ui }).parseAsync(["github", "verify"], {
+      from: "user",
+    });
+    return { calls, ui };
+  };
+
+  const { calls, ui } = await run(
+    "https://github.com/login/oauth/authorize?state=x",
+  );
+  assert.deepEqual(calls, [
+    {
+      kind: "action",
+      path: "github/action:startAccessVerification",
+      args: { returnPath: "/repositories/connect" },
+    },
+  ]);
+  assert.equal(
+    ui.values[0].url,
+    "https://github.com/login/oauth/authorize?state=x",
+  );
+  await assert.rejects(
+    run("https://evil.example/login"),
+    /invalid GitHub authorization URL/,
+  );
+});
+
 test("mutation confirmation happens before a GitHub action executes", async () => {
   let called = false;
   const api = {
@@ -418,7 +454,7 @@ test("all catalog paths are unique public functions and version matches the npm 
     new Set(API_CATALOG.map((entry) => entry.path)).size,
     API_CATALOG.length,
   );
-  assert.equal(API_CATALOG.length, 97);
+  assert.equal(API_CATALOG.length, 98);
   assert.equal(
     API_CATALOG.every(
       (entry) =>

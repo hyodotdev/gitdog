@@ -39,7 +39,7 @@ npx gitdog@latest --help
 ```sh
 npx gitdog@latest login
 npx gitdog@latest github install
-npx gitdog@latest github recover
+npx gitdog@latest github recover   # if asked, run github verify first
 npx gitdog@latest init owner/repo
 npx gitdog@latest config set requireApproval true
 npx gitdog@latest config set pullRequestReviewsEnabled true
