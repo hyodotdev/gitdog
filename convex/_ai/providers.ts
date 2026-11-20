@@ -230,6 +230,7 @@ export class ClaudeProvider implements AiProvider {
       throw unavailable("Claude API access has ended");
     if (!this.authorize && !this.apiKey.trim())
       throw unavailable("Anthropic API key is not configured");
+    const system = systemPrompt(messages);
     const { data, requestId } = await request(
       "https://api.anthropic.com/v1/messages",
       {
@@ -246,12 +247,12 @@ export class ClaudeProvider implements AiProvider {
         fallbacks: "default",
         // The system prompt and tools are shared by every turn of a
         // conversation, and the caller marks longer prefixes it resends.
-        ...(systemPrompt(messages)
+        ...(system
           ? {
               system: [
                 {
                   type: "text",
-                  text: systemPrompt(messages),
+                  text: system,
                   cache_control: { type: "ephemeral" },
                 },
               ],
@@ -315,21 +316,23 @@ export class ClaudeProvider implements AiProvider {
     // answered.
     const cacheWrite = counts.cache_creation_input_tokens ?? 0;
     const cacheRead = counts.cache_read_input_tokens ?? 0;
-    if (!tokens(cacheWrite) || !tokens(cacheRead))
+    if (
+      !tokens(counts.input_tokens) ||
+      !tokens(cacheWrite) ||
+      !tokens(cacheRead)
+    )
       throw new ChatProviderRequestError(
         "AI provider returned invalid usage metadata",
         "ambiguous",
         { providerRequestId: requestId },
       );
     const billed = usage(
-      tokens(counts.input_tokens)
-        ? cacheAdjustedInputTokens(
-            typeof data.model === "string" ? data.model : this.modelId,
-            counts.input_tokens,
-            cacheWrite,
-            cacheRead,
-          )
-        : counts.input_tokens,
+      cacheAdjustedInputTokens(
+        typeof data.model === "string" ? data.model : this.modelId,
+        counts.input_tokens,
+        cacheWrite,
+        cacheRead,
+      ),
       counts.output_tokens,
       requestId,
     );

@@ -445,7 +445,17 @@
     "args": "{}"
   },
   {
+    "path": "tokenUsage/query:getTicketUsage",
+    "kind": "query",
+    "args": "{ ticketId: v.id(\"tickets\") }"
+  },
+  {
     "path": "tokenUsage/query:getUsageByRepository",
+    "kind": "query",
+    "args": "{}"
+  },
+  {
+    "path": "tokenUsage/query:getUserKeyUsage",
     "kind": "query",
     "args": "{}"
   },

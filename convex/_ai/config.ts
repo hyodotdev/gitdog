@@ -45,6 +45,7 @@ export const GENERATION_MODELS = {
 export const CHAT_MODELS: Record<
   string,
   {
+    name: string;
     provider: "anthropic" | "openai" | "google";
     inputPer1M: number;
     outputPer1M: number;
@@ -60,6 +61,7 @@ export const CHAT_MODELS: Record<
   }
 > = {
   "claude-opus-5-5": {
+    name: "Claude Opus 5.5",
     provider: "anthropic",
     inputPer1M: 4,
     outputPer1M: 20,
@@ -68,18 +70,21 @@ export const CHAT_MODELS: Record<
   },
   // Refusal fallback targets for Opus 5.5, priced only for recorded cost.
   "claude-opus-5": {
+    name: "Claude Opus 5",
     provider: "anthropic",
     inputPer1M: 5,
     outputPer1M: 25,
     quotaWeight: 2.5,
   },
   "claude-opus-4-8": {
+    name: "Claude Opus 4.8",
     provider: "anthropic",
     inputPer1M: 5,
     outputPer1M: 25,
     quotaWeight: 2.5,
   },
   "claude-sonnet-5-5": {
+    name: "Claude Sonnet 5.5",
     provider: "anthropic",
     inputPer1M: 2,
     outputPer1M: 10,
@@ -87,6 +92,7 @@ export const CHAT_MODELS: Record<
   },
   // Available on an owner's own key only; priced for recorded cost.
   "claude-haiku-5-5": {
+    name: "Claude Haiku 5.5",
     provider: "anthropic",
     inputPer1M: 0.1,
     outputPer1M: 0.5,
@@ -98,6 +104,7 @@ export const CHAT_MODELS: Record<
     },
   },
   "gpt-6.2-sol": {
+    name: "GPT-6.2 Sol",
     provider: "openai",
     inputPer1M: 2,
     outputPer1M: 10,
@@ -110,6 +117,7 @@ export const CHAT_MODELS: Record<
     },
   },
   "gpt-6.1-sol": {
+    name: "GPT-6.1 Sol",
     provider: "openai",
     inputPer1M: 2,
     outputPer1M: 10,
@@ -121,6 +129,7 @@ export const CHAT_MODELS: Record<
     },
   },
   [LEGACY_GOOGLE_MODELS.chatModelId]: {
+    name: "Gemini 2.5 Flash",
     provider: LEGACY_GOOGLE_MODELS.provider,
     inputPer1M: LEGACY_GOOGLE_MODELS.chatInputPer1M,
     outputPer1M: LEGACY_GOOGLE_MODELS.chatOutputPer1M,
@@ -173,52 +182,55 @@ export type UserKeyModel = {
   name: string;
   efforts: readonly ModelEffort[];
   defaultEffort: ModelEffort;
+  // USD per 1M tokens, so owners can compare models before choosing one.
+  inputPer1M: number;
+  outputPer1M: number;
 };
+
+const EFFORTS: readonly ModelEffort[] = ["low", "medium", "high"];
+
+function userKeyOption(
+  modelId: string,
+  defaultEffort: ModelEffort,
+): UserKeyModel {
+  const { name, inputPer1M, outputPer1M } = CHAT_MODELS[modelId];
+  return {
+    modelId,
+    name,
+    efforts: EFFORTS,
+    defaultEffort,
+    inputPer1M,
+    outputPer1M,
+  };
+}
 
 /**
  * Models an owner can choose for their own provider key, the default first.
  * The provider bills that usage, so it never counts against Gitdog tokens.
- * Requests are not streamed and stop after two minutes, so settings that can
+ * Requests are not streamed and must finish within minutes (two for most
+ * work, up to four or five in a pull request review), so settings that can
  * think for longer, such as Fable 5.1 or xhigh and max effort, are left out.
  */
 export const USER_KEY_MODELS: Record<"anthropic" | "openai", UserKeyModel[]> = {
   anthropic: [
-    {
-      modelId: "claude-opus-5-5",
-      name: "Claude Opus 5.5",
-      efforts: ["low", "medium", "high"],
-      defaultEffort: "medium",
-    },
-    {
-      modelId: "claude-sonnet-5-5",
-      name: "Claude Sonnet 5.5",
-      efforts: ["low", "medium", "high"],
-      defaultEffort: "high",
-    },
-    {
-      modelId: "claude-haiku-5-5",
-      name: "Claude Haiku 5.5",
-      efforts: ["low", "medium", "high"],
-      defaultEffort: "medium",
-    },
+    userKeyOption("claude-opus-5-5", "medium"),
+    userKeyOption("claude-sonnet-5-5", "high"),
+    userKeyOption("claude-haiku-5-5", "medium"),
   ],
   // Keys saved before GPT-6.2 Sol were checked against 6.1 and store no
   // model, so 6.1 stays the default they resolve to.
   openai: [
-    {
-      modelId: "gpt-6.1-sol",
-      name: "GPT-6.1 Sol",
-      efforts: ["low", "medium", "high"],
-      defaultEffort: "high",
-    },
-    {
-      modelId: "gpt-6.2-sol",
-      name: "GPT-6.2 Sol",
-      efforts: ["low", "medium", "high"],
-      defaultEffort: "high",
-    },
+    userKeyOption("gpt-6.1-sol", "high"),
+    userKeyOption("gpt-6.2-sol", "high"),
   ],
 };
+
+/** A chat model's display name, or its id when Gitdog never priced it. */
+export function chatModelName(modelId: string): string {
+  return Object.hasOwn(CHAT_MODELS, modelId)
+    ? CHAT_MODELS[modelId].name
+    : modelId;
+}
 
 /**
  * The model and effort an owner's key runs with. A choice that is no longer

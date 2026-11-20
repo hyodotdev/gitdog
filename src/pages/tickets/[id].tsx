@@ -34,6 +34,8 @@ import {
 } from "../../utils/errorMessages";
 import { useState, useMemo } from "react";
 import { parseGitdogBody } from "../../utils/parseGitdogContent";
+import { ActionUsageChip } from "./ActionUsageChip";
+import { actionTypeLabelKey } from "../../utils/actionTypes";
 
 export function TicketDetailPage() {
   const { t, i18n } = useTranslation();
@@ -58,6 +60,11 @@ export function TicketDetailPage() {
   const ticket = useQuery(
     api.tickets.query.getById,
     id ? { id: id as Id<"tickets"> } : "skip",
+  );
+
+  const ticketUsage = useQuery(
+    api.tokenUsage.query.getTicketUsage,
+    id ? { ticketId: id as Id<"tickets"> } : "skip",
   );
 
   // Action handlers
@@ -228,20 +235,8 @@ export function TicketDetailPage() {
   };
 
   const getActionTypeName = (actionType: string) => {
-    switch (actionType) {
-      case "review":
-        return t("tickets.actionTypes.review");
-      case "format":
-        return t("tickets.actionTypes.format");
-      case "answer":
-        return t("tickets.actionTypes.answer");
-      case "tag_maintainers":
-        return t("tickets.actionTypes.tagMaintainers");
-      case "follow_up":
-        return t("tickets.actionTypes.followUp");
-      default:
-        return actionType;
-    }
+    const key = actionTypeLabelKey(actionType);
+    return key ? t(key) : actionType;
   };
 
   if (!id) {
@@ -631,6 +626,11 @@ export function TicketDetailPage() {
                             "flex flex-wrap items-center gap-x-3 gap-y-1",
                           )}
                         >
+                          <ActionUsageChip
+                            usage={ticketUsage?.find(
+                              (entry) => entry.ticketActionId === action._id,
+                            )}
+                          />
                           <span
                             className={cn(
                               "text-xs text-gray-500 tabular-nums",

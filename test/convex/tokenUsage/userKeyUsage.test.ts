@@ -929,17 +929,17 @@ describe("usage reporting for user keys", () => {
     expect(totals).toEqual([expect.objectContaining({ totalTokens: 40 })]);
 
     const as = t.withIdentity({ subject: `${fixture.userId}|session` });
+    const monthly = await as.query(
+      api.tokenUsage.query.getCurrentMonthUsage,
+      {},
+    );
+    expect(monthly).toMatchObject({ totalTokens: 40, totalActions: 1 });
+    expect(monthly).not.toHaveProperty("userKey");
     await expect(
-      as.query(api.tokenUsage.query.getCurrentMonthUsage, {}),
+      as.query(api.tokenUsage.query.getUserKeyUsage, {}),
     ).resolves.toMatchObject({
-      totalTokens: 40,
-      totalActions: 1,
-      userKey: {
-        totalTokens: 100,
-        totalActions: 1,
-        estimatedProviderCostCents: 3,
-        isPartial: false,
-      },
+      isPartial: false,
+      totals: { requests: 1, quotaTokens: 0, costCents: 3 },
     });
     await expect(
       as.query(api.tokenUsage.query.getUsageByRepository, {}),
@@ -951,6 +951,135 @@ describe("usage reporting for user keys", () => {
         userKeyActions: 1,
       }),
     ]);
+  });
+
+  it("breaks own-key cost down by model, repository and recent run", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await insertFixture(t);
+    const review = await insertAction(t, fixture, "review");
+    const now = Date.now();
+    const row = {
+      purchasedTokensDebited: 0,
+      userId: fixture.userId,
+      repositoryId: fixture.repositoryId,
+      usageType: "chat" as const,
+      inputTokens: 1_000,
+      outputTokens: 100,
+      totalTokens: 1_100,
+      inputCostCents: 1,
+      outputCostCents: 1,
+      baseCostCents: 2,
+      serviceFeeCents: 0,
+      totalCostCents: 2,
+      provider: "openai" as const,
+      serviceFeeRate: 0,
+      keySource: "user" as const,
+    };
+    await t.run(async (ctx) => {
+      await insertTokenUsage(ctx, {
+        ...row,
+        model: "gpt-6.2-sol",
+        ticketActionId: fixture.ticketActionId,
+        createdAt: now - 60_000,
+      });
+      await insertTokenUsage(ctx, {
+        ...row,
+        model: "gpt-6.2-sol",
+        ticketActionId: review,
+        createdAt: now - 1_000,
+      });
+      await insertTokenUsage(ctx, {
+        ...row,
+        model: "gpt-6.1-sol",
+        baseCostCents: 6,
+        totalCostCents: 6,
+        ticketActionId: review,
+        createdAt: now,
+      });
+      // Gitdog's own key: tokens against quota, never an own-key cost.
+      await insertTokenUsage(ctx, {
+        ...row,
+        keySource: undefined,
+        model: GENERATION_MODELS.anthropic.modelId,
+        provider: "anthropic",
+        totalTokens: 2_200,
+        ticketActionId: review,
+        createdAt: now,
+      });
+    });
+
+    const as = t.withIdentity({ subject: `${fixture.userId}|session` });
+    const usage = await as.query(api.tokenUsage.query.getUserKeyUsage, {});
+    expect(usage).toMatchObject({
+      isPartial: false,
+      totals: { requests: 3, actions: 2, costCents: 10, inputTokens: 3_000 },
+      models: [
+        {
+          modelId: "gpt-6.1-sol",
+          name: "GPT-6.1 Sol",
+          actions: 1,
+          costCents: 6,
+        },
+        {
+          modelId: "gpt-6.2-sol",
+          name: "GPT-6.2 Sol",
+          actions: 2,
+          costCents: 4,
+        },
+      ],
+      repositories: [
+        { repositoryId: fixture.repositoryId, actions: 2, costCents: 10 },
+      ],
+    });
+    expect(usage?.recentActions).toEqual([
+      expect.objectContaining({
+        ticketActionId: review,
+        actionType: "review",
+        ticketId: fixture.ticketId,
+        githubNumber: 42,
+        models: ["GPT-6.1 Sol", "GPT-6.2 Sol"],
+        costCents: 8,
+      }),
+      expect.objectContaining({
+        ticketActionId: fixture.ticketActionId,
+        costCents: 2,
+      }),
+    ]);
+
+    const ticketUsage = await as.query(api.tokenUsage.query.getTicketUsage, {
+      ticketId: fixture.ticketId,
+    });
+    expect(ticketUsage).toEqual([
+      {
+        ticketActionId: review,
+        isPartial: false,
+        userKey: expect.objectContaining({
+          models: ["GPT-6.2 Sol", "GPT-6.1 Sol"],
+          requests: 2,
+          costCents: 8,
+          quotaTokens: 0,
+        }),
+        gitdog: expect.objectContaining({
+          models: [GENERATION_MODELS.anthropic.name],
+          quotaTokens: 2_200,
+        }),
+      },
+      {
+        ticketActionId: fixture.ticketActionId,
+        isPartial: false,
+        userKey: expect.objectContaining({ requests: 1, costCents: 2 }),
+        gitdog: null,
+      },
+    ]);
+
+    // Another account sees none of it.
+    const otherUser = await t.run(async (ctx) => ctx.db.insert("users", {}));
+    const other = t.withIdentity({ subject: `${otherUser}|session` });
+    await expect(
+      other.query(api.tokenUsage.query.getTicketUsage, {
+        ticketId: fixture.ticketId,
+      }),
+    ).resolves.toEqual([]);
   });
 });
 

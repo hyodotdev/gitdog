@@ -167,6 +167,7 @@ import type * as tokenUsage_periodTotals from "../tokenUsage/periodTotals.js";
 import type * as tokenUsage_query from "../tokenUsage/query.js";
 import type * as tokenUsage_quota from "../tokenUsage/quota.js";
 import type * as tokenUsage_totals from "../tokenUsage/totals.js";
+import type * as tokenUsage_usageSummary from "../tokenUsage/usageSummary.js";
 import type * as users_action from "../users/action.js";
 import type * as users_internalQuery from "../users/internalQuery.js";
 import type * as users_legal from "../users/legal.js";
@@ -339,6 +340,7 @@ declare const fullApi: ApiFromModules<{
   "tokenUsage/query": typeof tokenUsage_query;
   "tokenUsage/quota": typeof tokenUsage_quota;
   "tokenUsage/totals": typeof tokenUsage_totals;
+  "tokenUsage/usageSummary": typeof tokenUsage_usageSummary;
   "users/action": typeof users_action;
   "users/internalQuery": typeof users_internalQuery;
   "users/legal": typeof users_legal;
