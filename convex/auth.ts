@@ -15,6 +15,9 @@ const core = setupConvexAuth({
 
 export const { signOut, refreshSession, isAuthenticated } = core;
 
+// Sign-in never sees the GitHub user token in 2.0, so it records no
+// installation access. "Verify GitHub access" (github/accessVerification.ts)
+// does, whenever installation recovery reports reauth_required.
 export const { startSignInWithGithub, completeSignInWithGithub } = setupGithub(
   core,
   {
