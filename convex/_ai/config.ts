@@ -175,10 +175,13 @@ export type UserKeyModel = {
   defaultEffort: ModelEffort;
 };
 
+const EFFORTS: readonly ModelEffort[] = ["low", "medium", "high"];
+
 /**
  * Models an owner can choose for their own provider key, the default first.
  * The provider bills that usage, so it never counts against Gitdog tokens.
- * Requests are not streamed and stop after two minutes, so settings that can
+ * Requests are not streamed and must finish within minutes (two for most
+ * work, up to four or five in a pull request review), so settings that can
  * think for longer, such as Fable 5.1 or xhigh and max effort, are left out.
  */
 export const USER_KEY_MODELS: Record<"anthropic" | "openai", UserKeyModel[]> = {
@@ -186,19 +189,19 @@ export const USER_KEY_MODELS: Record<"anthropic" | "openai", UserKeyModel[]> = {
     {
       modelId: "claude-opus-5-5",
       name: "Claude Opus 5.5",
-      efforts: ["low", "medium", "high"],
+      efforts: EFFORTS,
       defaultEffort: "medium",
     },
     {
       modelId: "claude-sonnet-5-5",
       name: "Claude Sonnet 5.5",
-      efforts: ["low", "medium", "high"],
+      efforts: EFFORTS,
       defaultEffort: "high",
     },
     {
       modelId: "claude-haiku-5-5",
       name: "Claude Haiku 5.5",
-      efforts: ["low", "medium", "high"],
+      efforts: EFFORTS,
       defaultEffort: "medium",
     },
   ],
@@ -208,13 +211,13 @@ export const USER_KEY_MODELS: Record<"anthropic" | "openai", UserKeyModel[]> = {
     {
       modelId: "gpt-6.1-sol",
       name: "GPT-6.1 Sol",
-      efforts: ["low", "medium", "high"],
+      efforts: EFFORTS,
       defaultEffort: "high",
     },
     {
       modelId: "gpt-6.2-sol",
       name: "GPT-6.2 Sol",
-      efforts: ["low", "medium", "high"],
+      efforts: EFFORTS,
       defaultEffort: "high",
     },
   ],

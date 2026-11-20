@@ -39,11 +39,13 @@ export function summarizeReviewTrace(events: ReviewTraceEvent[]): {
   candidates: number;
   discarded: number;
 } {
+  let steps = 0;
   let candidates = 0;
   let discarded = 0;
   const trace: ReviewTraceStep[] = [];
   for (const event of events) {
     if (event.stage === "proposed") {
+      steps++;
       candidates += event.candidates.length;
       trace.push({
         step: text(event.step, MAX_PATH_LENGTH),
@@ -77,7 +79,7 @@ export function summarizeReviewTrace(events: ReviewTraceEvent[]): {
       trace.length > MAX_TRACE_STEPS
         ? [...trace.slice(0, half), ...trace.slice(-half)]
         : trace,
-    steps: events.filter((e) => e.stage === "proposed").length,
+    steps,
     candidates,
     discarded,
   };
