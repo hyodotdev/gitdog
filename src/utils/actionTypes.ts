@@ -6,7 +6,11 @@ const ACTION_TYPE_LABELS: Record<string, string> = {
   follow_up: "tickets.actionTypes.followUp",
 };
 
-/** The translation key naming a ticket action type, if it has one. */
-export function actionTypeLabelKey(actionType: string): string | undefined {
-  return ACTION_TYPE_LABELS[actionType];
+/** A ticket action type's name, or the raw type when it has no label. */
+export function actionTypeLabel(
+  t: (key: string) => string,
+  actionType: string,
+): string {
+  const key = ACTION_TYPE_LABELS[actionType];
+  return key ? t(key) : actionType;
 }

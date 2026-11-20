@@ -73,7 +73,10 @@
       "signOut": "代わりにサインアウト",
       "policyChangedError": "このページを開いている間に利用規約またはプライバシーポリシーが変更されました。最新のポリシーを再読み込みしています…",
       "saveError": "確認内容を保存できませんでした。もう一度お試しください。",
-      "signInError": "GitHubサインインを開始できませんでした。もう一度お試しください。"
+      "signInError": "GitHubサインインを開始できませんでした。もう一度お試しください。",
+      "signInCancelled": "GitHubサインインがキャンセルされました。",
+      "signInExpired": "GitHubサインインの時間が切れました。もう一度お試しください。",
+      "signInFailed": "GitHubサインインを完了できませんでした。もう一度お試しください。"
     }
   },
   "home": {
@@ -220,16 +223,17 @@
         "title": "Gitdog GitHubアプリをインストール",
         "description": "リポジトリ（個人および組織リポジトリを含む）にアクセスするには、Gitdog GitHubアプリをインストールする必要があります。",
         "maybeLater": "後で",
-        "installButton": "GitHubアプリをインストール"
+        "installButton": "GitHubアプリをインストール",
+        "alreadyInstalled": "インストール済みですか？GitHubアクセスを確認"
       },
       "verificationPending": {
         "title": "GitHub接続を完了しています",
         "description": "GitdogはGitHubによるインストール確認を待っています。このページを開いたまま、しばらくしてから確認を再試行してください。",
         "organizationDescription": "セキュリティ上、組織のインストールはGitHubが署名したインストール更新でアクセスを確認した後に接続できます。",
-        "reauthDescription": "この既存のインストールを確認するには、GitHubの認証を更新する必要があります。",
-        "recoveryInstructions": "GitHub認証を更新するか、GitHubアクセス管理でリポジトリの選択を実際に変更してください。選択がすでに正しい場合は、GitHub Appをアンインストールしてから再インストールし、もう一度お試しください。",
-        "reauthorize": "GitHub認証を更新",
-        "reauthorizing": "GitHubを開いています...",
+        "reauthDescription": "このインストールへのGitHubアクセスを確認する必要があります。",
+        "recoveryInstructions": "GitHubアクセスを確認するか、GitHubアクセス管理でリポジトリの選択を実際に変更してください。選択がすでに正しい場合は、GitHub Appをアンインストールしてから再インストールし、もう一度お試しください。",
+        "verifyAccess": "GitHubアクセスを確認",
+        "verifyingAccess": "GitHubを開いています...",
         "retry": "確認を再試行",
         "retrying": "確認中...",
         "manageAccess": "GitHubアクセスを管理",
@@ -564,7 +568,9 @@
       "runsOn": "レビューは {{provider}} キー ••••{{last4}} で実行されます",
       "effort": "推論の強さ: {{effort}}",
       "backup": "クレジットが切れると {{provider}} キーの {{model}} が引き継ぎます。",
-      "noActiveKey": "使えるキーがないため、レビューは Gitdog のトークンで実行されます。",
+      "noKey": "保存されたキーがないため、レビューは Gitdog のトークンで実行されます。",
+      "noWorkingKey": "保存されたキーに今使えるものがないため、キーを直すか差し替えるまでレビューは止まります。",
+      "keyChecksUnavailable": "一時的な Gitdog の問題で、保存されたキーを今は使えません。解決するとレビューは再開します。",
       "changeModel": "モデルを変更",
       "manageKeys": "キーを管理",
       "costLabel": "今期間のプロバイダー費用",
@@ -659,13 +665,14 @@
       },
       "defaultModel": "デフォルト",
       "price": "100万トークンあたり 入力 {{input}} · 出力 {{output}}",
+      "longContextPrice": "入力 {{tokens}} トークン超は高い料金",
       "efforts": {
         "low": "低",
         "medium": "中",
         "high": "高"
       },
       "effortHint": "強さを上げるほど多く読み、1 回あたりの費用が増えます。",
-      "thisPeriod": "今期間このキーで {{cost}}"
+      "thisPeriod": "今期間の {{provider}} 利用額: {{cost}}"
     }
   },
   "footer": {

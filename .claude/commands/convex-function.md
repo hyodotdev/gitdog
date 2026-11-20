@@ -18,7 +18,7 @@ convex/[feature]/
 ```typescript
 import { query } from "../_generated/server";
 import { v } from "convex/values";
-import { getAuthUserId } from "@convex-dev/auth/server";
+import { getAuthUserId } from "../_utils/auth";
 
 export const myQuery = query({
   args: {
@@ -45,7 +45,7 @@ export const myQuery = query({
 ```typescript
 import { mutation } from "../_generated/server";
 import { v } from "convex/values";
-import { getAuthUserId } from "@convex-dev/auth/server";
+import { getAuthUserId } from "../_utils/auth";
 
 export const myMutation = mutation({
   args: {

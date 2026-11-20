@@ -265,7 +265,7 @@ export class ProjectContext {
     );
     if (matches.length !== 1)
       throw new Error(
-        `Repository ${name} is unavailable. Run npx gitdog@latest github install, authorize it, then npx gitdog@latest github recover. Check projects available.`,
+        `Repository ${name} is unavailable. Run npx gitdog@latest github install, then npx gitdog@latest github verify and npx gitdog@latest github recover. Check projects available.`,
       );
     const item = matches[0];
     if (typeof item.installationId !== "number" || typeof item.id !== "number")

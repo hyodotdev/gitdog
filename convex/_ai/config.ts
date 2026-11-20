@@ -185,6 +185,8 @@ export type UserKeyModel = {
   // USD per 1M tokens, so owners can compare models before choosing one.
   inputPer1M: number;
   outputPer1M: number;
+  // Requests with more input tokens than this are billed at a higher rate.
+  longContextInputTokens?: number;
 };
 
 const EFFORTS: readonly ModelEffort[] = ["low", "medium", "high"];
@@ -193,7 +195,7 @@ function userKeyOption(
   modelId: string,
   defaultEffort: ModelEffort,
 ): UserKeyModel {
-  const { name, inputPer1M, outputPer1M } = CHAT_MODELS[modelId];
+  const { name, inputPer1M, outputPer1M, longContext } = CHAT_MODELS[modelId];
   return {
     modelId,
     name,
@@ -201,6 +203,7 @@ function userKeyOption(
     defaultEffort,
     inputPer1M,
     outputPer1M,
+    ...(longContext && { longContextInputTokens: longContext.inputTokens }),
   };
 }
 

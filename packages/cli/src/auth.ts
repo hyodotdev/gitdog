@@ -217,17 +217,20 @@ export async function createLoginListener(
   };
 }
 
-/** GitHub's authorization page is the only place sign-in may send the user. */
+/** GitHub's authorization page is the only place the CLI may send the user. */
 export function validateAuthRedirect(value: string): void {
-  const url = new URL(value);
+  const url = URL.canParse(value) ? new URL(value) : undefined;
   if (
+    !url ||
     url.origin !== "https://github.com" ||
     url.pathname !== "/login/oauth/authorize" ||
     url.username ||
     url.password ||
     url.hash
   ) {
-    throw new Error("The server returned an unexpected sign-in URL.");
+    throw new Error(
+      "The server returned an unexpected GitHub authorization URL.",
+    );
   }
 }
 

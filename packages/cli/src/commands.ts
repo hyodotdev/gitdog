@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { rm } from "node:fs/promises";
 import type { Value } from "convex/values";
 import { GitdogApi, type Api, type Args, type Kind } from "./client.js";
-import { login, logout, openBrowser } from "./auth.js";
+import { login, logout, openBrowser, validateAuthRedirect } from "./auth.js";
 import { API_CATALOG, publicOperation } from "./catalog.js";
 import {
   BOOLEAN_SETTINGS,
@@ -1429,7 +1429,7 @@ export function createProgram(
       if (!ui.json && !flag(opts.print)) await openBrowser(url);
       ui.output({
         url,
-        next: "After GitHub authorization, run npx gitdog@latest github recover, then npx gitdog@latest projects available.",
+        next: "After installing, run npx gitdog@latest github verify, then npx gitdog@latest github recover and npx gitdog@latest projects available.",
       });
     },
   )
@@ -1449,9 +1449,8 @@ export function createProgram(
           returnPath: "/repositories/connect",
         }),
       );
-      const url = typeof result?.url === "string" ? result.url : undefined;
-      if (!url?.startsWith("https://github.com/"))
-        throw new Error("Gitdog returned an invalid GitHub authorization URL.");
+      const url = typeof result?.url === "string" ? result.url : "";
+      validateAuthRedirect(url);
       if (!ui.json && !flag(opts.print)) await openBrowser(url);
       ui.output({
         url,

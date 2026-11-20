@@ -1028,9 +1028,7 @@ describe("usage reporting for user keys", () => {
           costCents: 4,
         },
       ],
-      repositories: [
-        { repositoryId: fixture.repositoryId, actions: 2, costCents: 10 },
-      ],
+      repositories: [{ repositoryId: fixture.repositoryId, costCents: 10 }],
     });
     expect(usage?.recentActions).toEqual([
       expect.objectContaining({

@@ -324,8 +324,13 @@ test("github verify starts access verification and accepts only GitHub URLs", as
   );
   await assert.rejects(
     run("https://evil.example/login"),
-    /invalid GitHub authorization URL/,
+    /unexpected GitHub authorization URL/,
   );
+  await assert.rejects(
+    run("https://github.com/evil/login/oauth/authorize"),
+    /unexpected GitHub authorization URL/,
+  );
+  await assert.rejects(run(undefined), /unexpected GitHub authorization URL/);
 });
 
 test("mutation confirmation happens before a GitHub action executes", async () => {

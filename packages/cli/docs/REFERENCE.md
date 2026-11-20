@@ -11,7 +11,8 @@ For example: `npx gitdog@latest login`. An optional global installation with
 
 `gitdog login` opens GitHub in your browser. Use a browser on the same computer,
 or pass `--no-browser` to open the printed URL yourself. Ctrl+C cancels the entire
-sign-in flow. The browser callback times out after five minutes. When sign-in
+sign-in flow. The browser callback listens on the first free loopback port from
+41721 to 41725 and times out after five minutes. When sign-in
 finishes, your browser shows the result on Gitdog and the tab can be closed.
 
 ## Projects, like Firebase
@@ -311,8 +312,9 @@ gitdog login --api-url https://your-deployment.convex.cloud --site-url http://lo
 gitdog github install --app gitdogbot-dev
 ```
 
-Custom URLs require HTTPS except for loopback development. The sign-in URL must
-use the selected backend's origin or its matching `convex.site` origin.
+Custom URLs require HTTPS except for loopback development. The CLI opens only
+GitHub's `https://github.com/login/oauth/authorize` page for sign-in and
+`gitdog github verify`.
 
 ## Development and verification
 

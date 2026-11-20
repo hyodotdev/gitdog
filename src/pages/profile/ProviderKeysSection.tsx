@@ -1,4 +1,5 @@
 import { useAction, useMutation, useQuery } from "convex/react";
+import type { FunctionReturnType } from "convex/server";
 import { ConvexError } from "convex/values";
 import { useEffect, useState } from "react";
 import { useLocation } from "react-router";
@@ -9,7 +10,11 @@ import { LoadingIndicator } from "../../components/uis/LoadingIndicator";
 import { cn } from "../../utils/cn";
 import { summarizeProviderKeys } from "../../utils/providerKeyState";
 import { useRelativeTime } from "../../hooks/useRelativeTime";
-import { formatPerMillion, formatUsdCents } from "../../utils/usageFormat";
+import {
+  formatPerMillion,
+  formatTokens,
+  formatUsdCents,
+} from "../../utils/usageFormat";
 
 export const PROVIDER_KEYS_ANCHOR = "ai-keys";
 
@@ -26,14 +31,9 @@ type SavedKey = {
   effort: string;
 };
 
-type ModelOption = {
-  modelId: string;
-  name: string;
-  efforts: readonly string[];
-  defaultEffort: string;
-  inputPer1M: number;
-  outputPer1M: number;
-};
+type ModelOption = FunctionReturnType<
+  typeof api.providerApiKeys.query.models
+>[KeyProvider][number];
 
 // Which saved key reviews run on: Claude first, OpenAI when Claude cannot.
 type KeyRole = "primary" | "backup";
@@ -325,6 +325,10 @@ function ProviderKeyCard({
                         input: formatPerMillion(model.inputPer1M),
                         output: formatPerMillion(model.outputPer1M),
                       })}
+                      {model.longContextInputTokens !== undefined &&
+                        ` · ${t("profile.providerKeys.longContextPrice", {
+                          tokens: formatTokens(model.longContextInputTokens),
+                        })}`}
                     </span>
                   </span>
                 </label>
@@ -370,7 +374,10 @@ function ProviderKeyCard({
           </p>
           {periodCost && (
             <p className={cn("text-sm text-gray-700 dark:text-gray-300")}>
-              {t("profile.providerKeys.thisPeriod", { cost: periodCost })}
+              {t("profile.providerKeys.thisPeriod", {
+                provider: label,
+                cost: periodCost,
+              })}
             </p>
           )}
         </div>

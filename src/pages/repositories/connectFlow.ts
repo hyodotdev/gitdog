@@ -207,6 +207,46 @@ export function needsGitHubAppInstallation(
   return installations !== undefined && installations.length === 0;
 }
 
+export type ConnectScreen =
+  "loading" | "verification" | "error" | "install" | "repositories";
+
+/**
+ * Which connect screen to show. Without a fresh attestation recovery cannot
+ * tell a new user from one whose installation predates it, so a user with no
+ * installation is offered Install first, with verification to reclaim one.
+ */
+export function resolveConnectScreen(state: {
+  loading: boolean;
+  installations: ReadonlyArray<InstallationRecord> | undefined;
+  recovery: { status: string; recoveredCount: number };
+  verificationPending: boolean;
+  hasError: boolean;
+}): ConnectScreen {
+  const { recovery } = state;
+  const noInstallations = needsGitHubAppInstallation(state.installations);
+  switch (true) {
+    case state.loading || state.installations === undefined:
+    case recovery.status === "pending" &&
+      !state.verificationPending &&
+      !state.hasError:
+    case noInstallations &&
+      // Recovered installations are still reaching the installations query.
+      recovery.recoveredCount > 0 &&
+      !state.hasError:
+      return "loading";
+    case state.verificationPending:
+      return "verification";
+    case state.hasError:
+      return "error";
+    case noInstallations &&
+      (recovery.status === "reauth_required" ||
+        (recovery.status === "none" && recovery.recoveredCount === 0)):
+      return "install";
+    default:
+      return "repositories";
+  }
+}
+
 export function getReconnectRepositoryIdFromSearch(
   search: string,
 ): string | null {

@@ -2,11 +2,11 @@ import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MockedFunction } from "vitest";
 import { v } from "convex/values";
-import { getAuthUserId } from "@convex-dev/auth/server";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { internalMutation } from "../../../convex/_generated/server";
+import { getAuthUserId } from "../../../convex/_utils/auth";
 import * as githubHelpers from "../../../convex/github/helpers";
 import schema from "../../../convex/schema";
 import { asUser } from "../../helpers/auth";
