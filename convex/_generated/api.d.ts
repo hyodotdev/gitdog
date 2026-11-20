@@ -176,7 +176,6 @@ import type * as users_githubAccount from "../users/githubAccount.js";
 import type * as users_internalMutation from "../users/internalMutation.js";
 import type * as users_internalQuery from "../users/internalQuery.js";
 import type * as users_legal from "../users/legal.js";
-import type * as users_migrations from "../users/migrations.js";
 import type * as users_mutation from "../users/mutation.js";
 import type * as users_query from "../users/query.js";
 import type * as users_tables from "../users/tables.js";
@@ -356,7 +355,6 @@ declare const fullApi: ApiFromModules<{
   "users/internalMutation": typeof users_internalMutation;
   "users/internalQuery": typeof users_internalQuery;
   "users/legal": typeof users_legal;
-  "users/migrations": typeof users_migrations;
   "users/mutation": typeof users_mutation;
   "users/query": typeof users_query;
   "users/tables": typeof users_tables;

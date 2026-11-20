@@ -2,7 +2,6 @@ import { v } from "convex/values";
 import { vGithubProfile } from "@convex-dev/auth/methods/github/server";
 import type { GithubProfile } from "@convex-dev/auth/methods/github/server";
 import { internalMutation } from "../_generated/server";
-import { readLegacyGitHubUserId } from "./migrations";
 
 const githubSignIn = v.object({
   name: v.literal("github"),
@@ -36,12 +35,6 @@ export const createUserFromGithub = internalMutation({
       )
       .unique();
     if (existing) return existing._id;
-    // Signed in after the 2.0 deploy but before migrateToAuthV2 linked them.
-    const legacy = await readLegacyGitHubUserId(ctx, githubAccountId);
-    if (legacy) {
-      await ctx.db.patch(legacy, { githubAccountId });
-      return legacy;
-    }
     return await ctx.db.insert("users", {
       ...profileFields(method.profile, Date.now()),
       githubAccountId: method.profile.id,
