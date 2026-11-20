@@ -1,5 +1,5 @@
 import { query } from "../_generated/server";
-import { getAuthUserId } from "@convex-dev/auth/server";
+import { getAuthUserId } from "../_utils/auth";
 import { paginationOptsValidator } from "convex/server";
 import { v } from "convex/values";
 import { apiError, ownedRepository, publicKey } from "./security";

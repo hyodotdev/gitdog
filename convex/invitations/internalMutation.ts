@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { readUserIdByGitHubAccountId } from "../users/githubAccount";
 import { internalMutation } from "../_generated/server";
 import { checkProSubscription } from "../_utils/accessControl";
 import {
@@ -59,18 +60,13 @@ export const create = internalMutation({
       throw new Error("GitHub App installation is not ready");
     }
 
-    const account = await ctx.db
-      .query("authAccounts")
-      .withIndex("providerAndAccountId", (q) =>
-        q
-          .eq("provider", "github")
-          .eq("providerAccountId", args.githubAccountId.toString()),
-      )
-      .unique();
-    if (!account || !(await ctx.db.get(account.userId))) {
+    const inviteeUserId = await readUserIdByGitHubAccountId(
+      ctx,
+      args.githubAccountId.toString(),
+    );
+    if (!inviteeUserId) {
       throw new Error("User not found. They must have a Gitdog account.");
     }
-    const inviteeUserId = account.userId;
 
     if (inviteeUserId === repository.userId) {
       throw new Error("User is already a member of this repository");

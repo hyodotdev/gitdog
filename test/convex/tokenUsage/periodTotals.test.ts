@@ -19,6 +19,7 @@ import {
 } from "../../../convex/tokenUsage/periodTotals";
 import { insertTokenUsage } from "../../../convex/tokenUsage/totals";
 import { drainScheduledFunctions } from "../scheduling";
+import { asUser } from "../../helpers/auth";
 
 const modules = import.meta.glob("../../../convex/**/*.ts");
 type Backend = ReturnType<typeof convexTest>;
@@ -303,10 +304,10 @@ describe("token usage period totals", () => {
         }),
       );
     });
-    const asUser = t.withIdentity({ subject: `${userId}|session` });
+    const caller = await asUser(t, userId);
     const fromTotals = {
-      month: await asUser.query(api.tokenUsage.query.getCurrentMonthUsage, {}),
-      repositories: await asUser.query(
+      month: await caller.query(api.tokenUsage.query.getCurrentMonthUsage, {}),
+      repositories: await caller.query(
         api.tokenUsage.query.getUsageByRepository,
         {},
       ),
@@ -319,8 +320,8 @@ describe("token usage period totals", () => {
       }
     });
     const fromRows = {
-      month: await asUser.query(api.tokenUsage.query.getCurrentMonthUsage, {}),
-      repositories: await asUser.query(
+      month: await caller.query(api.tokenUsage.query.getCurrentMonthUsage, {}),
+      repositories: await caller.query(
         api.tokenUsage.query.getUsageByRepository,
         {},
       ),
@@ -389,8 +390,8 @@ describe("token usage period totals", () => {
       totalCostCents: 0,
     });
 
-    const asUser = t.withIdentity({ subject: `${userId}|session` });
-    const fromTotals = await asUser.query(
+    const caller = await asUser(t, userId);
+    const fromTotals = await caller.query(
       api.tokenUsage.query.getUsageByRepository,
       {},
     );
@@ -401,7 +402,7 @@ describe("token usage period totals", () => {
         await ctx.db.delete(doc._id);
       }
     });
-    const fromRows = await asUser.query(
+    const fromRows = await caller.query(
       api.tokenUsage.query.getUsageByRepository,
       {},
     );

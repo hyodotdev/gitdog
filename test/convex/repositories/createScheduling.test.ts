@@ -5,6 +5,7 @@ import { v } from "convex/values";
 import { internal } from "../../../convex/_generated/api";
 import { internalAction } from "../../../convex/_generated/server";
 import schema from "../../../convex/schema";
+import { asUser } from "../../helpers/auth";
 
 const noopIndexRepository = internalAction({
   args: {
@@ -66,15 +67,15 @@ describe("repository creation", () => {
       return userId;
     });
 
-    const repositoryId = await t
-      .withIdentity({ subject: `${userId}|test-session` })
-      .mutation(internal.repositories.mutation.create, {
-        installationId: 123,
-        githubRepositoryId: 456,
-        githubRepo: "owner/repo",
-        name: "repo",
-        githubUrl: "https://github.com/owner/repo",
-      });
+    const repositoryId = await (
+      await asUser(t, userId)
+    ).mutation(internal.repositories.mutation.create, {
+      installationId: 123,
+      githubRepositoryId: 456,
+      githubRepo: "owner/repo",
+      name: "repo",
+      githubUrl: "https://github.com/owner/repo",
+    });
 
     const state = await t.run(async (ctx) => ({
       repository: await ctx.db.get(repositoryId),
@@ -182,9 +183,7 @@ describe("repository creation", () => {
       });
       return { userId, memberId, repositoryId };
     });
-    const identity = t.withIdentity({
-      subject: `${fixture.userId}|test-session`,
-    });
+    const identity = await asUser(t, fixture.userId);
 
     await expect(
       identity.mutation(internal.repositories.mutation.create, {
@@ -331,16 +330,17 @@ describe("repository creation", () => {
     });
 
     await expect(
-      t
-        .withIdentity({ subject: `${fixture.userId}|test-session` })
-        .mutation(internal.repositories.mutation.create, {
+      (await asUser(t, fixture.userId)).mutation(
+        internal.repositories.mutation.create,
+        {
           installationId: 889,
           githubRepositoryId: 4_700,
           githubRepo: "owner/reused-name",
           name: "reused-name",
           githubUrl: "https://github.com/owner/reused-name",
           reconnectRepositoryId: fixture.reconnectRepositoryId,
-        }),
+        },
+      ),
     ).rejects.toThrow("repository already connected");
 
     const state = await t.run(async (ctx) => ({
@@ -418,16 +418,16 @@ describe("repository creation", () => {
       return { userId, repositoryId, now };
     });
 
-    const repositoryId = await t
-      .withIdentity({ subject: `${fixture.userId}|test-session` })
-      .mutation(internal.repositories.mutation.create, {
-        installationId: 889,
-        githubRepositoryId: 9_003,
-        githubRepo: "owner/paused-after-reinstall",
-        name: "paused-after-reinstall",
-        githubUrl: "https://github.com/owner/paused-after-reinstall",
-        reconnectRepositoryId: fixture.repositoryId,
-      });
+    const repositoryId = await (
+      await asUser(t, fixture.userId)
+    ).mutation(internal.repositories.mutation.create, {
+      installationId: 889,
+      githubRepositoryId: 9_003,
+      githubRepo: "owner/paused-after-reinstall",
+      name: "paused-after-reinstall",
+      githubUrl: "https://github.com/owner/paused-after-reinstall",
+      reconnectRepositoryId: fixture.repositoryId,
+    });
 
     const state = await t.run(async (ctx) => ({
       repository: await ctx.db.get(repositoryId),
@@ -521,15 +521,15 @@ describe("repository creation", () => {
       return { userId, staleRepositoryId };
     });
 
-    const repositoryId = await t
-      .withIdentity({ subject: `${fixture.userId}|test-session` })
-      .mutation(internal.repositories.mutation.create, {
-        installationId: 125,
-        githubRepositoryId: 459,
-        githubRepo: "owner/pinned",
-        name: "pinned",
-        githubUrl: "https://github.com/owner/pinned",
-      });
+    const repositoryId = await (
+      await asUser(t, fixture.userId)
+    ).mutation(internal.repositories.mutation.create, {
+      installationId: 125,
+      githubRepositoryId: 459,
+      githubRepo: "owner/pinned",
+      name: "pinned",
+      githubUrl: "https://github.com/owner/pinned",
+    });
 
     const state = await t.run(async (ctx) => ({
       stale: await ctx.db.get(fixture.staleRepositoryId),
@@ -580,15 +580,16 @@ describe("repository creation", () => {
     });
 
     await expect(
-      t
-        .withIdentity({ subject: `${callerId}|test-session` })
-        .mutation(internal.repositories.mutation.create, {
+      (await asUser(t, callerId)).mutation(
+        internal.repositories.mutation.create,
+        {
           installationId: 456,
           githubRepositoryId: 789,
           githubRepo: "other-owner/private-repo",
           name: "private-repo",
           githubUrl: "https://github.com/other-owner/private-repo",
-        }),
+        },
+      ),
     ).rejects.toThrow("unauthorized installation");
 
     const state = await t.run(async (ctx) => ({
@@ -621,15 +622,16 @@ describe("repository creation", () => {
     });
 
     await expect(
-      t
-        .withIdentity({ subject: `${userId}|test-session` })
-        .mutation(internal.repositories.mutation.create, {
+      (await asUser(t, userId)).mutation(
+        internal.repositories.mutation.create,
+        {
           installationId: 789,
           githubRepositoryId: 790,
           githubRepo: "owner/repo",
           name: "repo",
           githubUrl: "https://github.com/owner/repo",
-        }),
+        },
+      ),
     ).rejects.toThrow("unauthorized installation");
     expect(
       await t.run(async (ctx) => ctx.db.query("repositories").collect()),
@@ -667,15 +669,16 @@ describe("repository creation", () => {
       });
 
       await expect(
-        t
-          .withIdentity({ subject: `${userId}|test-session` })
-          .mutation(internal.repositories.mutation.create, {
+        (await asUser(t, userId)).mutation(
+          internal.repositories.mutation.create,
+          {
             installationId: 890,
             githubRepositoryId: 891,
             githubRepo: "owner/reconciliation-race",
             name: "reconciliation-race",
             githubUrl: "https://github.com/owner/reconciliation-race",
-          }),
+          },
+        ),
       ).rejects.toThrow("unauthorized installation");
 
       expect(

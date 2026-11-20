@@ -9,6 +9,7 @@ import {
   createSettlementKeyFingerprint,
 } from "../../../convex/lemonSqueezy/webhook";
 import schema from "../../../convex/schema";
+import { asUser } from "../../helpers/auth";
 
 const modules = {
   "../../../convex/_generated/api.ts": () =>
@@ -232,12 +233,13 @@ describe("subscription mutation trust boundary", () => {
     );
 
     await expect(
-      t
-        .withIdentity({ subject: `${callerUserId}|client-session` })
-        .mutation(api.admin.paymentMutation.reactivateSubscription, {
+      (await asUser(t, callerUserId)).mutation(
+        api.admin.paymentMutation.reactivateSubscription,
+        {
           subscriptionId,
           operationId: "00000000-0000-4000-8000-000000000001",
-        }),
+        },
+      ),
     ).rejects.toThrow("Admin access required");
 
     const subscriptions = await t.run(async (ctx) =>
@@ -280,12 +282,13 @@ describe("subscription mutation trust boundary", () => {
     });
 
     await expect(
-      t
-        .withIdentity({ subject: `${adminUserId}|admin-session` })
-        .mutation(api.admin.paymentMutation.reactivateSubscription, {
+      (await asUser(t, adminUserId)).mutation(
+        api.admin.paymentMutation.reactivateSubscription,
+        {
           subscriptionId,
           operationId: "00000000-0000-4000-8000-000000000002",
-        }),
+        },
+      ),
     ).resolves.toEqual({ success: true });
 
     const subscription = await t.run(async (ctx) => ctx.db.get(subscriptionId));
@@ -348,9 +351,7 @@ describe("subscription mutation trust boundary", () => {
         );
         return { adminUserId, targetUserId, subscriptionId, boundaryId };
       });
-    const admin = t.withIdentity({
-      subject: `${adminUserId}|admin-session`,
-    });
+    const admin = await asUser(t, adminUserId);
 
     await expect(
       admin.mutation(api.admin.paymentMutation.reactivateSubscription, {
@@ -484,9 +485,7 @@ describe("subscription mutation trust boundary", () => {
           oldBoundaryId,
         };
       });
-    const admin = t.withIdentity({
-      subject: `${adminUserId}|admin-session`,
-    });
+    const admin = await asUser(t, adminUserId);
 
     await expect(
       admin.mutation(api.admin.paymentMutation.reactivateSubscription, {
@@ -621,12 +620,13 @@ describe("subscription mutation trust boundary", () => {
       });
 
     await expect(
-      t
-        .withIdentity({ subject: `${adminUserId}|admin-session` })
-        .mutation(api.admin.paymentMutation.reactivateSubscription, {
+      (await asUser(t, adminUserId)).mutation(
+        api.admin.paymentMutation.reactivateSubscription,
+        {
           subscriptionId,
           operationId: "00000000-0000-4000-8000-000000000005",
-        }),
+        },
+      ),
     ).rejects.toThrow(
       "Purchased-token wallet cannot cover the exact terminal settlement",
     );

@@ -41,6 +41,7 @@ import type * as _ai_tools_executors from "../_ai/tools/executors.js";
 import type * as _ai_utils from "../_ai/utils.js";
 import type * as _ai_workflow from "../_ai/workflow.js";
 import type * as _utils_accessControl from "../_utils/accessControl.js";
+import type * as _utils_auth from "../_utils/auth.js";
 import type * as _utils_authRedirect from "../_utils/authRedirect.js";
 import type * as _utils_environment from "../_utils/environment.js";
 import type * as _utils_gitdogFormat from "../_utils/gitdogFormat.js";
@@ -171,10 +172,14 @@ import type * as tokenUsage_quota from "../tokenUsage/quota.js";
 import type * as tokenUsage_totals from "../tokenUsage/totals.js";
 import type * as tokenUsage_usageSummary from "../tokenUsage/usageSummary.js";
 import type * as users_action from "../users/action.js";
+import type * as users_githubAccount from "../users/githubAccount.js";
+import type * as users_internalMutation from "../users/internalMutation.js";
 import type * as users_internalQuery from "../users/internalQuery.js";
 import type * as users_legal from "../users/legal.js";
+import type * as users_migrations from "../users/migrations.js";
 import type * as users_mutation from "../users/mutation.js";
 import type * as users_query from "../users/query.js";
+import type * as users_tables from "../users/tables.js";
 
 import type {
   ApiFromModules,
@@ -216,6 +221,7 @@ declare const fullApi: ApiFromModules<{
   "_ai/utils": typeof _ai_utils;
   "_ai/workflow": typeof _ai_workflow;
   "_utils/accessControl": typeof _utils_accessControl;
+  "_utils/auth": typeof _utils_auth;
   "_utils/authRedirect": typeof _utils_authRedirect;
   "_utils/environment": typeof _utils_environment;
   "_utils/gitdogFormat": typeof _utils_gitdogFormat;
@@ -346,10 +352,14 @@ declare const fullApi: ApiFromModules<{
   "tokenUsage/totals": typeof tokenUsage_totals;
   "tokenUsage/usageSummary": typeof tokenUsage_usageSummary;
   "users/action": typeof users_action;
+  "users/githubAccount": typeof users_githubAccount;
+  "users/internalMutation": typeof users_internalMutation;
   "users/internalQuery": typeof users_internalQuery;
   "users/legal": typeof users_legal;
+  "users/migrations": typeof users_migrations;
   "users/mutation": typeof users_mutation;
   "users/query": typeof users_query;
+  "users/tables": typeof users_tables;
 }>;
 
 /**
@@ -378,4 +388,7 @@ export declare const internal: FilterApi<
   FunctionReference<any, "internal">
 >;
 
-export declare const components: {};
+export declare const components: {
+  auth: import("@convex-dev/auth/_generated/component.js").ComponentApi<"auth">;
+  authGithub: import("@convex-dev/auth/components/github/_generated/component.js").ComponentApi<"authGithub">;
+};

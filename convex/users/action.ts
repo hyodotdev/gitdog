@@ -1,5 +1,5 @@
 import { action } from "../_generated/server";
-import { getAuthUserId } from "@convex-dev/auth/server";
+import { getAuthUserId } from "../_utils/auth";
 import { api, internal } from "../_generated/api";
 
 export const ensureProfile = action({

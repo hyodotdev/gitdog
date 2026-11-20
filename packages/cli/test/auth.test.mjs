@@ -12,11 +12,19 @@ import { GitdogApi } from "../dist/client.js";
 import { SessionStore, validateUrl } from "../dist/storage.js";
 import { CaptureUi, fixture, jwt, mockServer } from "./helpers.mjs";
 
+/** The CLI's saved tokens as @convex-dev/auth returns them. */
+const bundle = ({ token, refreshToken }) => ({
+  accessToken: token,
+  refreshToken,
+  refreshTokenExpiresAt: Date.now() + 86_400_000,
+  userId: "user-id",
+});
+
 test("loopback listener rejects incorrect state, path, method and duplicate code", async (t) => {
   const listener = await createLoginListener(5000);
   t.after(listener.close);
   const correct = new URL(listener.redirectTo);
-  correct.searchParams.set("code", "one-time-code");
+  correct.searchParams.set("convexAuthCode", "one-time-code");
   const wrong = new URL(correct);
   wrong.searchParams.set("state", "bad");
   assert.equal((await fetch(wrong)).status, 400);
@@ -25,7 +33,7 @@ test("loopback listener rejects incorrect state, path, method and duplicate code
   assert.equal((await fetch(path)).status, 404);
   assert.equal((await fetch(correct, { method: "POST" })).status, 404);
   const duplicate = new URL(correct);
-  duplicate.searchParams.append("code", "second");
+  duplicate.searchParams.append("convexAuthCode", "second");
   assert.equal((await fetch(duplicate)).status, 400);
   const pending = fetch(correct, { redirect: "manual" });
   assert.equal(await listener.code, "one-time-code");
@@ -44,7 +52,7 @@ test("loopback listener rejects incorrect state, path, method and duplicate code
 test("loopback listener reports a failed exchange when it closes", async () => {
   const listener = await createLoginListener(5000, "http://localhost:5173/");
   const callback = new URL(listener.redirectTo);
-  callback.searchParams.set("code", "one-time-code");
+  callback.searchParams.set("convexAuthCode", "one-time-code");
   const pending = fetch(callback, { redirect: "manual" });
   await listener.code;
   await listener.close();
@@ -57,7 +65,7 @@ test("loopback listener reports a failed exchange when it closes", async () => {
 test("loopback listener closes after the browser disconnects", async () => {
   const listener = await createLoginListener(5000);
   const callback = new URL(listener.redirectTo);
-  callback.searchParams.set("code", "one-time-code");
+  callback.searchParams.set("convexAuthCode", "one-time-code");
   const disconnect = new AbortController();
   const pending = fetch(callback, { signal: disconnect.signal });
   await listener.code;
@@ -88,43 +96,20 @@ test("Convex OAuth cancellation without a code fails immediately", async (t) => 
   await assert.rejects(listener.code, /declined or failed/);
 });
 
-test("auth redirects cannot send the browser to a third-party origin", () => {
+test("auth redirects cannot send the browser anywhere but GitHub's authorize page", () => {
   assert.doesNotThrow(() =>
     validateAuthRedirect(
-      "https://my-app.convex.site/api/auth/signin/github?code=x",
-      "https://my-app.convex.cloud",
+      "https://github.com/login/oauth/authorize?client_id=x&state=y",
     ),
   );
-  assert.doesNotThrow(() =>
-    validateAuthRedirect(
-      "https://auth.gitdog.dev/api/auth/signin/github?code=x",
-      "https://calm-hippopotamus-56.convex.cloud",
-    ),
-  );
-  assert.throws(
-    () =>
-      validateAuthRedirect(
-        "https://auth.gitdog.dev/api/auth/signin/github?code=x",
-        "https://my-app.convex.cloud",
-      ),
-    /unexpected/,
-  );
-  assert.throws(
-    () =>
-      validateAuthRedirect(
-        "https://evil.example/api/auth/signin/github",
-        "https://my-app.convex.cloud",
-      ),
-    /unexpected/,
-  );
-  assert.throws(
-    () =>
-      validateAuthRedirect(
-        "https://my-app.convex.site/other",
-        "https://my-app.convex.cloud",
-      ),
-    /unexpected/,
-  );
+  for (const url of [
+    "https://evil.example/login/oauth/authorize",
+    "https://github.com/other",
+    "https://user:pass@github.com/login/oauth/authorize",
+    "https://github.com/login/oauth/authorize#fragment",
+    "http://github.com/login/oauth/authorize",
+  ])
+    assert.throws(() => validateAuthRedirect(url), /unexpected/);
   for (const url of [
     "http://evil.example",
     "https://user:password@example.com",
@@ -144,18 +129,18 @@ test("real HTTP login exchanges a verifier-bound code and stores private credent
   const tokens = { token: jwt(), refreshToken: "private-refresh-token" };
   let callback;
   const server = await mockServer(t, (call) => {
-    if (call.path === "auth:signIn" && call.args.provider === "github") {
-      callback = new URL(call.args.params.redirectTo);
-      callback.searchParams.set("code", "exchanged-once");
+    if (call.path === "auth:startSignInWithGithub") {
+      callback = new URL(call.args.redirectTo);
+      callback.searchParams.set("convexAuthCode", "exchanged-once");
       return {
-        redirect: `${server.url}/api/auth/signin/github?code=verifier`,
-        verifier: "verifier",
+        redirect: "https://github.com/login/oauth/authorize?client_id=x",
+        state: "flow-state",
       };
     }
-    if (call.path === "auth:signIn") {
-      assert.equal(call.args.verifier, "verifier");
-      assert.equal(call.args.params.code, "exchanged-once");
-      return { tokens };
+    if (call.path === "auth:completeSignInWithGithub") {
+      assert.equal(call.args.state, "flow-state");
+      assert.equal(call.args.code, "exchanged-once");
+      return { status: "complete", tokens: bundle(tokens) };
     }
     if (call.path === "users/query:getCurrentUser") {
       assert.equal(call.authorization, `Bearer ${tokens.token}`);
@@ -194,11 +179,11 @@ test("concurrent expired clients rotate a refresh token only once", async (t) =>
   const tokens = { token: jwt(), refreshToken: "rotated-refresh" };
   let refreshes = 0;
   const server = await mockServer(t, async (call) => {
-    if (call.path === "auth:signIn") {
+    if (call.path === "auth:refreshSession") {
       refreshes++;
       assert.equal(call.args.refreshToken, "original-refresh");
       await new Promise((resolve) => setTimeout(resolve, 30));
-      return { tokens };
+      return { kind: "rotated", tokens: bundle(tokens) };
     }
     assert.equal(call.authorization, `Bearer ${tokens.token}`);
     return { name: "user" };
@@ -240,24 +225,24 @@ for (const phase of ["start", "exchange", "profile", "lock"]) {
     const tokens = { token: jwt(), refreshToken: "new-refresh" };
     let callback;
     const server = await mockServer(t, async (call) => {
-      if (call.path === "auth:signIn" && call.args.provider === "github") {
-        callback = new URL(call.args.params.redirectTo);
-        callback.searchParams.set("code", "cancelled-code");
+      if (call.path === "auth:startSignInWithGithub") {
+        callback = new URL(call.args.redirectTo);
+        callback.searchParams.set("convexAuthCode", "cancelled-code");
         if (phase === "start") {
           process.emit("SIGINT");
           await new Promise((resolve) => setTimeout(resolve, 20));
         }
         return {
-          redirect: `${server.url}/api/auth/signin/github?code=verifier`,
-          verifier: "verifier",
+          redirect: "https://github.com/login/oauth/authorize?client_id=x",
+          state: "flow-state",
         };
       }
-      if (call.path === "auth:signIn") {
+      if (call.path === "auth:completeSignInWithGithub") {
         if (phase === "exchange") {
           process.emit("SIGINT");
           await new Promise((resolve) => setTimeout(resolve, 20));
         }
-        return { tokens };
+        return { status: "complete", tokens: bundle(tokens) };
       }
       if (phase === "profile") {
         process.emit("SIGINT");
@@ -358,9 +343,12 @@ test("an already-authenticated client refreshes without sending its expired bear
     value: join(directory, "session.json"),
   });
   const server = await mockServer(t, (call) => {
-    if (call.path === "auth:signIn") {
+    if (call.path === "auth:refreshSession") {
       assert.equal(call.authorization, undefined);
-      return { tokens: { token: jwt(), refreshToken: "new-refresh" } };
+      return {
+        kind: "rotated",
+        tokens: bundle({ token: jwt(), refreshToken: "new-refresh" }),
+      };
     }
     return { name: "user" };
   });
@@ -384,9 +372,12 @@ test("a per-call deadline includes token refresh", async (t) => {
     value: join(directory, "session.json"),
   });
   const server = await mockServer(t, async (call) => {
-    if (call.path === "auth:signIn") {
+    if (call.path === "auth:refreshSession") {
       await new Promise((resolve) => setTimeout(resolve, 150));
-      return { tokens: { token: jwt(), refreshToken: "new-token" } };
+      return {
+        kind: "rotated",
+        tokens: bundle({ token: jwt(), refreshToken: "new-token" }),
+      };
     }
     throw new Error("The data query must not run after its deadline.");
   });
@@ -438,6 +429,7 @@ test("logout serializes revocation and clearing with a concurrent login", async 
   });
   const server = await mockServer(t, async (call) => {
     assert.equal(call.path, "auth:signOut");
+    assert.equal(call.args.refreshToken, "first-refresh");
     entered();
     await proceed;
     return null;

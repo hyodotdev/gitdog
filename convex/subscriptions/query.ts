@@ -1,7 +1,7 @@
 // Matches the wallet row bound in wallet.ts.
 const MAX_WALLET_ROWS = 100;
 import { query } from "../_generated/server";
-import { getAuthUserId } from "@convex-dev/auth/server";
+import { getAuthUserId } from "../_utils/auth";
 import {
   PRICING,
   CHAT_MODELS,

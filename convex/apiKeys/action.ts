@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import { action } from "../_generated/server";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
-import { getAuthUserId } from "@convex-dev/auth/server";
+import { getAuthUserId } from "../_utils/auth";
 import { v } from "convex/values";
 import { apiError, hashApiKey } from "./security";
 

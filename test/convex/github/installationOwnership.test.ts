@@ -16,6 +16,7 @@ import {
 } from "../../../convex/github/webhook";
 import { GITHUB_INSTALLATION_ATTESTATION_MAX_INSTALLATIONS } from "../../../convex/github/oauthInstallationAttestation";
 import schema from "../../../convex/schema";
+import { asUser } from "../../helpers/auth";
 
 const noopIndexRepository = internalAction({
   args: {
@@ -122,11 +123,7 @@ async function insertOAuthInstallationAttestation(
   await t.run(async (ctx) => {
     const now = Date.now();
     const githubAccountId = options.githubAccountId ?? "654";
-    await ctx.db.insert("authAccounts", {
-      userId,
-      provider: "github",
-      providerAccountId: "654",
-    });
+    await ctx.db.patch(userId, { githubAccountId: "654" });
     await ctx.db.insert("githubOAuthInstallationAttestations", {
       userId,
       githubAccountId,
@@ -614,9 +611,9 @@ describe("GitHub installation ownership persistence", () => {
       }),
     ) as typeof fetch;
 
-    const result = await t
-      .withIdentity({ subject: `${ownerId}|test-session` })
-      .action(api.github.action.saveInstallation, { installationId: 456 });
+    const result = await (
+      await asUser(t, ownerId)
+    ).action(api.github.action.saveInstallation, { installationId: 456 });
     const state = await t.run(async (ctx) => ({
       installation: await ctx.db
         .query("githubInstallations")
@@ -663,9 +660,9 @@ describe("authenticated installation refresh", () => {
     ) as typeof fetch;
 
     await expect(
-      t
-        .withIdentity({ subject: `${userId}|test-session` })
-        .action(api.github.action.saveInstallation, { installationId: 901 }),
+      (await asUser(t, userId)).action(api.github.action.saveInstallation, {
+        installationId: 901,
+      }),
     ).resolves.toEqual({ status: "not_bound_yet" });
 
     const state = await t.run(async (ctx) => ({
@@ -703,9 +700,9 @@ describe("authenticated installation refresh", () => {
     globalThis.fetch = vi.fn();
 
     await expect(
-      t
-        .withIdentity({ subject: `${userId}|test-session` })
-        .action(api.github.action.saveInstallation, { installationId: 902 }),
+      (await asUser(t, userId)).action(api.github.action.saveInstallation, {
+        installationId: 902,
+      }),
     ).resolves.toEqual({ status: "reauth_required" });
     expect(mockedGenerateGitHubAppJWT).not.toHaveBeenCalled();
     expect(globalThis.fetch).not.toHaveBeenCalled();
@@ -718,9 +715,9 @@ describe("authenticated installation refresh", () => {
     globalThis.fetch = vi.fn();
 
     await expect(
-      t
-        .withIdentity({ subject: `${userId}|test-session` })
-        .action(api.github.action.saveInstallation, { installationId: 904 }),
+      (await asUser(t, userId)).action(api.github.action.saveInstallation, {
+        installationId: 904,
+      }),
     ).resolves.toEqual({ status: "reauth_required" });
     expect(mockedGenerateGitHubAppJWT).not.toHaveBeenCalled();
     expect(globalThis.fetch).not.toHaveBeenCalled();
@@ -735,9 +732,9 @@ describe("authenticated installation refresh", () => {
     globalThis.fetch = vi.fn();
 
     await expect(
-      t
-        .withIdentity({ subject: `${userId}|test-session` })
-        .action(api.github.action.saveInstallation, { installationId: 905 }),
+      (await asUser(t, userId)).action(api.github.action.saveInstallation, {
+        installationId: 905,
+      }),
     ).resolves.toEqual({ status: "reauth_required" });
     expect(mockedGenerateGitHubAppJWT).not.toHaveBeenCalled();
     expect(globalThis.fetch).not.toHaveBeenCalled();
@@ -757,9 +754,9 @@ describe("authenticated installation refresh", () => {
     ) as typeof fetch;
 
     await expect(
-      t
-        .withIdentity({ subject: `${userId}|test-session` })
-        .action(api.github.action.saveInstallation, { installationId: 906 }),
+      (await asUser(t, userId)).action(api.github.action.saveInstallation, {
+        installationId: 906,
+      }),
     ).rejects.toThrow("GitHub installation owner does not match authorization");
     const stored = await t.run(async (ctx) =>
       ctx.db
@@ -776,9 +773,9 @@ describe("authenticated installation refresh", () => {
     globalThis.fetch = vi.fn();
 
     await expect(
-      t
-        .withIdentity({ subject: `${userId}|test-session` })
-        .action(api.github.action.saveInstallation, { installationId: 999 }),
+      (await asUser(t, userId)).action(api.github.action.saveInstallation, {
+        installationId: 999,
+      }),
     ).resolves.toEqual({ status: "reauth_required" });
 
     expect(mockedGenerateGitHubAppJWT).not.toHaveBeenCalled();
@@ -795,9 +792,9 @@ describe("authenticated installation refresh", () => {
     globalThis.fetch = vi.fn();
 
     await expect(
-      t
-        .withIdentity({ subject: `${attackerId}|test-session` })
-        .action(api.github.action.saveInstallation, { installationId: 777 }),
+      (await asUser(t, attackerId)).action(api.github.action.saveInstallation, {
+        installationId: 777,
+      }),
     ).resolves.toEqual({ status: "not_bound_yet" });
 
     expect(mockedGenerateGitHubAppJWT).not.toHaveBeenCalled();
@@ -812,9 +809,9 @@ describe("authenticated installation refresh", () => {
     globalThis.fetch = vi.fn();
 
     await expect(
-      t
-        .withIdentity({ subject: `${ownerId}|test-session` })
-        .action(api.github.action.saveInstallation, { installationId: 778 }),
+      (await asUser(t, ownerId)).action(api.github.action.saveInstallation, {
+        installationId: 778,
+      }),
     ).rejects.toThrow("GitHub App credentials not configured");
     expect(mockedGenerateGitHubAppJWT).not.toHaveBeenCalled();
     expect(globalThis.fetch).not.toHaveBeenCalled();
@@ -831,11 +828,9 @@ describe("authenticated installation refresh", () => {
       ) as typeof fetch;
 
       await expect(
-        t
-          .withIdentity({ subject: `${ownerId}|test-session` })
-          .action(api.github.action.saveInstallation, {
-            installationId: 779 + status,
-          }),
+        (await asUser(t, ownerId)).action(api.github.action.saveInstallation, {
+          installationId: 779 + status,
+        }),
       ).rejects.toThrow("Failed to refresh GitHub installation details");
       expect(globalThis.fetch).toHaveBeenCalledOnce();
     },
@@ -850,9 +845,9 @@ describe("authenticated installation refresh", () => {
     }) as typeof fetch;
 
     await expect(
-      t
-        .withIdentity({ subject: `${ownerId}|test-session` })
-        .action(api.github.action.saveInstallation, { installationId: 780 }),
+      (await asUser(t, ownerId)).action(api.github.action.saveInstallation, {
+        installationId: 780,
+      }),
     ).rejects.toThrow("Failed to refresh GitHub installation details");
     expect(globalThis.fetch).toHaveBeenCalledOnce();
   });
@@ -892,9 +887,10 @@ describe("authenticated OAuth installation recovery", () => {
     globalThis.fetch = fetchMock as typeof fetch;
 
     await expect(
-      t
-        .withIdentity({ subject: `${userId}|test-session` })
-        .action(api.github.action.recoverOAuthInstallation, {}),
+      (await asUser(t, userId)).action(
+        api.github.action.recoverOAuthInstallation,
+        {},
+      ),
     ).resolves.toEqual({
       status: "recovered",
       installationId: 104575964,
@@ -945,9 +941,7 @@ describe("authenticated OAuth installation recovery", () => {
       });
     });
     globalThis.fetch = fetchMock as typeof fetch;
-    const authenticated = t.withIdentity({
-      subject: `${userId}|test-session`,
-    });
+    const authenticated = await asUser(t, userId);
 
     await expect(
       authenticated.action(api.github.action.recoverOAuthInstallation, {}),
@@ -985,9 +979,10 @@ describe("authenticated OAuth installation recovery", () => {
     ) as typeof fetch;
 
     await expect(
-      t
-        .withIdentity({ subject: `${userId}|test-session` })
-        .action(api.github.action.recoverOAuthInstallation, {}),
+      (await asUser(t, userId)).action(
+        api.github.action.recoverOAuthInstallation,
+        {},
+      ),
     ).resolves.toEqual({
       status: "configure_required",
       installationId: 912,
@@ -1039,9 +1034,7 @@ describe("authenticated OAuth installation recovery", () => {
       });
     });
     globalThis.fetch = fetchMock as typeof fetch;
-    const authenticated = t.withIdentity({
-      subject: `${userId}|test-session`,
-    });
+    const authenticated = await asUser(t, userId);
 
     await expect(
       authenticated.action(api.github.action.recoverOAuthInstallation, {}),
@@ -1093,9 +1086,7 @@ describe("authenticated OAuth installation recovery", () => {
       });
     });
     globalThis.fetch = fetchMock as typeof fetch;
-    const authenticated = t.withIdentity({
-      subject: `${userId}|test-session`,
-    });
+    const authenticated = await asUser(t, userId);
 
     await expect(
       authenticated.action(api.github.action.recoverOAuthInstallation, {}),
@@ -1122,9 +1113,10 @@ describe("authenticated OAuth installation recovery", () => {
     globalThis.fetch = vi.fn();
 
     await expect(
-      t
-        .withIdentity({ subject: `${userId}|test-session` })
-        .action(api.github.action.recoverOAuthInstallation, {}),
+      (await asUser(t, userId)).action(
+        api.github.action.recoverOAuthInstallation,
+        {},
+      ),
     ).resolves.toEqual({ status: "none" });
     expect(mockedGenerateGitHubAppJWT).not.toHaveBeenCalled();
     expect(globalThis.fetch).not.toHaveBeenCalled();
@@ -1136,9 +1128,10 @@ describe("authenticated OAuth installation recovery", () => {
     globalThis.fetch = vi.fn();
 
     await expect(
-      t
-        .withIdentity({ subject: `${userId}|test-session` })
-        .action(api.github.action.recoverOAuthInstallation, {}),
+      (await asUser(t, userId)).action(
+        api.github.action.recoverOAuthInstallation,
+        {},
+      ),
     ).resolves.toEqual({ status: "reauth_required" });
     expect(mockedGenerateGitHubAppJWT).not.toHaveBeenCalled();
     expect(globalThis.fetch).not.toHaveBeenCalled();
@@ -1155,9 +1148,10 @@ describe("authenticated OAuth installation recovery", () => {
     globalThis.fetch = vi.fn();
 
     await expect(
-      t
-        .withIdentity({ subject: `${userId}|test-session` })
-        .action(api.github.action.recoverOAuthInstallation, {}),
+      (await asUser(t, userId)).action(
+        api.github.action.recoverOAuthInstallation,
+        {},
+      ),
     ).resolves.toEqual({ status: "reauth_required" });
     expect(mockedGenerateGitHubAppJWT).not.toHaveBeenCalled();
     expect(globalThis.fetch).not.toHaveBeenCalled();
@@ -1172,9 +1166,10 @@ describe("authenticated OAuth installation recovery", () => {
     globalThis.fetch = vi.fn();
 
     await expect(
-      t
-        .withIdentity({ subject: `${userId}|test-session` })
-        .action(api.github.action.recoverOAuthInstallation, {}),
+      (await asUser(t, userId)).action(
+        api.github.action.recoverOAuthInstallation,
+        {},
+      ),
     ).resolves.toEqual({ status: "reauth_required" });
     expect(mockedGenerateGitHubAppJWT).not.toHaveBeenCalled();
     expect(globalThis.fetch).not.toHaveBeenCalled();
@@ -1191,9 +1186,10 @@ describe("authenticated OAuth installation recovery", () => {
     globalThis.fetch = vi.fn();
 
     await expect(
-      t
-        .withIdentity({ subject: `${userId}|test-session` })
-        .action(api.github.action.recoverOAuthInstallation, {}),
+      (await asUser(t, userId)).action(
+        api.github.action.recoverOAuthInstallation,
+        {},
+      ),
     ).resolves.toEqual({ status: "unavailable" });
     expect(mockedGenerateGitHubAppJWT).not.toHaveBeenCalled();
     expect(globalThis.fetch).not.toHaveBeenCalled();
@@ -1222,9 +1218,10 @@ describe("authenticated OAuth installation recovery", () => {
     globalThis.fetch = vi.fn();
 
     await expect(
-      t
-        .withIdentity({ subject: `${userId}|test-session` })
-        .action(api.github.action.recoverOAuthInstallation, {}),
+      (await asUser(t, userId)).action(
+        api.github.action.recoverOAuthInstallation,
+        {},
+      ),
     ).resolves.toEqual({
       status: "configure_required",
       installationId: 945,
@@ -1241,9 +1238,10 @@ describe("authenticated OAuth installation recovery", () => {
     globalThis.fetch = vi.fn();
 
     await expect(
-      t
-        .withIdentity({ subject: `${userId}|test-session` })
-        .action(api.github.action.recoverOAuthInstallation, {}),
+      (await asUser(t, userId)).action(
+        api.github.action.recoverOAuthInstallation,
+        {},
+      ),
     ).resolves.toEqual({ status: "unavailable" });
     expect(mockedGenerateGitHubAppJWT).not.toHaveBeenCalled();
     expect(globalThis.fetch).not.toHaveBeenCalled();
@@ -1265,18 +1263,18 @@ describe("authenticated installation lookup", () => {
       }),
     ).toBeNull();
     expect(
-      await t
-        .withIdentity({ subject: `${otherUserId}|test-session` })
-        .query(api.github.query.getInstallation, { installationId: 888 }),
+      await (
+        await asUser(t, otherUserId)
+      ).query(api.github.query.getInstallation, { installationId: 888 }),
     ).toBeNull();
     expect(
-      await t
-        .withIdentity({ subject: `${ownerId}|test-session` })
-        .query(api.github.query.getInstallation, { installationId: 888 }),
+      await (
+        await asUser(t, ownerId)
+      ).query(api.github.query.getInstallation, { installationId: 888 }),
     ).toMatchObject({ userId: ownerId, installationId: 888 });
-    const publicInstallation = await t
-      .withIdentity({ subject: `${ownerId}|test-session` })
-      .query(api.github.query.getInstallation, { installationId: 888 });
+    const publicInstallation = await (
+      await asUser(t, ownerId)
+    ).query(api.github.query.getInstallation, { installationId: 888 });
     expect(publicInstallation).not.toHaveProperty("ownerGithubAccountId");
     expect(publicInstallation).not.toHaveProperty("ownershipVerifiedAt");
   });
@@ -1304,9 +1302,9 @@ describe("authenticated installation lookup", () => {
       });
     });
 
-    const installations = await t
-      .withIdentity({ subject: `${ownerId}|test-session` })
-      .query(api.github.query.getUserInstallations, {});
+    const installations = await (
+      await asUser(t, ownerId)
+    ).query(api.github.query.getUserInstallations, {});
 
     expect(installations).toHaveLength(1);
     expect(installations[0]).toMatchObject({
@@ -1369,7 +1367,7 @@ describe("authenticated installation lookup", () => {
         repositoryAccessReconciliationPhase: "fetching",
       });
     });
-    const identity = t.withIdentity({ subject: `${ownerId}|test-session` });
+    const identity = await asUser(t, ownerId);
 
     const installations = await identity.query(
       api.github.query.getUserInstallations,
@@ -1834,9 +1832,9 @@ describe("invalid installation cleanup", () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(console, "log").mockImplementation(() => undefined);
 
-    const repositories = await t
-      .withIdentity({ subject: `${ownerId}|test-session` })
-      .action(api.github.action.listUserRepositories, {});
+    const repositories = await (
+      await asUser(t, ownerId)
+    ).action(api.github.action.listUserRepositories, {});
     await t.finishAllScheduledFunctions(() => vi.advanceTimersToNextTimer());
     const { installation, repository } = await t.run(async (ctx) => ({
       installation: await ctx.db
@@ -1871,9 +1869,9 @@ describe("invalid installation cleanup", () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(console, "log").mockImplementation(() => undefined);
 
-    await t
-      .withIdentity({ subject: `${ownerId}|test-session` })
-      .action(api.github.action.listUserRepositories, {});
+    await (
+      await asUser(t, ownerId)
+    ).action(api.github.action.listUserRepositories, {});
     await t.finishAllScheduledFunctions(() => vi.advanceTimersToNextTimer());
     const state = await t.run(async (ctx) => ({
       installation: await ctx.db
@@ -1901,9 +1899,9 @@ describe("invalid installation cleanup", () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(console, "log").mockImplementation(() => undefined);
 
-    await t
-      .withIdentity({ subject: `${ownerId}|test-session` })
-      .action(api.github.action.listUserRepositories, {});
+    await (
+      await asUser(t, ownerId)
+    ).action(api.github.action.listUserRepositories, {});
     await t.finishAllScheduledFunctions(() => vi.advanceTimersToNextTimer());
     const state = await t.run(async (ctx) => ({
       installation: await ctx.db
@@ -1912,9 +1910,9 @@ describe("invalid installation cleanup", () => {
         .first(),
       repository: await ctx.db.get(repositoryId),
     }));
-    const publicInstallations = await t
-      .withIdentity({ subject: `${ownerId}|test-session` })
-      .query(api.github.query.getUserInstallations, {});
+    const publicInstallations = await (
+      await asUser(t, ownerId)
+    ).query(api.github.query.getUserInstallations, {});
 
     expect(state.installation?.accessSuspendedAt).toEqual(expect.any(Number));
     expect(state.repository?.githubAccessRevokedAt).toEqual(expect.any(Number));
@@ -1932,9 +1930,10 @@ describe("invalid installation cleanup", () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     await expect(
-      t
-        .withIdentity({ subject: `${ownerId}|test-session` })
-        .action(api.github.action.listUserRepositories, {}),
+      (await asUser(t, ownerId)).action(
+        api.github.action.listUserRepositories,
+        {},
+      ),
     ).rejects.toThrow("Unable to load repositories from GitHub");
     const state = await t.run(async (ctx) => ({
       installation: await ctx.db
@@ -1993,7 +1992,7 @@ describe("bounded authenticated repository listing", () => {
       }
       return Response.json({ repositories: [] });
     }) as typeof fetch;
-    const identity = t.withIdentity({ subject: `${ownerId}|test-session` });
+    const identity = await asUser(t, ownerId);
 
     const first = await identity.action(
       api.github.action.listUserRepositories,
@@ -2050,7 +2049,7 @@ describe("bounded authenticated repository listing", () => {
     globalThis.fetch = vi.fn(async () =>
       Response.json({ repositories: [makeGitHubRepository(201)] }),
     ) as typeof fetch;
-    const identity = t.withIdentity({ subject: `${ownerId}|test-session` });
+    const identity = await asUser(t, ownerId);
 
     const pendingPage = await identity.action(
       api.github.action.listUserRepositories,
@@ -2098,7 +2097,7 @@ describe("bounded authenticated repository listing", () => {
         repositoryRemovalPendingAt: Date.now(),
       });
     });
-    const identity = t.withIdentity({ subject: `${ownerId}|test-session` });
+    const identity = await asUser(t, ownerId);
 
     const installations = await identity.query(
       api.github.query.getUserInstallations,
@@ -2148,7 +2147,7 @@ describe("bounded authenticated repository listing", () => {
     globalThis.fetch = vi.fn(async () =>
       Response.json({ repositories: [makeGitHubRepository(201)] }),
     ) as typeof fetch;
-    const identity = t.withIdentity({ subject: `${ownerId}|test-session` });
+    const identity = await asUser(t, ownerId);
 
     const pendingInstallations = await identity.query(
       api.github.query.getUserInstallations,
@@ -2277,9 +2276,9 @@ describe("bounded authenticated repository listing", () => {
       }),
     ) as typeof fetch;
 
-    const result = await t
-      .withIdentity({ subject: `${ownerId}|test-session` })
-      .action(api.github.action.listUserRepositories, {});
+    const result = await (
+      await asUser(t, ownerId)
+    ).action(api.github.action.listUserRepositories, {});
 
     expect(result.repositories.map((repository) => repository.id)).toEqual([
       999,
@@ -2339,11 +2338,11 @@ describe("bounded authenticated repository listing", () => {
       }),
     ) as typeof fetch;
 
-    const result = await t
-      .withIdentity({ subject: `${ownerId}|test-session` })
-      .action(api.github.action.listUserRepositories, {
-        reconnectRepositoryId: reconnectRepositoryId,
-      });
+    const result = await (
+      await asUser(t, ownerId)
+    ).action(api.github.action.listUserRepositories, {
+      reconnectRepositoryId: reconnectRepositoryId,
+    });
 
     expect(result.repositories.map((repository) => repository.id)).toEqual([
       301,
@@ -2364,11 +2363,11 @@ describe("bounded authenticated repository listing", () => {
       Response.json({ repositories: [makeGitHubRepository(300)] }),
     ) as typeof fetch;
 
-    const result = await t
-      .withIdentity({ subject: `${ownerId}|test-session` })
-      .action(api.github.action.listUserRepositories, {
-        cursor: JSON.stringify({ installationId: 200, page: 1 }),
-      });
+    const result = await (
+      await asUser(t, ownerId)
+    ).action(api.github.action.listUserRepositories, {
+      cursor: JSON.stringify({ installationId: 200, page: 1 }),
+    });
 
     expect(mockedGetInstallationToken).toHaveBeenCalledWith(
       300,
@@ -2414,7 +2413,7 @@ describe("durable installation repository reconciliation", () => {
             "github/action:continueRepositoryAccessReconciliation",
         ).length,
     );
-    const owner = t.withIdentity({ subject: `${ownerId}|test-session` });
+    const owner = await asUser(t, ownerId);
     const publicWhileRetrying = await owner.query(
       api.github.query.getUserInstallations,
       {},
@@ -2489,9 +2488,7 @@ describe("durable installation repository reconciliation", () => {
     ).toBeUndefined();
     expect(terminalState.scheduled).toBe(scheduledBefore + 1);
 
-    const otherUser = t.withIdentity({
-      subject: `${otherUserId}|test-session`,
-    });
+    const otherUser = await asUser(t, otherUserId);
     const publicInstallations = await owner.query(
       api.github.query.getUserInstallations,
       {},
@@ -3769,7 +3766,7 @@ describe("signed installation webhook ownership binding", () => {
       githubInstallationReconnectRequired: true,
     });
 
-    const owner = t.withIdentity({ subject: `${ownerId}|owner-session` });
+    const owner = await asUser(t, ownerId);
     await expect(
       owner.query(api.repoIndexing.query.getIndexingStatus, { repositoryId }),
     ).resolves.toMatchObject({
@@ -4128,11 +4125,7 @@ describe("signed installation webhook ownership binding", () => {
     const { verifiedUserId, profileOnlyUserId } = await t.run(async (ctx) => {
       const verifiedUserId = await ctx.db.insert("users", {});
       const profileOnlyUserId = await ctx.db.insert("users", {});
-      await ctx.db.insert("authAccounts", {
-        userId: verifiedUserId,
-        provider: "github",
-        providerAccountId: "654",
-      });
+      await ctx.db.patch(verifiedUserId, { githubAccountId: "654" });
       await ctx.db.insert("userProfiles", {
         userId: profileOnlyUserId,
         githubUsername: "example-org",
@@ -4162,32 +4155,20 @@ describe("signed installation webhook ownership binding", () => {
       const firstUserId = await ctx.db.insert("users", {});
       const secondUserId = await ctx.db.insert("users", {});
       const deletedUserId = await ctx.db.insert("users", {});
-      await ctx.db.insert("authAccounts", {
-        userId: firstUserId,
-        provider: "github",
-        providerAccountId: "duplicate-account",
-      });
-      await ctx.db.insert("authAccounts", {
-        userId: secondUserId,
-        provider: "github",
-        providerAccountId: "duplicate-account",
-      });
-      await ctx.db.insert("authAccounts", {
-        userId: deletedUserId,
-        provider: "github",
-        providerAccountId: "dangling-account",
-      });
+      await ctx.db.patch(firstUserId, { githubAccountId: "1001" });
+      await ctx.db.patch(secondUserId, { githubAccountId: "1001" });
+      await ctx.db.patch(deletedUserId, { githubAccountId: "1002" });
       await ctx.db.delete(deletedUserId);
     });
 
     await expect(
       t.query(internal.github.internalQuery.getUserIdByGithubAccountId, {
-        githubAccountId: "duplicate-account",
+        githubAccountId: "1001",
       }),
     ).resolves.toBeNull();
     await expect(
       t.query(internal.github.internalQuery.getUserIdByGithubAccountId, {
-        githubAccountId: "dangling-account",
+        githubAccountId: "1002",
       }),
     ).resolves.toBeNull();
   });
@@ -4213,9 +4194,10 @@ describe("signed installation webhook ownership binding", () => {
     });
 
     await expect(
-      t
-        .withIdentity({ subject: `${userId}|test-session` })
-        .query(api.github.query.getUserInstallations, {}),
+      (await asUser(t, userId)).query(
+        api.github.query.getUserInstallations,
+        {},
+      ),
     ).rejects.toThrow("GitHub App installation limit exceeded");
   });
 });

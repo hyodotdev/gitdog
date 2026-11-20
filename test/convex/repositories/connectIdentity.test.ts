@@ -9,6 +9,7 @@ import type { Id } from "../../../convex/_generated/dataModel";
 import { internalMutation } from "../../../convex/_generated/server";
 import * as githubHelpers from "../../../convex/github/helpers";
 import schema from "../../../convex/schema";
+import { asUser } from "../../helpers/auth";
 
 let mockedFetch: MockedFunction<
   typeof githubHelpers.fetchGitHubAppJsonWithRetry
@@ -148,12 +149,12 @@ describe("repository connection identity", () => {
       stargazers_count: 5,
     });
 
-    const repositoryId = await t
-      .withIdentity({ subject: `${userId}|session` })
-      .action(api.repositories.action.createAndIndex, {
-        installationId: 123,
-        githubRepositoryId: 456,
-      });
+    const repositoryId = await (
+      await asUser(t, userId)
+    ).action(api.repositories.action.createAndIndex, {
+      installationId: 123,
+      githubRepositoryId: 456,
+    });
     const repository = await t.run(
       async (ctx) => await ctx.db.get(repositoryId),
     );
@@ -180,12 +181,10 @@ describe("repository connection identity", () => {
     );
 
     await expect(
-      t
-        .withIdentity({ subject: `${userId}|session` })
-        .action(api.repositories.action.createAndIndex, {
-          installationId: 123,
-          githubRepositoryId: 999,
-        }),
+      (await asUser(t, userId)).action(api.repositories.action.createAndIndex, {
+        installationId: 123,
+        githubRepositoryId: 999,
+      }),
     ).rejects.toThrow(
       "Unable to verify repository access through the GitHub App installation",
     );
@@ -209,12 +208,10 @@ describe("repository connection identity", () => {
     });
 
     await expect(
-      t
-        .withIdentity({ subject: `${userId}|session` })
-        .action(api.repositories.action.createAndIndex, {
-          installationId: 123,
-          githubRepositoryId: 456,
-        }),
+      (await asUser(t, userId)).action(api.repositories.action.createAndIndex, {
+        installationId: 123,
+        githubRepositoryId: 456,
+      }),
     ).rejects.toThrow(
       "Unable to verify repository access through the GitHub App installation",
     );
@@ -241,12 +238,10 @@ describe("repository connection identity", () => {
     });
 
     await expect(
-      t
-        .withIdentity({ subject: `${userId}|session` })
-        .action(api.repositories.action.createAndIndex, {
-          installationId: 123,
-          githubRepositoryId: 456,
-        }),
+      (await asUser(t, userId)).action(api.repositories.action.createAndIndex, {
+        installationId: 123,
+        githubRepositoryId: 456,
+      }),
     ).rejects.toThrow(
       "Unable to verify repository access through the GitHub App installation",
     );
@@ -307,13 +302,11 @@ describe("repository connection identity", () => {
     });
 
     await expect(
-      t
-        .withIdentity({ subject: `${userId}|session` })
-        .action(api.repositories.action.createAndIndex, {
-          installationId: 123,
-          githubRepositoryId: 457,
-          reconnectRepositoryId,
-        }),
+      (await asUser(t, userId)).action(api.repositories.action.createAndIndex, {
+        installationId: 123,
+        githubRepositoryId: 457,
+        reconnectRepositoryId,
+      }),
     ).resolves.toEqual(expect.any(String));
     expect(mockedToken).toHaveBeenCalledOnce();
   });
@@ -364,13 +357,11 @@ describe("repository connection identity", () => {
     });
 
     await expect(
-      t
-        .withIdentity({ subject: `${userId}|session` })
-        .action(api.repositories.action.createAndIndex, {
-          installationId: 123,
-          githubRepositoryId: 457,
-          reconnectRepositoryId,
-        }),
+      (await asUser(t, userId)).action(api.repositories.action.createAndIndex, {
+        installationId: 123,
+        githubRepositoryId: 457,
+        reconnectRepositoryId,
+      }),
     ).rejects.toThrow("Repository reconnect target is not available");
     expect(mockedToken).not.toHaveBeenCalled();
   });

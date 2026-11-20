@@ -15,7 +15,6 @@ import { asRecord } from "./ui.js";
 
 export const DEFAULT_API_URL = "https://calm-hippopotamus-56.convex.cloud";
 export const DEFAULT_SITE_URL = "https://gitdog.dev";
-export const DEFAULT_AUTH_SITE_URL = "https://auth.gitdog.dev";
 export type Tokens = { token: string; refreshToken: string };
 export type Session = Tokens & { apiUrl: string; siteUrl: string };
 
@@ -74,6 +73,16 @@ export function validTokens(value: unknown): value is Tokens {
     typeof item.refreshToken === "string" &&
     item.refreshToken.length > 0
   );
+}
+
+/** The session tokens in a @convex-dev/auth token bundle, if it has them. */
+export function tokensFromBundle(value: unknown): Tokens | null {
+  const bundle = asRecord(value);
+  const tokens = {
+    token: bundle?.accessToken,
+    refreshToken: bundle?.refreshToken,
+  };
+  return validTokens(tokens) ? tokens : null;
 }
 
 export function validateUrl(value: string, label: string): string {

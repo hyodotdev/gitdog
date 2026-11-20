@@ -1,22 +1,11 @@
 import type { Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
+import { readGitHubAccountId } from "../users/githubAccount";
 
 export const GITHUB_INSTALLATION_ATTESTATION_TTL_MS = 15 * 60 * 1_000;
 export const GITHUB_INSTALLATION_ATTESTATION_PAGE_SIZE = 100;
 export const GITHUB_INSTALLATION_ATTESTATION_MAX_INSTALLATIONS = 500;
 export const GITHUB_INSTALLATION_ATTESTATION_REQUEST_TIMEOUT_MS = 10_000;
-
-type GitHubOAuthProfile = Record<string, unknown> & {
-  githubAccountId?: unknown;
-  githubInstallationIds?: unknown;
-};
-
-type GitHubOAuthUserArgs = {
-  existingUserId: Id<"users"> | null;
-  type: "oauth" | "credentials" | "email" | "phone" | "verification";
-  provider: { id: string; type: string };
-  profile: GitHubOAuthProfile;
-};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -26,12 +15,6 @@ function readPositiveSafeInteger(value: unknown): number | null {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0
     ? value
     : null;
-}
-
-function readGitHubAccountId(value: unknown): string | null {
-  if (typeof value !== "string" || !/^[1-9]\d*$/.test(value)) return null;
-  const numericId = Number(value);
-  return Number.isSafeInteger(numericId) ? value : null;
 }
 
 function normalizeInstallationIds(value: unknown): number[] | null {
@@ -52,12 +35,10 @@ function normalizeInstallationIds(value: unknown): number[] | null {
   return Array.from(installationIds).sort((left, right) => left - right);
 }
 
-function readOptionalProfileString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() !== "" ? value : undefined;
-}
-
 /** Headers for GitHub's REST API with the given Authorization value. */
-export function githubApiHeaders(authorization: string): HeadersInit {
+export function githubApiHeaders(
+  authorization: string,
+): Record<string, string> {
   return {
     Accept: "application/vnd.github+json",
     Authorization: authorization,
@@ -156,78 +137,6 @@ export async function fetchAccessibleGitHubInstallationIds(
   }
 
   throw new Error("GitHub installation access exceeds the supported limit");
-}
-
-/** Persist only a short-lived installation snapshot, never the OAuth token. */
-export async function persistGitHubInstallationAttestation(
-  ctx: MutationCtx,
-  args: GitHubOAuthUserArgs,
-): Promise<Id<"users">> {
-  if (
-    args.type !== "oauth" ||
-    args.provider.id !== "github" ||
-    args.provider.type !== "oauth"
-  ) {
-    throw new Error("Unsupported authentication provider");
-  }
-
-  const githubAccountId = readGitHubAccountId(args.profile.githubAccountId);
-  const installationIds = normalizeInstallationIds(
-    args.profile.githubInstallationIds,
-  );
-  if (githubAccountId === null || installationIds === null) {
-    throw new Error("GitHub installation attestation is invalid");
-  }
-
-  const now = Date.now();
-  const email = readOptionalProfileString(args.profile.email);
-  const userFields = {
-    name: readOptionalProfileString(args.profile.name),
-    image: readOptionalProfileString(args.profile.image),
-    email,
-    emailVerificationTime: email === undefined ? undefined : now,
-  };
-
-  let userId = args.existingUserId;
-  if (userId === null) {
-    userId = await ctx.db.insert("users", userFields);
-  } else {
-    const [user, linkedAccountId] = await Promise.all([
-      ctx.db.get(userId),
-      readLinkedGitHubAccountId(ctx, userId),
-    ]);
-    if (!user || linkedAccountId !== githubAccountId) {
-      throw new Error("GitHub account identity changed during sign-in");
-    }
-    await ctx.db.patch(userId, userFields);
-  }
-
-  await saveInstallationAttestation(ctx, {
-    userId,
-    githubAccountId,
-    installationIds,
-    now,
-  });
-  return userId;
-}
-
-/**
- * The GitHub account id linked to a Gitdog user, or null when the user has
- * none or more than one. Installation access is attested against it.
- */
-export async function readLinkedGitHubAccountId(
-  ctx: Pick<MutationCtx, "db">,
-  userId: Id<"users">,
-): Promise<string | null> {
-  const accounts = await ctx.db
-    .query("authAccounts")
-    .withIndex("userIdAndProvider", (q) =>
-      q.eq("userId", userId).eq("provider", "github"),
-    )
-    .take(2);
-  return accounts.length === 1
-    ? readGitHubAccountId(accounts[0].providerAccountId)
-    : null;
 }
 
 /**

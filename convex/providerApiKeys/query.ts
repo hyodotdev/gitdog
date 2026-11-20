@@ -1,4 +1,4 @@
-import { getAuthUserId } from "@convex-dev/auth/server";
+import { getAuthUserId } from "../_utils/auth";
 import { query } from "../_generated/server";
 import { readEncryptionState } from "./encryptionState";
 import { USER_KEY_MODELS, userKeyModel } from "../_ai/config";

@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { api } from "../../../convex/_generated/api";
 import schema from "../../../convex/schema";
 import { getTrustedLearningRepositoryKey } from "../../../convex/repoLearnings/trust";
+import { asUser } from "../../helpers/auth";
 
 const modules = {
   "../../../convex/_generated/api.ts": () =>
@@ -76,9 +77,9 @@ describe("repository learning trusted count", () => {
       return { userId, repositoryId };
     });
 
-    const count = await t
-      .withIdentity({ subject: `${userId}|test-session` })
-      .query(api.repoLearnings.query.countByRepository, { repositoryId });
+    const count = await (
+      await asUser(t, userId)
+    ).query(api.repoLearnings.query.countByRepository, { repositoryId });
 
     expect(count).toBe(1);
   });

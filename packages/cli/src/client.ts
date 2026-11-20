@@ -4,7 +4,7 @@ import type { Value } from "convex/values";
 import {
   SessionStore,
   tokenExpiresSoon,
-  validTokens,
+  tokensFromBundle,
   type Session,
 } from "./storage.js";
 import { asRecord } from "./ui.js";
@@ -116,19 +116,21 @@ export class GitdogApi implements Api {
         try {
           result = await invoke(
             httpClient(this.apiUrl, remainingTimeout(deadline)),
-            "action",
-            "auth:signIn",
-            {
-              refreshToken: current.refreshToken,
-            },
+            "mutation",
+            "auth:refreshSession",
+            { refreshToken: current.refreshToken },
           );
         } catch {
           throw new Error(
             "Could not refresh your session. Check your connection or run npx gitdog@latest login again.",
           );
         }
-        const tokens = asRecord(result)?.tokens;
-        if (!validTokens(tokens))
+        const refreshed = asRecord(result);
+        const tokens =
+          refreshed?.kind === "rotated"
+            ? tokensFromBundle(refreshed.tokens)
+            : null;
+        if (!tokens)
           throw new Error(
             "Your session expired. Run npx gitdog@latest login again.",
           );

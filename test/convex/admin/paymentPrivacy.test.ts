@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { api } from "../../../convex/_generated/api";
 import schema from "../../../convex/schema";
+import { asUser } from "../../helpers/auth";
 
 const modules = {
   "../../../convex/_generated/api.ts": () =>
@@ -97,17 +98,13 @@ describe("admin payment-log privacy", () => {
       ),
     ).rejects.toThrow("Unauthorized");
     await expect(
-      t
-        .withIdentity({ subject: `${normalUserId}|session` })
-        .mutation(
-          api.admin.paymentMutation.requeueSubscriptionInvoiceReview,
-          args,
-        ),
+      (await asUser(t, normalUserId)).mutation(
+        api.admin.paymentMutation.requeueSubscriptionInvoiceReview,
+        args,
+      ),
     ).rejects.toThrow("Unauthorized");
 
-    const authenticated = t.withIdentity({
-      subject: `${adminUserId}|admin-session`,
-    });
+    const authenticated = await asUser(t, adminUserId);
     const listed = await authenticated.query(
       api.admin.paymentQuery.listOpenSettlementReviews,
       { limit: 10 },
@@ -221,13 +218,14 @@ describe("admin payment-log privacy", () => {
     });
 
     await expect(
-      t
-        .withIdentity({ subject: `${adminUserId}|admin-session` })
-        .mutation(api.admin.paymentMutation.requeueSubscriptionInvoiceReview, {
+      (await asUser(t, adminUserId)).mutation(
+        api.admin.paymentMutation.requeueSubscriptionInvoiceReview,
+        {
           manualReviewId: reviewId,
           evidenceReference: "ls-support-case-conflict",
           confirmRetry: true,
-        }),
+        },
+      ),
     ).rejects.toThrow("conflicts with durable inbox");
     const state = await t.run(async (ctx) => ({
       inbox: await ctx.db.get(inboxId),
@@ -307,9 +305,7 @@ describe("admin payment-log privacy", () => {
           refund40LogId,
         };
       });
-    const authenticated = t.withIdentity({
-      subject: `${adminUserId}|admin-session`,
-    });
+    const authenticated = await asUser(t, adminUserId);
 
     await expect(
       authenticated.mutation(api.admin.paymentMutation.refundTokens, {
@@ -389,9 +385,7 @@ describe("admin payment-log privacy", () => {
         return { adminUserId, customerUserId, paymentLogId };
       },
     );
-    const authenticated = t.withIdentity({
-      subject: `${adminUserId}|admin-session`,
-    });
+    const authenticated = await asUser(t, adminUserId);
 
     const listed = await authenticated.query(
       api.admin.paymentQuery.listPaymentLogs,

@@ -29,6 +29,7 @@ import {
   CLAUDE_API_ENDS_AT,
   GENERATION_MODELS,
 } from "../../../convex/_ai/config";
+import { asUser } from "../../helpers/auth";
 
 const modules = {
   "../../../convex/_generated/api.ts": () =>
@@ -678,7 +679,7 @@ describe("AI chat usage reservations", () => {
       const t = convexTest(schema, modules);
       const fixture = await insertFixture(t);
       const adminUserId = await insertAdminUser(t);
-      const admin = t.withIdentity({ subject: `${adminUserId}|admin-session` });
+      const admin = await asUser(t, adminUserId);
       const ended = await insertEndedProPeriod(t, fixture, {
         purchasedTokens: 100,
         overageTokens: 40,
@@ -2893,7 +2894,7 @@ describe("AI chat usage reservations", () => {
     const t = convexTest(schema, modules);
     const fixture = await insertFixture(t);
     const adminUserId = await insertAdminUser(t);
-    const admin = t.withIdentity({ subject: `${adminUserId}|admin-session` });
+    const admin = await asUser(t, adminUserId);
     const notBilled = reservationArgs(fixture, "reconcile-not-billed");
     await reserve(t, notBilled);
     await markStarted(t, notBilled);
@@ -2962,7 +2963,7 @@ describe("AI chat usage reservations", () => {
     const t = convexTest(schema, modules);
     const fixture = await insertFixture(t);
     const adminUserId = await insertAdminUser(t);
-    const admin = t.withIdentity({ subject: `${adminUserId}|admin-session` });
+    const admin = await asUser(t, adminUserId);
     const subscriptionId = await insertTrustedProWallet(t, fixture.userId, 100);
     const billed = reservationArgs(fixture, "reconcile-over-ceiling", 1, {
       inputTokenLimit: 10,

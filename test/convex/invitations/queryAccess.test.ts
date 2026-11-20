@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { api } from "../../../convex/_generated/api";
 import schema from "../../../convex/schema";
+import { asUser } from "../../helpers/auth";
 
 const modules = {
   "../../../convex/_generated/api.ts": () =>
@@ -105,17 +106,17 @@ describe("repository invitation query access", () => {
       return { ownerId, repositoryId, viewerId };
     });
 
-    const viewerResult = await t
-      .withIdentity({ subject: `${fixture.viewerId}|test-session` })
-      .query(api.invitations.query.getPendingForRepository, {
-        repositoryId: fixture.repositoryId,
-      });
+    const viewerResult = await (
+      await asUser(t, fixture.viewerId)
+    ).query(api.invitations.query.getPendingForRepository, {
+      repositoryId: fixture.repositoryId,
+    });
     expect(viewerResult).toEqual([]);
-    const viewerRole = await t
-      .withIdentity({ subject: `${fixture.viewerId}|test-session` })
-      .query(api.repositoryMembers.query.getMyRole, {
-        repositoryId: fixture.repositoryId,
-      });
+    const viewerRole = await (
+      await asUser(t, fixture.viewerId)
+    ).query(api.repositoryMembers.query.getMyRole, {
+      repositoryId: fixture.repositoryId,
+    });
     expect(viewerRole).toEqual({
       role: "viewer",
       isOwner: false,
@@ -123,11 +124,11 @@ describe("repository invitation query access", () => {
       canManageMembers: false,
     });
 
-    const ownerResult = await t
-      .withIdentity({ subject: `${fixture.ownerId}|test-session` })
-      .query(api.invitations.query.getPendingForRepository, {
-        repositoryId: fixture.repositoryId,
-      });
+    const ownerResult = await (
+      await asUser(t, fixture.ownerId)
+    ).query(api.invitations.query.getPendingForRepository, {
+      repositoryId: fixture.repositoryId,
+    });
     expect(ownerResult).toEqual([
       expect.objectContaining({
         inviteeGithubUsername: "invitee",

@@ -140,7 +140,7 @@ describe("legal age compliance", () => {
 
     for (const file of files) {
       const source = await readFile(file, "utf8");
-      if (source.includes('signIn("github"')) {
+      if (source.includes("useSignInWithGithub(")) {
         directSignInFiles.push(file);
       }
     }

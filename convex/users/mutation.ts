@@ -1,6 +1,6 @@
 import { internal } from "../_generated/api";
 import { internalMutation, mutation } from "../_generated/server";
-import { getAuthUserId } from "@convex-dev/auth/server";
+import { getAuthUserId } from "../_utils/auth";
 import { v } from "convex/values";
 import {
   canAcceptDisplayedLegalPolicyVersion,

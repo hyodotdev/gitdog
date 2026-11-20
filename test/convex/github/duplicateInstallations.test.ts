@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api, internal } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import schema from "../../../convex/schema";
+import { asUser } from "../../helpers/auth";
 
 const modules = {
   "../../../convex/_generated/api.ts": () =>
@@ -128,9 +129,9 @@ describe("duplicate GitHub installation fail-closed behavior", () => {
     const t = convexTest(schema, modules);
     const fixture = await insertDuplicateFixture(t, 901);
 
-    const installations = await t
-      .withIdentity({ subject: `${fixture.ownerId}|session` })
-      .query(api.github.query.getUserInstallations, {});
+    const installations = await (
+      await asUser(t, fixture.ownerId)
+    ).query(api.github.query.getUserInstallations, {});
     const access = await t.query(
       internal.repositories.internalQuery.getAiAccessSnapshot,
       { repositoryId: fixture.repositoryId, expectedIndexVersion: 3 },
@@ -154,11 +155,11 @@ describe("duplicate GitHub installation fail-closed behavior", () => {
         githubRepo: "owner/repo",
       },
     );
-    await t
-      .withIdentity({ subject: `${fixture.ownerId}|session` })
-      .mutation(api.repoIndexing.mutation.initializeIndexing, {
-        repositoryId: fixture.repositoryId,
-      });
+    await (
+      await asUser(t, fixture.ownerId)
+    ).mutation(api.repoIndexing.mutation.initializeIndexing, {
+      repositoryId: fixture.repositoryId,
+    });
     const repository = await t.run(async (ctx) =>
       ctx.db.get(fixture.repositoryId),
     );

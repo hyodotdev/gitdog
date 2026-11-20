@@ -5,6 +5,7 @@ import { api, internal } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { PRICING, getFreeIncludedTokens } from "../../../convex/_ai/config";
 import schema from "../../../convex/schema";
+import { asUser } from "../../helpers/auth";
 
 const modules = {
   "../../../convex/_generated/api.ts": () =>
@@ -88,7 +89,7 @@ describe("durable purchased-token balance", () => {
       now: july,
       purchasedTokens: 100,
     });
-    const authenticated = t.withIdentity({ subject: `${userId}|session` });
+    const authenticated = await asUser(t, userId);
 
     await recordChatUsage(t, userId, getFreeIncludedTokens(Date.now()) + 60);
     await expect(
@@ -245,7 +246,7 @@ describe("durable purchased-token balance", () => {
       });
       return { userId, subscriptionId };
     });
-    const authenticated = t.withIdentity({ subject: `${userId}|session` });
+    const authenticated = await asUser(t, userId);
     const tokenLimit = PRICING.PRO_INCLUDED_TOKENS + 100;
 
     await expect(
@@ -298,7 +299,7 @@ describe("durable purchased-token balance", () => {
         createdAt: now,
       });
     });
-    const authenticated = t.withIdentity({ subject: `${userId}|session` });
+    const authenticated = await asUser(t, userId);
 
     await expect(
       authenticated.query(api.subscriptions.query.getCurrent, {}),

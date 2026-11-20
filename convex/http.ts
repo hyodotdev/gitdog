@@ -1,6 +1,5 @@
 import { httpRouter } from "convex/server";
 import { httpAction } from "./_generated/server";
-import { auth } from "./auth";
 import { projectApi } from "./apiKeys/http";
 import {
   verifyWebhookSignature,
@@ -24,7 +23,6 @@ import { handlePullRequestEvent } from "./pullRequests/webhook";
 
 const http = httpRouter();
 
-auth.addHttpRoutes(http);
 http.route({ path: "/v1/cli", method: "POST", handler: projectApi });
 http.route({
   path: ACCESS_VERIFICATION_CALLBACK_PATH,
@@ -32,21 +30,34 @@ http.route({
   handler: accessVerificationCallback,
 });
 
+// Public keys for the workload assertions Gitdog signs for Anthropic
+// federation. @convex-dev/auth 0.0.x served the same keys at the OpenID
+// discovery paths under CONVEX_SITE_URL, the assertions' issuer, so those
+// stay too; 2.0 signs sign-in tokens with the deployment's own keys.
+const workloadJwks = httpAction(async () => {
+  try {
+    const keys = await getWorkloadJwks(process.env.JWKS ?? "");
+    return Response.json(keys, {
+      headers: { "Cache-Control": "public, max-age=60" },
+    });
+  } catch {
+    return Response.json(
+      { error: "Workload public keys unavailable" },
+      { status: 503 },
+    );
+  }
+});
+for (const path of [WORKLOAD_JWKS_PATH, "/.well-known/jwks.json"])
+  http.route({ path, method: "GET", handler: workloadJwks });
 http.route({
-  path: WORKLOAD_JWKS_PATH,
+  path: "/.well-known/openid-configuration",
   method: "GET",
   handler: httpAction(async () => {
-    try {
-      const keys = await getWorkloadJwks(process.env.JWKS ?? "");
-      return Response.json(keys, {
-        headers: { "Cache-Control": "public, max-age=60" },
-      });
-    } catch {
-      return Response.json(
-        { error: "Workload public keys unavailable" },
-        { status: 503 },
-      );
-    }
+    const issuer = process.env.CONVEX_SITE_URL ?? "";
+    return Response.json(
+      { issuer, jwks_uri: `${issuer}/.well-known/jwks.json` },
+      { headers: { "Cache-Control": "public, max-age=60" } },
+    );
   }),
 });
 

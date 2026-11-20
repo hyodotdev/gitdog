@@ -6,6 +6,7 @@ import { api, internal } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import * as githubHelpers from "../../../convex/github/helpers";
 import schema from "../../../convex/schema";
+import { asUser } from "../../helpers/auth";
 
 const modules = {
   "../../../convex/_generated/api.ts": () =>
@@ -139,11 +140,7 @@ async function insertGitHubUser(
   return await t.run(async (ctx) => {
     const now = Date.now();
     const userId = await ctx.db.insert("users", {});
-    await ctx.db.insert("authAccounts", {
-      userId,
-      provider: "github",
-      providerAccountId: githubAccountId.toString(),
-    });
+    await ctx.db.patch(userId, { githubAccountId: githubAccountId.toString() });
     for (const githubUsername of profileNames) {
       await ctx.db.insert("userProfiles", {
         userId,
@@ -185,13 +182,13 @@ describe("verified invitation creation", () => {
       type: "User",
     });
 
-    const invitationId = await t
-      .withIdentity({ subject: `${ownerUserId}|owner-session` })
-      .action(api.invitations.action.create, {
-        repositoryId,
-        inviteeGithubUsername: "victim-login",
-        role: "viewer",
-      });
+    const invitationId = await (
+      await asUser(t, ownerUserId)
+    ).action(api.invitations.action.create, {
+      repositoryId,
+      inviteeGithubUsername: "victim-login",
+      role: "viewer",
+    });
 
     const writes = await getInvitationWrites(t);
     expect(writes.invitations).toEqual([
@@ -205,9 +202,10 @@ describe("verified invitation creation", () => {
       expect.objectContaining({ userId: victimUserId, invitationId }),
     ]);
     await expect(
-      t
-        .withIdentity({ subject: `${attackerUserId}|attacker-session` })
-        .query(api.invitations.query.listPending, {}),
+      (await asUser(t, attackerUserId)).query(
+        api.invitations.query.listPending,
+        {},
+      ),
     ).resolves.toEqual([]);
   });
 
@@ -231,13 +229,13 @@ describe("verified invitation creation", () => {
       type: "User",
     });
 
-    await t
-      .withIdentity({ subject: `${ownerUserId}|owner-session` })
-      .action(api.invitations.action.create, {
-        repositoryId,
-        inviteeGithubUsername: "duplicate-login",
-        role: "viewer",
-      });
+    await (
+      await asUser(t, ownerUserId)
+    ).action(api.invitations.action.create, {
+      repositoryId,
+      inviteeGithubUsername: "duplicate-login",
+      role: "viewer",
+    });
 
     expect((await getInvitationWrites(t)).invitations[0]).toMatchObject({
       inviteeUserId: mappedUserId,
@@ -254,13 +252,13 @@ describe("verified invitation creation", () => {
       type: "User",
     });
 
-    const invitationId = await t
-      .withIdentity({ subject: `${ownerUserId}|owner-session` })
-      .action(api.invitations.action.create, {
-        repositoryId,
-        inviteeGithubUsername: "old-login",
-        role: "viewer",
-      });
+    const invitationId = await (
+      await asUser(t, ownerUserId)
+    ).action(api.invitations.action.create, {
+      repositoryId,
+      inviteeGithubUsername: "old-login",
+      role: "viewer",
+    });
 
     expect(mockedGetInstallationToken).toHaveBeenCalledWith(
       812,
@@ -290,13 +288,11 @@ describe("verified invitation creation", () => {
     });
 
     await expect(
-      t
-        .withIdentity({ subject: `${ownerUserId}|owner-session` })
-        .action(api.invitations.action.create, {
-          repositoryId,
-          inviteeGithubUsername: "unmapped-user",
-          role: "viewer",
-        }),
+      (await asUser(t, ownerUserId)).action(api.invitations.action.create, {
+        repositoryId,
+        inviteeGithubUsername: "unmapped-user",
+        role: "viewer",
+      }),
     ).rejects.toThrow("User not found");
     expect(await getInvitationWrites(t)).toEqual({
       invitations: [],
@@ -316,13 +312,11 @@ describe("verified invitation creation", () => {
     });
 
     await expect(
-      t
-        .withIdentity({ subject: `${ownerUserId}|owner-session` })
-        .action(api.invitations.action.create, {
-          repositoryId,
-          inviteeGithubUsername: "duplicate-account",
-          role: "viewer",
-        }),
+      (await asUser(t, ownerUserId)).action(api.invitations.action.create, {
+        repositoryId,
+        inviteeGithubUsername: "duplicate-account",
+        role: "viewer",
+      }),
     ).rejects.toThrow();
     expect(await getInvitationWrites(t)).toEqual({
       invitations: [],
@@ -341,13 +335,11 @@ describe("verified invitation creation", () => {
     });
 
     await expect(
-      t
-        .withIdentity({ subject: `${ownerUserId}|owner-session` })
-        .action(api.invitations.action.create, {
-          repositoryId,
-          inviteeGithubUsername: "canonical-user",
-          role: "viewer",
-        }),
+      (await asUser(t, ownerUserId)).action(api.invitations.action.create, {
+        repositoryId,
+        inviteeGithubUsername: "canonical-user",
+        role: "viewer",
+      }),
     ).rejects.toThrow("Repository is no longer available");
     expect(mockedGetInstallationToken).not.toHaveBeenCalled();
     expect(mockedFetchGitHubAppJson).not.toHaveBeenCalled();
@@ -370,13 +362,13 @@ describe("verified invitation creation", () => {
       type: "User",
     });
 
-    const invitationId = await t
-      .withIdentity({ subject: `${ownerUserId}|owner-session` })
-      .action(api.invitations.action.create, {
-        repositoryId,
-        inviteeGithubUsername: "paused-repository-invitee",
-        role: "viewer",
-      });
+    const invitationId = await (
+      await asUser(t, ownerUserId)
+    ).action(api.invitations.action.create, {
+      repositoryId,
+      inviteeGithubUsername: "paused-repository-invitee",
+      role: "viewer",
+    });
 
     expect((await getInvitationWrites(t)).invitations).toEqual([
       expect.objectContaining({
@@ -399,13 +391,11 @@ describe("verified invitation creation", () => {
       }
 
       await expect(
-        t
-          .withIdentity({ subject: `${ownerUserId}|owner-session` })
-          .action(api.invitations.action.create, {
-            repositoryId,
-            inviteeGithubUsername: "canonical-user",
-            role: "viewer",
-          }),
+        (await asUser(t, ownerUserId)).action(api.invitations.action.create, {
+          repositoryId,
+          inviteeGithubUsername: "canonical-user",
+          role: "viewer",
+        }),
       ).rejects.toThrow();
       expect(await getInvitationWrites(t)).toEqual({
         invitations: [],
@@ -454,7 +444,7 @@ describe("verified invitation creation", () => {
       login: "canonical-name",
       type: "User",
     });
-    const owner = t.withIdentity({ subject: `${ownerUserId}|owner-session` });
+    const owner = await asUser(t, ownerUserId);
     await owner.action(api.invitations.action.create, {
       repositoryId,
       inviteeGithubUsername: "canonical-name",
@@ -491,18 +481,19 @@ describe("verified invitation creation", () => {
       login: "verified-member",
       type: "User",
     });
-    const invitationId = await t
-      .withIdentity({ subject: `${ownerUserId}|owner-session` })
-      .action(api.invitations.action.create, {
-        repositoryId,
-        inviteeGithubUsername: "verified-member",
-        role: "viewer",
-      });
+    const invitationId = await (
+      await asUser(t, ownerUserId)
+    ).action(api.invitations.action.create, {
+      repositoryId,
+      inviteeGithubUsername: "verified-member",
+      role: "viewer",
+    });
 
     await expect(
-      t
-        .withIdentity({ subject: `${inviteeUserId}|invitee-session` })
-        .mutation(api.invitations.mutation.accept, { invitationId }),
+      (await asUser(t, inviteeUserId)).mutation(
+        api.invitations.mutation.accept,
+        { invitationId },
+      ),
     ).resolves.toBe(invitationId);
     const member = await t.run(async (ctx) =>
       ctx.db

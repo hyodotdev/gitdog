@@ -1,6 +1,6 @@
 import { action } from "../_generated/server";
 import { internal } from "../_generated/api";
-import { getAuthUserId } from "@convex-dev/auth/server";
+import { getAuthUserId } from "../_utils/auth";
 import { v } from "convex/values";
 import type { Id } from "../_generated/dataModel";
 import { resolveVerifiedRepositoryAccess } from "../github/repositoryIdentity";

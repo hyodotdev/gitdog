@@ -17,6 +17,7 @@ import { drainScheduledFunctions } from "../scheduling";
 import { REVIEW_BATCH_TOKEN_ESTIMATE } from "../../../convex/pullRequests/github";
 import { PRICING, getFreeIncludedTokens } from "../../../convex/_ai/config";
 import { encryptProviderKey } from "../../../convex/providerApiKeys/crypto";
+import { asUser } from "../../helpers/auth";
 const modules = import.meta.glob("../../../convex/**/*.ts");
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => {
@@ -815,10 +816,11 @@ describe("review commands", () => {
     const f = await reviewed();
     const r = await replies(f);
     const ticketId = (await f.t.run((ctx) => ctx.db.get(f.first)))!.ticketId;
-    const run = (command: "review" | "full_review") =>
-      f.t
-        .withIdentity({ subject: f.userId })
-        .action(api.pullRequests.action.command, { ticketId, command });
+    const run = async (command: "review" | "full_review") =>
+      (await asUser(f.t, f.userId)).action(api.pullRequests.action.command, {
+        ticketId,
+        command,
+      });
     expect(await run("review")).toMatchObject({
       command: "review",
       status: "started",
@@ -829,12 +831,10 @@ describe("review commands", () => {
     expect(r.comment).not.toHaveBeenCalled();
     const stranger = await f.t.run((ctx) => ctx.db.insert("users", {}));
     await expect(
-      f.t
-        .withIdentity({ subject: stranger })
-        .action(api.pullRequests.action.command, {
-          ticketId,
-          command: "review",
-        }),
+      (await asUser(f.t, stranger)).action(api.pullRequests.action.command, {
+        ticketId,
+        command: "review",
+      }),
     ).rejects.toThrow("not authorized");
   });
 });
@@ -1309,12 +1309,12 @@ describe("PR review durable lifecycle", () => {
     const f = await fixture();
     const { pullRequestReviewsEnabled: _, ...oldSettings } = settings;
     void _;
-    await f.t
-      .withIdentity({ subject: f.userId })
-      .mutation(api.repositories.mutation.updateSettings, {
-        repositoryId: f.repositoryId,
-        settings: oldSettings,
-      });
+    await (
+      await asUser(f.t, f.userId)
+    ).mutation(api.repositories.mutation.updateSettings, {
+      repositoryId: f.repositoryId,
+      settings: oldSettings,
+    });
     expect(
       (await f.t.run((ctx) => ctx.db.get(f.repositoryId)))?.settings
         .pullRequestReviewsEnabled,
@@ -1324,12 +1324,13 @@ describe("PR review durable lifecycle", () => {
     const f = await fixture();
     const other = await f.t.run((ctx) => ctx.db.insert("users", {}));
     await expect(
-      f.t
-        .withIdentity({ subject: other })
-        .mutation(api.repositories.mutation.updateSettings, {
+      (await asUser(f.t, other)).mutation(
+        api.repositories.mutation.updateSettings,
+        {
           repositoryId: f.repositoryId,
           settings,
-        }),
+        },
+      ),
     ).rejects.toThrow("unauthorized");
   });
 });
@@ -1348,7 +1349,7 @@ describe("open pull requests when reviews turn on", () => {
         settings: { ...settings, pullRequestReviewsEnabled: false },
       }),
     );
-    const owner = f.t.withIdentity({ subject: f.userId });
+    const owner = await asUser(f.t, f.userId);
     for (let i = 0; i < 2; i++)
       await owner.mutation(api.repositories.mutation.updateSettings, {
         repositoryId: f.repositoryId,
@@ -1419,7 +1420,7 @@ describe("open pull requests when reviews turn on", () => {
   });
   it("starts at most one catch-up an hour, however often reviews toggle", async () => {
     const f = await fixture();
-    const owner = f.t.withIdentity({ subject: f.userId });
+    const owner = await asUser(f.t, f.userId);
     for (const enabled of [false, true, false, true])
       await owner.mutation(api.repositories.mutation.updateSettings, {
         repositoryId: f.repositoryId,
@@ -1429,7 +1430,7 @@ describe("open pull requests when reviews turn on", () => {
   });
   it("starts a catch-up when a repository with reviews on is reactivated", async () => {
     const f = await fixture();
-    const owner = f.t.withIdentity({ subject: f.userId });
+    const owner = await asUser(f.t, f.userId);
     await owner.mutation(api.repositories.mutation.toggleActive, {
       repositoryId: f.repositoryId,
       isActive: false,
@@ -1573,9 +1574,9 @@ describe("bot review quota protection at the live GitHub boundary", () => {
         ),
       });
       await expect(
-        f.t
-          .withIdentity({ subject: f.userId })
-          .action(api.pullRequests.action.recheck, { actionId }),
+        (await asUser(f.t, f.userId)).action(api.pullRequests.action.recheck, {
+          actionId,
+        }),
       ).rejects.toThrow("Bot-authored pull requests are not reviewed");
       expect(f.provider).not.toHaveBeenCalled();
     },
@@ -2952,9 +2953,9 @@ describe("explicit verification of failed reviews", () => {
     ).rejects.toThrow("authenticated");
     const stranger = await f.t.run((ctx) => ctx.db.insert("users", {}));
     await expect(
-      f.t
-        .withIdentity({ subject: stranger })
-        .action(api.pullRequests.action.recheck, { actionId: f.failedId }),
+      (await asUser(f.t, stranger)).action(api.pullRequests.action.recheck, {
+        actionId: f.failedId,
+      }),
     ).rejects.toThrow("authorized");
     expect(access).not.toHaveBeenCalled();
   });

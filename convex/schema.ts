@@ -1,6 +1,6 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
-import { authTables } from "@convex-dev/auth/server";
+import { legacyAuthTables, usersTable } from "./users/tables";
 import { chatRecoveryTargetValidator } from "./_ai/chatRecovery";
 import { reviewBatchResultValidator } from "./pullRequests/review";
 import { reviewTraceStepValidator } from "./pullRequests/records";
@@ -1855,6 +1855,7 @@ const applicationTables = {
 };
 
 export default defineSchema({
-  ...authTables,
+  users: usersTable,
+  ...legacyAuthTables,
   ...applicationTables,
 });

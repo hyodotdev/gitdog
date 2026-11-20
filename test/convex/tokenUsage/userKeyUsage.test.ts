@@ -29,6 +29,7 @@ import {
   rebuildUsageTotalsHour,
 } from "../../../convex/tokenUsage/totals";
 import schema from "../../../convex/schema";
+import { asUser } from "../../helpers/auth";
 
 const modules = {
   "../../../convex/_generated/api.ts": () =>
@@ -928,7 +929,7 @@ describe("usage reporting for user keys", () => {
     );
     expect(totals).toEqual([expect.objectContaining({ totalTokens: 40 })]);
 
-    const as = t.withIdentity({ subject: `${fixture.userId}|session` });
+    const as = await asUser(t, fixture.userId);
     const monthly = await as.query(
       api.tokenUsage.query.getCurrentMonthUsage,
       {},
@@ -1008,7 +1009,7 @@ describe("usage reporting for user keys", () => {
       });
     });
 
-    const as = t.withIdentity({ subject: `${fixture.userId}|session` });
+    const as = await asUser(t, fixture.userId);
     const usage = await as.query(api.tokenUsage.query.getUserKeyUsage, {});
     expect(usage).toMatchObject({
       isPartial: false,
@@ -1074,7 +1075,7 @@ describe("usage reporting for user keys", () => {
 
     // Another account sees none of it.
     const otherUser = await t.run(async (ctx) => ctx.db.insert("users", {}));
-    const other = t.withIdentity({ subject: `${otherUser}|session` });
+    const other = await asUser(t, otherUser);
     await expect(
       other.query(api.tokenUsage.query.getTicketUsage, {
         ticketId: fixture.ticketId,
@@ -1142,7 +1143,7 @@ describe("round 3 provider key state", () => {
     await expect(
       resolveGenerationProvider(actionCtx(t), { userId: fixture.userId }),
     ).rejects.toMatchObject({ code: "unreadable" });
-    const as = t.withIdentity({ subject: `${fixture.userId}|session` });
+    const as = await asUser(t, fixture.userId);
     await expect(as.query(api.providerApiKeys.query.list, {})).resolves.toEqual(
       [expect.objectContaining({ readable: false, status: "active" })],
     );
@@ -1161,7 +1162,7 @@ describe("round 3 provider key state", () => {
     await expect(
       resolveGenerationProvider(actionCtx(t), { userId: fixture.userId }),
     ).rejects.toMatchObject({ code: "service_unavailable" });
-    const as = t.withIdentity({ subject: `${fixture.userId}|session` });
+    const as = await asUser(t, fixture.userId);
     await expect(as.query(api.providerApiKeys.query.list, {})).resolves.toEqual(
       [expect.objectContaining({ serviceUnavailable: true, readable: true })],
     );
@@ -1229,7 +1230,7 @@ describe("round 4 server key expectations", () => {
     const correctKey = process.env.BYOK_ENCRYPTION_KEY;
     process.env.BYOK_ENCRYPTION_KEY = btoa("w".repeat(32));
     vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const as = t.withIdentity({ subject: `${fixture.userId}|session` });
+    const as = await asUser(t, fixture.userId);
 
     await expect(
       resolveGenerationProvider(actionCtx(t), { userId: fixture.userId }),
@@ -1267,7 +1268,7 @@ describe("round 4 server key expectations", () => {
       internal.providerApiKeys.internalMutation.setExpectedEncryptionKeyId,
       { keyId: newKeyId },
     );
-    const as = t.withIdentity({ subject: `${fixture.userId}|session` });
+    const as = await asUser(t, fixture.userId);
     // Keys saved under the old server key must be entered again.
     await expect(as.query(api.providerApiKeys.query.list, {})).resolves.toEqual(
       [expect.objectContaining({ serviceUnavailable: false, readable: false })],

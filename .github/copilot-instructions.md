@@ -70,7 +70,7 @@
 - Always use `getAuthUserId(ctx)` to check authentication:
 
   ```typescript
-  import { getAuthUserId } from "@convex-dev/auth/server";
+  import { getAuthUserId } from "../_utils/auth";
 
   export const myFunction = query({
     args: {},

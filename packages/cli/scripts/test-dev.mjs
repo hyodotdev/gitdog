@@ -146,11 +146,35 @@ async function insert(table, documents) {
   matches.forEach((row) => owned.add(row._id));
   return matches;
 }
+const SESSION_SECONDS = 30 * 24 * 60 * 60;
+/** Mint a real @convex-dev/auth session for userId in the core component. */
 async function session(role, userId) {
-  const result = await admin("auth:store", {
-    args: { type: "signIn", userId, generateTokens: true },
-  });
-  assert.equal(typeof result.tokens?.token, "string");
+  const minted = await exec(
+    "bunx",
+    [
+      "convex",
+      "run",
+      "--deployment",
+      deployment,
+      "--component",
+      "auth",
+      "public:_internal_dangerous_signIn",
+      JSON.stringify({
+        claims: { method: "github", profile: {} },
+        componentPath: "authGithub",
+        userId,
+        accessTokenTtlSeconds: 60 * 60,
+        refreshInactivityTimeoutSeconds: SESSION_SECONDS,
+        sessionMaxLifetimeSeconds: SESSION_SECONDS,
+      }),
+    ],
+    { cwd: web, env, timeout: 60000 },
+  );
+  const bundle = JSON.parse(minted.stdout);
+  assert.equal(typeof bundle.accessToken, "string");
+  const result = {
+    tokens: { token: bundle.accessToken, refreshToken: bundle.refreshToken },
+  };
   const directory = join(privateRoot, role);
   const store = new SessionStore();
   Object.defineProperty(store, "path", {

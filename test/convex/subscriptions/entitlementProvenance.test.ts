@@ -9,6 +9,7 @@ import {
   hasTrustedProEntitlement,
 } from "../../../convex/subscriptions/entitlement";
 import schema from "../../../convex/schema";
+import { asUser } from "../../helpers/auth";
 
 const modules = {
   "../../../convex/_generated/api.ts": () =>
@@ -121,9 +122,7 @@ describe("trusted Pro entitlement provenance", () => {
     vi.setSystemTime(new Date("2026-07-20T12:34:56.789Z"));
     const t = convexTest(schema, modules);
     const userId = await t.run((ctx) => ctx.db.insert("users", {}));
-    const authenticated = t.withIdentity({
-      subject: `${userId}|test-session`,
-    });
+    const authenticated = await asUser(t, userId);
 
     await expect(
       authenticated.query(api.subscriptions.query.getCurrent, {}),
@@ -164,9 +163,7 @@ describe("trusted Pro entitlement provenance", () => {
       });
       return userId;
     });
-    const authenticated = t.withIdentity({
-      subject: `${userId}|test-session`,
-    });
+    const authenticated = await asUser(t, userId);
 
     await expect(
       authenticated.query(api.subscriptions.query.calculateOverage, {}),
@@ -219,9 +216,7 @@ describe("trusted Pro entitlement provenance", () => {
       });
       return userId;
     });
-    const authenticated = t.withIdentity({
-      subject: `${userId}|test-session`,
-    });
+    const authenticated = await asUser(t, userId);
 
     await expect(
       authenticated.query(api.subscriptions.query.getCurrent, {}),

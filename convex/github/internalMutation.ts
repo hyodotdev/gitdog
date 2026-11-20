@@ -2,10 +2,8 @@ import { internalMutation, type MutationCtx } from "../_generated/server";
 import { v } from "convex/values";
 import { internal } from "../_generated/api";
 import { getExactGitHubInstallation } from "./installationAccess";
-import {
-  readLinkedGitHubAccountId,
-  saveInstallationAttestation,
-} from "./oauthInstallationAttestation";
+import { saveInstallationAttestation } from "./oauthInstallationAttestation";
+import { readLinkedGitHubAccountId } from "../users/githubAccount";
 import {
   getInstallationWebhookStateRetryDelayMs,
   INSTALLATION_WEBHOOK_STATE_ATTEMPT_LEASE_MS,
