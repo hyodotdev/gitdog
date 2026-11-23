@@ -199,4 +199,7 @@ instead of opening a public issue.
 
 ## License
 
-This repository is currently marked `UNLICENSED` in `package.json`.
+Copyright (c) 2026 hyodotdev. Gitdog is licensed under the
+[GNU Affero General Public License v3.0](LICENSE) (`AGPL-3.0-only`). If you run a
+modified version as a network service, you must offer its users the
+corresponding source code.

@@ -8,7 +8,8 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "engines": {
     "node": ">=22.14.0"
@@ -23,7 +24,7 @@
   "bugs": {
     "url": "https://github.com/hyodotdev/gitdog/issues"
   },
-  "license": "UNLICENSED",
+  "license": "AGPL-3.0-only",
   "keywords": [
     "gitdog",
     "github",

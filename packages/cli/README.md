@@ -82,3 +82,5 @@ files out of Git.
 [Command reference](https://github.com/hyodotdev/gitdog/blob/main/packages/cli/docs/REFERENCE.md)
 · [Gitdog](https://gitdog.dev)
 · [Report an issue](https://github.com/hyodotdev/gitdog/issues)
+
+Licensed under [AGPL-3.0-only](https://github.com/hyodotdev/gitdog/blob/main/LICENSE).

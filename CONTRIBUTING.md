@@ -106,4 +106,5 @@ Please do not open public issues for security problems. Email
 
 ## License
 
-This repository is currently marked `UNLICENSED` in `package.json`.
+By contributing, you agree that your contributions are licensed under the
+[GNU Affero General Public License v3.0](LICENSE) (`AGPL-3.0-only`).
