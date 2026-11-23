@@ -1,21 +1,36 @@
 version: 2
+# Monthly, batched and delayed: at most one PR per group each month, and only
+# releases that have been out long enough to be trusted. Security updates
+# still open as soon as an advisory lands, batched into one PR.
 updates:
   - package-ecosystem: bun
     directory: /
     schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
+      interval: monthly
+    open-pull-requests-limit: 3
+    cooldown:
+      default-days: 7
+      semver-major-days: 30
     ignore:
       # typescript-eslint supports TypeScript below 6.1 only.
       - dependency-name: typescript
         versions: [">=6.1.0"]
     groups:
       minor-and-patch:
+        applies-to: version-updates
         update-types: [minor, patch]
+      major:
+        applies-to: version-updates
+        update-types: [major]
+      security:
+        applies-to: security-updates
+        patterns: ["*"]
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
+    cooldown:
+      default-days: 7
     groups:
       actions:
         patterns: ["*"]
