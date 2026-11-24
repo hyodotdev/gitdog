@@ -35,7 +35,8 @@ type ModelOption = FunctionReturnType<
   typeof api.providerApiKeys.query.models
 >[KeyProvider][number];
 
-// Which saved key reviews run on: Claude first, OpenAI when Claude cannot.
+// Which saved key reviews run on: the owner's chosen key first, the other
+// as its backup.
 type KeyRole = "primary" | "backup";
 
 const PROVIDERS: Record<
@@ -111,6 +112,7 @@ function ProviderKeyCard({
   editing,
   onEditingChange,
   onMoveToOther,
+  otherKey,
   role,
   periodCost,
 }: {
@@ -126,6 +128,8 @@ function ProviderKeyCard({
   onEditingChange: (editing: boolean) => void;
   // Set when the other card is empty and can take a mis-pasted key.
   onMoveToOther?: () => void;
+  // Whether removing this key leaves reviews on the other one.
+  otherKey: "working" | "broken" | "none";
 }) {
   const { t } = useTranslation();
   const relativeTime = useRelativeTime();
@@ -481,7 +485,10 @@ function ProviderKeyCard({
           )}
         >
           <span className="flex-1">
-            {t("profile.providerKeys.confirmRemove", { provider: label })}
+            {t(REMOVE_CONFIRMATIONS[otherKey], {
+              provider: label,
+              other: otherLabel,
+            })}
           </span>
           <button
             type="button"
@@ -557,11 +564,125 @@ function ProviderKeyCard({
   );
 }
 
+const REMOVE_CONFIRMATIONS = {
+  working: "profile.providerKeys.confirmRemoveKeepOther",
+  broken: "profile.providerKeys.confirmRemoveOtherBroken",
+  none: "profile.providerKeys.confirmRemove",
+} as const;
+
+/**
+ * With both keys saved, which one runs reviews first; the other takes over
+ * when it runs out of credit or is rejected.
+ */
+function KeyOrderChoice({ primaryProvider }: { primaryProvider: KeyProvider }) {
+  const { t } = useTranslation();
+  // The choice and role badges move at once; Convex rolls back on failure.
+  const setPriority = useMutation(
+    api.providerApiKeys.mutation.setPriority,
+  ).withOptimisticUpdate((store, { primaryProvider }) =>
+    store.setQuery(api.providerApiKeys.query.priority, {}, { primaryProvider }),
+  );
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const choose = async (provider: KeyProvider) => {
+    if (busy) return;
+    setBusy(true);
+    setSaved(false);
+    setFailed(false);
+    try {
+      await setPriority({ primaryProvider: provider });
+      setSaved(true);
+    } catch {
+      setFailed(true);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    // Inputs stay enabled while saving so keyboard focus is not dropped.
+    <fieldset
+      aria-busy={busy}
+      className={cn(
+        "mb-4 p-4 flex flex-col gap-2",
+        "border border-gray-200 dark:border-gray-800",
+      )}
+    >
+      <legend className={cn("px-1 text-sm font-medium")}>
+        {t("profile.providerKeys.order.label")}
+      </legend>
+      {(["anthropic", "openai"] as const).map((provider) => {
+        const selected = provider === primaryProvider;
+        return (
+          <label
+            key={provider}
+            className={cn(
+              choiceClass,
+              "gap-3 px-3 py-2",
+              selected
+                ? "border-black dark:border-white"
+                : "border-gray-200 hover:border-gray-400 dark:border-gray-800 dark:hover:border-gray-600",
+            )}
+          >
+            <input
+              type="radio"
+              name="key-order"
+              value={provider}
+              checked={selected}
+              onChange={() => void choose(provider)}
+              className="sr-only"
+            />
+            <SquareMark checked={selected} />
+            <span className="font-medium">
+              {t("profile.providerKeys.order.option", {
+                first: PROVIDERS[provider].label,
+                second: PROVIDERS[OTHER[provider]].label,
+              })}
+              {provider === "anthropic" && (
+                <span className={cn("ml-2 text-xs font-normal text-gray-500")}>
+                  {t("profile.providerKeys.order.default")}
+                </span>
+              )}
+            </span>
+          </label>
+        );
+      })}
+      <p
+        aria-live="polite"
+        className={cn("text-xs text-gray-600 dark:text-gray-400")}
+      >
+        {t("profile.providerKeys.order.hint")}
+        {saved && ` ${t("profile.providerKeys.order.saved")}`}
+      </p>
+      {failed && (
+        <div
+          role="alert"
+          className={cn(
+            "flex items-start gap-2 p-3 text-sm",
+            "border border-black text-black",
+            "dark:border-white dark:text-white",
+          )}
+        >
+          <AlertTriangle
+            size={16}
+            className="mt-0.5 shrink-0"
+            aria-hidden="true"
+          />
+          <span>{t("profile.providerKeys.order.saveFailed")}</span>
+        </div>
+      )}
+    </fieldset>
+  );
+}
+
 export function ProviderKeysSection() {
   const { t } = useTranslation();
   const keys = useQuery(api.providerApiKeys.query.list);
   const models = useQuery(api.providerApiKeys.query.models);
   const usage = useQuery(api.tokenUsage.query.getUserKeyUsage);
+  // Signed-out callers get null; Claude first is the default order.
+  const priority = useQuery(api.providerApiKeys.query.priority);
+  const primaryProvider = priority?.primaryProvider ?? "anthropic";
   const [drafts, setDrafts] = useState<Record<KeyProvider, string>>({
     anthropic: "",
     openai: "",
@@ -573,13 +694,16 @@ export function ProviderKeysSection() {
 
   const savedKey = (provider: KeyProvider) =>
     keys?.find((key) => key.provider === provider);
-  const { activeKey, backupKey } = summarizeProviderKeys(keys);
+  const { activeKey, backupKey } = summarizeProviderKeys(keys, primaryProvider);
   const roleOf = (provider: KeyProvider): KeyRole | undefined =>
     activeKey?.provider === provider
       ? "primary"
       : backupKey?.provider === provider
         ? "backup"
         : undefined;
+  // Whether reviews keep running on this key once the other is removed.
+  const otherKeyState = (provider: KeyProvider) =>
+    roleOf(provider) ? "working" : savedKey(provider) ? "broken" : "none";
   const periodCostOf = (provider: KeyProvider) => {
     const cents = usage?.models
       .filter((model) => model.provider === provider)
@@ -635,37 +759,43 @@ export function ProviderKeysSection() {
           </li>
         ))}
       </ul>
-      {keys === undefined ? (
+      {keys === undefined || priority === undefined ? (
         <LoadingIndicator />
       ) : (
-        <div className={cn("grid gap-4 md:grid-cols-2")}>
-          {(["anthropic", "openai"] as const).map((provider) => {
-            const other = OTHER[provider];
-            const otherIsEmpty =
-              !savedKey(other) && drafts[other].trim() === "";
-            return (
-              <ProviderKeyCard
-                key={provider}
-                provider={provider}
-                saved={savedKey(provider)}
-                models={models?.[provider]}
-                role={roleOf(provider)}
-                periodCost={periodCostOf(provider)}
-                draft={drafts[provider]}
-                onDraftChange={(value) =>
-                  setDrafts((current) => ({ ...current, [provider]: value }))
-                }
-                editing={editing[provider]}
-                onEditingChange={(value) =>
-                  setEditing((current) => ({ ...current, [provider]: value }))
-                }
-                onMoveToOther={
-                  otherIsEmpty ? () => moveDraft(provider) : undefined
-                }
-              />
-            );
-          })}
-        </div>
+        <>
+          {savedKey("anthropic") && savedKey("openai") && (
+            <KeyOrderChoice primaryProvider={primaryProvider} />
+          )}
+          <div className={cn("grid gap-4 md:grid-cols-2")}>
+            {(["anthropic", "openai"] as const).map((provider) => {
+              const other = OTHER[provider];
+              const otherIsEmpty =
+                !savedKey(other) && drafts[other].trim() === "";
+              return (
+                <ProviderKeyCard
+                  key={provider}
+                  provider={provider}
+                  saved={savedKey(provider)}
+                  models={models?.[provider]}
+                  role={roleOf(provider)}
+                  periodCost={periodCostOf(provider)}
+                  draft={drafts[provider]}
+                  onDraftChange={(value) =>
+                    setDrafts((current) => ({ ...current, [provider]: value }))
+                  }
+                  editing={editing[provider]}
+                  onEditingChange={(value) =>
+                    setEditing((current) => ({ ...current, [provider]: value }))
+                  }
+                  onMoveToOther={
+                    otherIsEmpty ? () => moveDraft(provider) : undefined
+                  }
+                  otherKey={otherKeyState(other)}
+                />
+              );
+            })}
+          </div>
+        </>
       )}
     </section>
   );

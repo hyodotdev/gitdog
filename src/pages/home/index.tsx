@@ -24,8 +24,16 @@ export function HomePage() {
     api.providerApiKeys.query.list,
     currentUser ? {} : "skip",
   );
-  const { keyChecksUnavailable, activeKey } =
-    summarizeProviderKeys(providerKeys);
+  const keyPriority = useQuery(
+    api.providerApiKeys.query.priority,
+    currentUser ? {} : "skip",
+  );
+  // The provider is named only once the order is known, so it never shows
+  // the wrong one while loading.
+  const { keyChecksUnavailable, activeKey } = summarizeProviderKeys(
+    keyPriority === undefined ? undefined : providerKeys,
+    keyPriority?.primaryProvider ?? "anthropic",
+  );
   const navigate = useNavigate();
 
   // Show loading while checking auth

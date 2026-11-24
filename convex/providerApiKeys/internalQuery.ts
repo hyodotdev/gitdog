@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { internalQuery } from "../_generated/server";
 import { readEncryptionState } from "./encryptionState";
+import { readPrimaryProvider } from "./priority";
 
 export const getEncryptionState = internalQuery({
   args: {},
@@ -14,6 +15,12 @@ export const getEncryptedKeys = internalQuery({
       .query("providerApiKeys")
       .withIndex("by_user_and_provider", (q) => q.eq("userId", args.userId))
       .collect(),
+});
+
+/** Which of the owner's keys generation tries first when both work. */
+export const getPrimaryProvider = internalQuery({
+  args: { userId: v.id("users") },
+  handler: async (ctx, args) => await readPrimaryProvider(ctx, args.userId),
 });
 
 export const getEncryptedKey = internalQuery({

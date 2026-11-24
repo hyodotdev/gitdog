@@ -569,7 +569,7 @@
       "title": "Your API keys",
       "runsOn": "Reviews run on your {{provider}} key ••••{{last4}}",
       "effort": "{{effort}} effort",
-      "backup": "If it runs out of credit, your {{provider}} key takes over with {{model}}.",
+      "backup": "If it is rejected or runs out of credit, your {{provider}} key takes over with {{model}}.",
       "noKey": "No key is saved, so reviews run on Gitdog tokens.",
       "noWorkingKey": "None of your saved keys works right now, so reviews stop until you fix or replace one.",
       "keyChecksUnavailable": "Your saved keys can't be used right now because of a temporary Gitdog problem. Reviews resume once it is fixed.",
@@ -650,13 +650,23 @@
       },
       "valueProp": "Run Gitdog on your own Anthropic or OpenAI key — that usage never touches your Gitdog tokens.",
       "bullets": {
-        "order": "Claude runs first; OpenAI takes over if Claude is out of credit.",
+        "order": "With both keys you choose which runs first; the other takes over if it is rejected or out of credit. With one key, only that key runs.",
         "noFallback": "If your key fails, Gitdog pauses and tells you — it never switches to its own keys.",
         "encrypted": "Keys are encrypted and never shown again; only the last 4 characters appear."
       },
       "getKey": "Get a key",
       "checked": "Checked {{time}}",
       "confirmRemove": "Remove your {{provider}} key? Gitdog will use its own tokens again.",
+      "confirmRemoveKeepOther": "Remove your {{provider}} key? Reviews will run only on your {{other}} key.",
+      "confirmRemoveOtherBroken": "Remove your {{provider}} key? Your {{other}} key isn't working right now, so reviews pause until it does.",
+      "order": {
+        "label": "Which key runs reviews first?",
+        "option": "{{first}} first, {{second}} as backup",
+        "hint": "The other key takes over only when the first runs out of credit or is rejected.",
+        "default": "Default",
+        "saved": "Saved",
+        "saveFailed": "The key order could not be saved. Try again."
+      },
       "moveTo": "Move to {{provider}}",
       "modelLabel": "Model",
       "effortLabel": "Effort",

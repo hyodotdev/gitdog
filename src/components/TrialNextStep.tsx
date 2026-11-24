@@ -14,7 +14,11 @@ export function TrialNextStep({ tokensLeft }: { tokensLeft: number }) {
   const navigate = useNavigate();
   const keys = useQuery(api.providerApiKeys.query.list);
   if (keys === undefined) return null;
-  const { keyChecksUnavailable, activeKey } = summarizeProviderKeys(keys);
+  // Only whether some key works matters here, not which runs first.
+  const { keyChecksUnavailable, activeKey } = summarizeProviderKeys(
+    keys,
+    "anthropic",
+  );
   const hasUsableKey = activeKey !== undefined;
   const exhausted = tokensLeft <= 0 && !hasUsableKey && !keyChecksUnavailable;
 

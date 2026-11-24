@@ -58,11 +58,20 @@ export function UserKeyUsageSection() {
   const relativeTime = useRelativeTime();
   const keys = useQuery(api.providerApiKeys.query.list);
   const usage = useQuery(api.tokenUsage.query.getUserKeyUsage);
-  if (keys === undefined || usage === undefined || usage === null) return null;
+  const keyPriority = useQuery(api.providerApiKeys.query.priority);
+  if (
+    keys === undefined ||
+    keyPriority === undefined ||
+    usage === undefined ||
+    usage === null
+  )
+    return null;
   if (keys.length === 0 && usage.totals.requests === 0) return null;
 
-  const { keyChecksUnavailable, activeKey, backupKey } =
-    summarizeProviderKeys(keys);
+  const { keyChecksUnavailable, activeKey, backupKey } = summarizeProviderKeys(
+    keys,
+    keyPriority?.primaryProvider ?? "anthropic",
+  );
   // Saved keys never fall back to Gitdog tokens: reviews stop until one works.
   const inactiveKeyMessage =
     keys.length === 0

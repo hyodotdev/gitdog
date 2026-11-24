@@ -52,6 +52,8 @@ const modules = {
     import("../../../convex/tokenUsage/query"),
   "../../../convex/providerApiKeys/query.ts": () =>
     import("../../../convex/providerApiKeys/query"),
+  "../../../convex/providerApiKeys/mutation.ts": () =>
+    import("../../../convex/providerApiKeys/mutation"),
 };
 
 const ANTHROPIC_KEY = `sk-ant-api03-${"a".repeat(40)}`;
@@ -764,6 +766,227 @@ describe("provider resolution with user keys", () => {
     expect(keys.find((key) => key.provider === "anthropic")?.status).toBe(
       "out_of_credit",
     );
+  });
+
+  it.each([
+    [
+      "anthropic",
+      ANTHROPIC_KEY,
+      () =>
+        Response.json(
+          {
+            error: {
+              type: "invalid_request_error",
+              message: "Your credit balance is too low",
+            },
+          },
+          { status: 400 },
+        ),
+    ],
+    [
+      "openai",
+      `Bearer ${OPENAI_KEY}`,
+      () =>
+        Response.json(
+          { error: { type: "insufficient_quota", code: "insufficient_quota" } },
+          { status: 429 },
+        ),
+    ],
+  ] as const)(
+    "uses a lone %s key directly, with no fallback when it runs out of credit",
+    async (keyProvider, sentKey, outOfCredit) => {
+      const t = convexTest(schema, modules);
+      const fixture = await insertFixture(t);
+      await saveKey(
+        t,
+        fixture.userId,
+        keyProvider,
+        keyProvider === "anthropic" ? ANTHROPIC_KEY : OPENAI_KEY,
+      );
+      const provider = await resolveGenerationProvider(actionCtx(t), {
+        userId: fixture.userId,
+      });
+      expect(provider).not.toBeInstanceOf(CreditFallbackProvider);
+      expect(provider.providerId).toBe(keyProvider);
+      const fetch = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValue(outOfCredit());
+      await expect(provider.chat(question)).rejects.toMatchObject({
+        name: "UserApiKeyError",
+        code: "out_of_credit",
+      });
+      expect(sentKeys(fetch)).toEqual([sentKey]);
+    },
+  );
+
+  it("runs the key the owner chose first and falls back to the other", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await insertFixture(t);
+    await saveKey(t, fixture.userId, "anthropic", ANTHROPIC_KEY);
+    await saveKey(t, fixture.userId, "openai", OPENAI_KEY);
+    const owner = await asUser(t, fixture.userId);
+    await owner.mutation(api.providerApiKeys.mutation.setPriority, {
+      primaryProvider: "openai",
+    });
+    const provider = await resolveGenerationProvider(actionCtx(t), {
+      userId: fixture.userId,
+    });
+    expect(provider).toBeInstanceOf(CreditFallbackProvider);
+    expect(provider.providerId).toBe("openai");
+    const fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        Response.json(
+          { error: { type: "insufficient_quota", code: "insufficient_quota" } },
+          { status: 429 },
+        ),
+      )
+      .mockResolvedValueOnce(claudeResponse());
+    await expect(provider.chat(question)).resolves.toMatchObject({
+      content: "Claude answer",
+    });
+    expect(sentKeys(fetch)).toEqual([`Bearer ${OPENAI_KEY}`, ANTHROPIC_KEY]);
+  });
+
+  it("runs a lone Claude key even when the owner prefers OpenAI", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await insertFixture(t);
+    await saveKey(t, fixture.userId, "anthropic", ANTHROPIC_KEY);
+    const owner = await asUser(t, fixture.userId);
+    await owner.mutation(api.providerApiKeys.mutation.setPriority, {
+      primaryProvider: "openai",
+    });
+    const provider = await resolveGenerationProvider(actionCtx(t), {
+      userId: fixture.userId,
+    });
+    expect(provider).not.toBeInstanceOf(CreditFallbackProvider);
+    expect(provider.providerId).toBe("anthropic");
+  });
+
+  it("hands an OpenAI-first owner to Claude when OpenAI is rejected or skipped", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await insertFixture(t);
+    await saveKey(t, fixture.userId, "anthropic", ANTHROPIC_KEY);
+    await saveKey(t, fixture.userId, "openai", OPENAI_KEY);
+    const owner = await asUser(t, fixture.userId);
+    await owner.mutation(api.providerApiKeys.mutation.setPriority, {
+      primaryProvider: "openai",
+    });
+    // Gitdog's Claude deadline never reorders owner keys.
+    vi.spyOn(Date, "now").mockReturnValue(CLAUDE_API_ENDS_AT + 1_000);
+    const provider = await resolveGenerationProvider(actionCtx(t), {
+      userId: fixture.userId,
+    });
+    const fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response("{}", { status: 401 }))
+      .mockResolvedValueOnce(claudeResponse());
+    await expect(provider.chat(question)).resolves.toMatchObject({
+      content: "Claude answer",
+    });
+    expect(sentKeys(fetch)).toEqual([`Bearer ${OPENAI_KEY}`, ANTHROPIC_KEY]);
+
+    // The rejected OpenAI key is now skipped, so Claude runs alone.
+    const next = await resolveGenerationProvider(actionCtx(t), {
+      userId: fixture.userId,
+    });
+    expect(next).not.toBeInstanceOf(CreditFallbackProvider);
+    expect(next.providerId).toBe("anthropic");
+  });
+
+  it("names the owner's first key when no saved key works", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await insertFixture(t);
+    await saveKey(t, fixture.userId, "anthropic", ANTHROPIC_KEY);
+    await saveKey(t, fixture.userId, "openai", OPENAI_KEY);
+    await t.run(async (ctx) => {
+      for (const key of await ctx.db.query("providerApiKeys").collect())
+        await ctx.db.patch(key._id, { status: "invalid" });
+    });
+    const owner = await asUser(t, fixture.userId);
+    await owner.mutation(api.providerApiKeys.mutation.setPriority, {
+      primaryProvider: "openai",
+    });
+    await expect(
+      resolveGenerationProvider(actionCtx(t), { userId: fixture.userId }),
+    ).rejects.toMatchObject({ code: "invalid", keyProvider: "openai" });
+  });
+
+  it("names the owner's first key when both keys can no longer be read", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await insertFixture(t);
+    await saveKey(t, fixture.userId, "anthropic", ANTHROPIC_KEY);
+    await saveKey(t, fixture.userId, "openai", OPENAI_KEY);
+    await t.run(async (ctx) => {
+      for (const key of await ctx.db.query("providerApiKeys").collect())
+        await ctx.db.patch(key._id, { ciphertext: btoa("corrupt-ciphertext") });
+    });
+    const owner = await asUser(t, fixture.userId);
+    await owner.mutation(api.providerApiKeys.mutation.setPriority, {
+      primaryProvider: "openai",
+    });
+    await expect(
+      resolveGenerationProvider(actionCtx(t), { userId: fixture.userId }),
+    ).rejects.toMatchObject({ code: "unreadable", keyProvider: "openai" });
+  });
+
+  it("retries an OpenAI-first key an hour after it ran out of credit", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await insertFixture(t);
+    await saveKey(t, fixture.userId, "anthropic", ANTHROPIC_KEY);
+    await saveKey(t, fixture.userId, "openai", OPENAI_KEY);
+    const owner = await asUser(t, fixture.userId);
+    await owner.mutation(api.providerApiKeys.mutation.setPriority, {
+      primaryProvider: "openai",
+    });
+    await t.mutation(
+      internal.providerApiKeys.internalMutation.recordKeyFailure,
+      {
+        userId: fixture.userId,
+        provider: "openai",
+        keyIv: await savedIv(t, fixture.userId, "openai"),
+        code: "out_of_credit",
+      },
+    );
+    const skipped = await resolveGenerationProvider(actionCtx(t), {
+      userId: fixture.userId,
+    });
+    expect(skipped).not.toBeInstanceOf(CreditFallbackProvider);
+    expect(skipped.providerId).toBe("anthropic");
+
+    vi.spyOn(Date, "now").mockReturnValue(
+      Date.now() + OUT_OF_CREDIT_RETRY_MS + 1_000,
+    );
+    const retried = await resolveGenerationProvider(actionCtx(t), {
+      userId: fixture.userId,
+    });
+    expect(retried).toBeInstanceOf(CreditFallbackProvider);
+    expect(retried.providerId).toBe("openai");
+  });
+
+  it("keeps Claude first until the owner changes the order", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await insertFixture(t);
+    const owner = await asUser(t, fixture.userId);
+    const priority = () => owner.query(api.providerApiKeys.query.priority);
+
+    expect(await priority()).toEqual({ primaryProvider: "anthropic" });
+    for (const primaryProvider of ["openai", "anthropic"] as const) {
+      await owner.mutation(api.providerApiKeys.mutation.setPriority, {
+        primaryProvider,
+      });
+      expect(await priority()).toEqual({ primaryProvider });
+    }
+    const rows = await t.run((ctx) =>
+      ctx.db.query("providerKeyPreferences").collect(),
+    );
+    expect(rows).toHaveLength(1);
+    expect(await t.query(api.providerApiKeys.query.priority)).toBeNull();
+    await expect(
+      t.mutation(api.providerApiKeys.mutation.setPriority, {
+        primaryProvider: "openai",
+      }),
+    ).rejects.toThrow(/Sign in/);
   });
 
   it("fails a rejected key without touching Gitdog's keys", async () => {
