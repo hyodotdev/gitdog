@@ -237,7 +237,12 @@
   {
     "path": "providerApiKeys/mutation:remove",
     "kind": "mutation",
-    "args": "{\n    provider: v.union(v.literal(\"anthropic\"), v.literal(\"openai\")),\n  }"
+    "args": "{ provider: v.union(v.literal(\"anthropic\"), v.literal(\"openai\")) }"
+  },
+  {
+    "path": "providerApiKeys/mutation:setPriority",
+    "kind": "mutation",
+    "args": "{ primaryProvider: v.union(v.literal(\"anthropic\"), v.literal(\"openai\")) }"
   },
   {
     "path": "providerApiKeys/query:list",
@@ -246,6 +251,11 @@
   },
   {
     "path": "providerApiKeys/query:models",
+    "kind": "query",
+    "args": "{}"
+  },
+  {
+    "path": "providerApiKeys/query:priority",
     "kind": "query",
     "args": "{}"
   },

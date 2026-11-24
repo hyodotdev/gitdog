@@ -57,6 +57,13 @@ const applicationTables = {
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index("by_user_and_provider", ["userId", "provider"]),
+  // Which saved key generation tries first when the owner has both; the
+  // other one takes over when it runs out of credit. No row: Claude first.
+  providerKeyPreferences: defineTable({
+    userId: v.id("users"),
+    primaryProvider: v.union(v.literal("anthropic"), v.literal("openai")),
+    updatedAt: v.number(),
+  }).index("by_user", ["userId"]),
   // The id of the encryption key provider keys were first saved with. An
   // environment key with another id is a server misconfiguration, not a
   // problem with users' keys.

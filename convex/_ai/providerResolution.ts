@@ -14,6 +14,7 @@ import {
   type ChatCompletionResult,
   type ChatMessage,
 } from "./model";
+import { providerOrder } from "../providerApiKeys/priority";
 import { isUsableProviderKey } from "../providerApiKeys/usability";
 import { ChatProviderRequestError } from "./providerErrors";
 import {
@@ -213,14 +214,19 @@ async function userKeyLeaf(
 /**
  * Pick the provider for generation billed to `userId` (the repository
  * owner). Saved keys always win; when keys are saved but none is usable the
- * request fails instead of falling back to Gitdog's keys.
+ * request fails instead of falling back to Gitdog's keys. With one working
+ * key only that key runs. With two, the owner's chosen key runs first and
+ * the other takes over when it runs out of credit or is rejected.
  */
 export async function resolveGenerationProvider(
   ctx: ActionCtx,
   args: { userId: Id<"users">; ticketActionId?: Id<"ticketActions"> },
 ): Promise<AiProvider> {
-  const [rows, action] = await Promise.all([
+  const [savedRows, primaryProvider, action] = await Promise.all([
     ctx.runQuery(internal.providerApiKeys.internalQuery.getEncryptedKeys, {
+      userId: args.userId,
+    }),
+    ctx.runQuery(internal.providerApiKeys.internalQuery.getPrimaryProvider, {
       userId: args.userId,
     }),
     args.ticketActionId
@@ -229,6 +235,11 @@ export async function resolveGenerationProvider(
         })
       : null,
   ]);
+  // In the owner's order, so a failure names the key that would run first.
+  const order = providerOrder(primaryProvider);
+  const rows = [...savedRows].sort(
+    (a, b) => order.indexOf(a.provider) - order.indexOf(b.provider),
+  );
   if (rows.length === 0) {
     if (action?.aiKeySource === "user")
       throw new UserApiKeyError("removed", "anthropic");
@@ -249,17 +260,17 @@ export async function resolveGenerationProvider(
   for (const row of rows) {
     if (!isUsableProviderKey(row, now)) continue;
     const leaf = await userKeyLeaf(ctx, row);
-    if (leaf === "unreadable") unreadable = row.provider;
+    if (leaf === "unreadable") unreadable ??= row.provider;
     else if (leaf === "service_unavailable") serviceUnavailable = true;
     else leaves.set(row.provider, leaf);
   }
-  const anthropic = leaves.get("anthropic");
-  const openai = leaves.get("openai");
-  if (anthropic && openai)
-    return new CreditFallbackProvider(anthropic, openai, {
+  const [first, second] = order.map((provider) => leaves.get(provider));
+  // Gitdog's Claude deadline never applies to owner keys, whichever runs first.
+  if (first && second)
+    return new CreditFallbackProvider(first, second, {
       enforceClaudeDeadline: false,
     });
-  const only = anthropic ?? openai;
+  const only = first ?? second;
   if (only) return only;
   if (serviceUnavailable)
     throw new UserApiKeyError("service_unavailable", rows[0].provider);

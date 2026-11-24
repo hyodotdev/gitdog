@@ -143,13 +143,22 @@ printf %s "$OPENAI_API_KEY" | gitdog provider-keys set openai --stdin
 gitdog provider-keys check openai
 gitdog provider-keys models                 # models and efforts you can choose
 gitdog provider-keys model anthropic claude-sonnet-5-5 --effort high  # no --effort: the model default
+gitdog provider-keys priority               # which key runs first when both are saved
+gitdog provider-keys priority openai        # run OpenAI first, Anthropic as backup
 gitdog provider-keys remove openai --yes
 ```
+
+With one key saved, only that key runs. With both, the key chosen by
+`priority` runs first (Anthropic unless you change it) and the other takes over
+only when the first runs out of credit or is rejected. Gitdog never falls back
+to its own keys while you have a key saved.
 
 `ai-keys` is an alias. Keys are never accepted as arguments, so they stay out
 of shell history; in scripts pipe them with `--stdin`. `list` shows only the
 provider, the last four characters, status (`active`, `invalid`,
-`out_of_credit`, `unreadable` or `checks_unavailable`) and when the key was last checked. `check`
+`out_of_credit`, `unreadable` or `checks_unavailable`), its role among keys
+that work right now (`primary` runs reviews, `backup` takes over; an
+out-of-credit key is retried after an hour and regains its role once it works) and when the key was last checked. `check`
 asks the provider again, for example after adding credit. Key checks are
 limited to five per account every ten minutes. Advanced `api call` refuses
 `providerApiKeys/action:save` for the same reason.

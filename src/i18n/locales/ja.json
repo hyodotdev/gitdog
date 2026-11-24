@@ -567,7 +567,7 @@
       "title": "自分の API キー",
       "runsOn": "レビューは {{provider}} キー ••••{{last4}} で実行されます",
       "effort": "推論の強さ: {{effort}}",
-      "backup": "クレジットが切れると {{provider}} キーの {{model}} が引き継ぎます。",
+      "backup": "キーが拒否されるかクレジットが切れると {{provider}} キーの {{model}} が引き継ぎます。",
       "noKey": "保存されたキーがないため、レビューは Gitdog のトークンで実行されます。",
       "noWorkingKey": "保存されたキーに今使えるものがないため、キーを直すか差し替えるまでレビューは止まります。",
       "keyChecksUnavailable": "一時的な Gitdog の問題で、保存されたキーを今は使えません。解決するとレビューは再開します。",
@@ -647,13 +647,23 @@
       },
       "valueProp": "自分のAnthropicまたはOpenAIキーでGitdogを実行 — その利用分はGitdogのトークンを使いません。",
       "bullets": {
-        "order": "まずClaudeを使い、Claudeのクレジットが尽きたらOpenAIが引き継ぎます。",
+        "order": "両方のキーがあれば、先に使うキーを選べます。そのキーが拒否されるかクレジットが尽きると、もう一方が引き継ぎます。キーが1つならそのキーだけを使います。",
         "noFallback": "キーが失敗するとGitdogは停止してお知らせします — Gitdogのキーには切り替えません。",
         "encrypted": "キーは暗号化され再表示されません。末尾4文字のみ表示されます。"
       },
       "getKey": "キーを取得",
       "checked": "{{time}}に確認",
       "confirmRemove": "{{provider}}キーを削除しますか？以後はGitdogのトークンを使います。",
+      "confirmRemoveKeepOther": "{{provider}}キーを削除しますか？以後のレビューは{{other}}キーだけで実行されます。",
+      "confirmRemoveOtherBroken": "{{provider}}キーを削除しますか？今は{{other}}キーが動作していないため、動作するまでレビューは止まります。",
+      "order": {
+        "label": "レビューで先に使うキーは？",
+        "option": "{{first}}を先に、{{second}}はバックアップ",
+        "hint": "先に使うキーのクレジットが尽きるか拒否された場合だけ、もう一方が引き継ぎます。",
+        "default": "デフォルト",
+        "saved": "保存しました",
+        "saveFailed": "キーの順序を保存できませんでした。もう一度お試しください。"
+      },
       "moveTo": "{{provider}}に移動",
       "modelLabel": "モデル",
       "effortLabel": "推論の強さ",

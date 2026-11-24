@@ -39,9 +39,13 @@ those keys instead of Gitdog's:
   5.5 bills prompts over 100K tokens at 5x and has no server-side refusal
   fallback. A new key without access to the chosen model is saved with the
   default model, and a model no longer offered falls back to the default.
-- Claude runs on the user's Anthropic key and is not affected by Gitdog's
-  Claude deadline. The user's OpenAI key is used if only it is saved, if the
-  Anthropic key is rejected, or if Claude reports exhausted credit.
+- With one working key, only that key runs: an Anthropic-only owner never
+  falls back to OpenAI and an OpenAI-only owner never falls back to Claude.
+  Claude on the user's key is not affected by Gitdog's Claude deadline.
+- With both, the owner chooses which runs first (web settings or
+  `gitdog provider-keys priority`, stored in `providerKeyPreferences`;
+  Anthropic first by default). The other key is used only if the first is
+  rejected or reports exhausted credit.
 - A key reported out of credit is skipped for an hour, or until the user
   checks it again in settings.
 - A failing user key never falls back to Gitdog's keys. The request fails with

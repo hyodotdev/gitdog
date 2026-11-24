@@ -176,7 +176,9 @@ If you bring your own provider key, this is exactly how Gitdog handles it:
   key or the provider's response to the key check.
 - **Use**: only for projects you connected to Gitdog. A request that starts on
   your key never falls back to Gitdog's key, and removing the key stops new
-  requests on it.
+  requests on it. With one key saved only that key runs; with both, the one
+  you choose runs first and the other takes over only when it is rejected or
+  out of credit.
 - **Spending**: usage on your key is billed by the provider, and Gitdog does
   not cap it. Anyone who can open issues or pull requests on a connected public
   repository can trigger generation, so set a spend limit with the provider.

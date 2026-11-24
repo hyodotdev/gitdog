@@ -516,31 +516,64 @@ export function createProgram(
   command(
     providerKeys,
     "list",
-    "List saved provider keys (provider, last 4 characters, status)",
+    "List saved provider keys (provider, last 4 characters, status, role)",
     async ({ api, ui }) => {
-      const keys = await api.call<
-        Array<{
-          provider: string;
-          last4: string;
-          status: string;
-          readable?: boolean;
-          serviceUnavailable?: boolean;
-          lastValidatedAt: number;
-          lastErrorCode: string | null;
-          modelId?: string;
-          effort?: string;
-        }>
-      >("query", "providerApiKeys/query:list");
+      const [keys, priority] = await Promise.all([
+        api.call<
+          Array<{
+            provider: string;
+            last4: string;
+            status: string;
+            readable?: boolean;
+            serviceUnavailable?: boolean;
+            lastValidatedAt: number;
+            lastErrorCode: string | null;
+            modelId?: string;
+            effort?: string;
+          }>
+        >("query", "providerApiKeys/query:list"),
+        // Without the order (an older backend, or a failed read) roles are
+        // left blank rather than guessed.
+        api
+          .call<{ primaryProvider: KeyProvider } | null>(
+            "query",
+            "providerApiKeys/query:priority",
+          )
+          .catch(() => undefined),
+      ]);
+      const status = (key: (typeof keys)[number]) =>
+        key.serviceUnavailable
+          ? "checks_unavailable"
+          : key.readable === false
+            ? "unreadable"
+            : key.status;
+      // Reviews run on the first working key in the owner's order; a second
+      // working key is the backup, as on the web.
+      const primary = priority?.primaryProvider ?? "anthropic";
+      const working = keys.filter((key) => status(key) === "active");
+      const first = working.find((key) => key.provider === primary);
+      const second = working.find((key) => key.provider !== primary);
+      const active = first ?? second;
+      const backup = first ? second : undefined;
+      const roleOf = (key: (typeof keys)[number]) => {
+        switch (true) {
+          case priority === undefined:
+            return null;
+          case key === active:
+            return "primary";
+          case key === backup:
+            return "backup";
+          default:
+            return null;
+        }
+      };
       const rows = keys.map((key) => ({
         provider: key.provider,
         key: `…${key.last4}`,
         model: key.modelId ?? null,
         effort: key.effort ?? null,
-        status: key.serviceUnavailable
-          ? "checks_unavailable"
-          : key.readable === false
-            ? "unreadable"
-            : key.status,
+        status: status(key),
+        role: roleOf(key),
         lastChecked: new Date(key.lastValidatedAt).toISOString(),
         lastError: key.lastErrorCode,
       }));
@@ -554,6 +587,7 @@ export function createProgram(
           "model",
           "effort",
           "status",
+          "role",
           "lastChecked",
           "lastError",
         ]);
@@ -622,6 +656,20 @@ export function createProgram(
   );
   command(
     providerKeys,
+    "priority [provider]",
+    "Show or choose which key runs first when both are saved (default: anthropic)",
+    async ({ api, ui }, args) => {
+      ui.output(
+        args[0] === undefined
+          ? await api.call("query", "providerApiKeys/query:priority")
+          : await api.call("mutation", "providerApiKeys/mutation:setPriority", {
+              primaryProvider: keyProvider(args[0]),
+            }),
+      );
+    },
+  );
+  command(
+    providerKeys,
     "set <provider> [unexpected...]",
     "Save or replace a provider key (prompted without echo, or piped with --stdin)",
     async ({ api, ui, apiUrl }, args, opts) => {
@@ -680,7 +728,7 @@ export function createProgram(
   command(
     providerKeys,
     "remove <provider>",
-    "Remove a saved provider key; Gitdog's own models are used again",
+    "Remove a saved provider key; your other key, or Gitdog's own models, are used instead",
     async ({ api, ui }, args, opts) => {
       const provider = keyProvider(args[0]);
       await ui.confirm(

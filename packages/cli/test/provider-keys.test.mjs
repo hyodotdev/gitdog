@@ -44,27 +44,32 @@ const run = (api, ui, argv) =>
 
 test("provider-keys list shows metadata and flags unreadable keys", async () => {
   const ui = new KeyUi();
-  const api = recordingApi(() => [
-    {
-      provider: "anthropic",
-      last4: "abcd",
-      status: "active",
-      readable: false,
-      lastValidatedAt: Date.UTC(2026, 10, 1),
-      lastErrorCode: null,
-    },
-    {
-      provider: "openai",
-      last4: "wxyz",
-      status: "out_of_credit",
-      readable: true,
-      lastValidatedAt: Date.UTC(2026, 10, 2),
-      lastErrorCode: "out_of_credit",
-    },
-  ]);
+  const api = recordingApi(({ path }) =>
+    path.endsWith("query:priority")
+      ? null
+      : [
+          {
+            provider: "anthropic",
+            last4: "abcd",
+            status: "active",
+            readable: false,
+            lastValidatedAt: Date.UTC(2026, 10, 1),
+            lastErrorCode: null,
+          },
+          {
+            provider: "openai",
+            last4: "wxyz",
+            status: "out_of_credit",
+            readable: true,
+            lastValidatedAt: Date.UTC(2026, 10, 2),
+            lastErrorCode: "out_of_credit",
+          },
+        ],
+  );
   await run(api, ui, ["provider-keys", "list"]);
   assert.deepEqual(api.calls, [
     { kind: "query", path: "providerApiKeys/query:list", args: undefined },
+    { kind: "query", path: "providerApiKeys/query:priority", args: undefined },
   ]);
   assert.deepEqual(ui.values[0], [
     {
@@ -73,6 +78,7 @@ test("provider-keys list shows metadata and flags unreadable keys", async () => 
       model: null,
       effort: null,
       status: "unreadable",
+      role: null,
       lastChecked: "2026-11-01T00:00:00.000Z",
       lastError: null,
     },
@@ -82,6 +88,7 @@ test("provider-keys list shows metadata and flags unreadable keys", async () => 
       model: null,
       effort: null,
       status: "out_of_credit",
+      role: null,
       lastChecked: "2026-11-02T00:00:00.000Z",
       lastError: "out_of_credit",
     },
@@ -237,17 +244,21 @@ test("provider-keys list prints every column for people", async () => {
     }
   }
   const ui = new TableUi();
-  const api = recordingApi(() => [
-    {
-      provider: "openai",
-      last4: "wxyz",
-      status: "active",
-      readable: true,
-      serviceUnavailable: true,
-      lastValidatedAt: Date.UTC(2026, 10, 2),
-      lastErrorCode: null,
-    },
-  ]);
+  const api = recordingApi(({ path }) =>
+    path.endsWith("query:priority")
+      ? null
+      : [
+          {
+            provider: "openai",
+            last4: "wxyz",
+            status: "active",
+            readable: true,
+            serviceUnavailable: true,
+            lastValidatedAt: Date.UTC(2026, 10, 2),
+            lastErrorCode: null,
+          },
+        ],
+  );
   await run(api, ui, ["provider-keys", "list"]);
   assert.deepEqual(ui.tables, [
     {
@@ -257,6 +268,7 @@ test("provider-keys list prints every column for people", async () => {
         "model",
         "effort",
         "status",
+        "role",
         "lastChecked",
         "lastError",
       ],
@@ -267,6 +279,7 @@ test("provider-keys list prints every column for people", async () => {
           model: null,
           effort: null,
           status: "checks_unavailable",
+          role: null,
           lastChecked: "2026-11-02T00:00:00.000Z",
           lastError: null,
         },
@@ -346,4 +359,84 @@ test("provider-keys models and model choose the model for your own key", async (
     path: "providerApiKeys/action:setModel",
     args: { provider: "anthropic", modelId: "claude-opus-5-5", effort: "low" },
   });
+});
+
+test("provider-keys priority shows and sets which key runs first", async () => {
+  const ui = new KeyUi();
+  const api = recordingApi(({ path, args }) =>
+    path.endsWith("query:priority")
+      ? { primaryProvider: "anthropic" }
+      : { primaryProvider: args.primaryProvider },
+  );
+  await run(api, ui, ["provider-keys", "priority"]);
+  await run(api, ui, ["provider-keys", "priority", "openai"]);
+  await assert.rejects(
+    run(api, ui, ["provider-keys", "priority", "gemini"]),
+    /anthropic or openai/,
+  );
+  assert.deepEqual(
+    api.calls.map((call) => [call.kind, call.path, call.args]),
+    [
+      ["query", "providerApiKeys/query:priority", undefined],
+      [
+        "mutation",
+        "providerApiKeys/mutation:setPriority",
+        { primaryProvider: "openai" },
+      ],
+    ],
+  );
+  assert.deepEqual(ui.values, [
+    { primaryProvider: "anthropic" },
+    { primaryProvider: "openai" },
+  ]);
+});
+
+test("provider-keys list leaves roles blank when the order cannot be read", async () => {
+  const ui = new KeyUi();
+  const key = (provider) => ({
+    provider,
+    last4: "abcd",
+    status: "active",
+    readable: true,
+    lastValidatedAt: 0,
+    lastErrorCode: null,
+  });
+  const api = recordingApi(({ path }) => {
+    if (path.endsWith("query:priority"))
+      throw new Error("Could not find public function");
+    return [key("openai"), key("anthropic")];
+  });
+  await run(api, ui, ["--json", "provider-keys", "list"]);
+  assert.deepEqual(
+    ui.values[0].map((row) => [row.provider, row.role]),
+    [
+      ["openai", null],
+      ["anthropic", null],
+    ],
+  );
+});
+
+test("provider-keys list marks which key runs reviews in the owner's order", async () => {
+  const ui = new KeyUi();
+  const key = (provider) => ({
+    provider,
+    last4: "abcd",
+    status: "active",
+    readable: true,
+    lastValidatedAt: 0,
+    lastErrorCode: null,
+  });
+  const api = recordingApi(({ path }) =>
+    path.endsWith("query:priority")
+      ? { primaryProvider: "openai" }
+      : [key("anthropic"), key("openai")],
+  );
+  await run(api, ui, ["--json", "provider-keys", "list"]);
+  assert.deepEqual(
+    ui.values[0].map((row) => [row.provider, row.role]),
+    [
+      ["anthropic", "backup"],
+      ["openai", "primary"],
+    ],
+  );
 });

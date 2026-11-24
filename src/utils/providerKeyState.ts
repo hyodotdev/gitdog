@@ -1,5 +1,7 @@
+type KeyProvider = "anthropic" | "openai";
+
 type ListedKey = {
-  provider: "anthropic" | "openai";
+  provider: KeyProvider;
   status: "active" | "invalid" | "out_of_credit";
   readable: boolean;
   serviceUnavailable?: boolean;
@@ -8,12 +10,13 @@ type ListedKey = {
 /**
  * How saved provider keys stand for the UI. During a server key outage keys
  * exist but cannot be used, which is neither "your own key" nor "add a key".
- * Reviews run on the first working key, Claude before OpenAI; a working
- * OpenAI key behind it is the backup that takes over when Claude runs out
- * of credit.
+ * Reviews run on the first working key in the owner's order (Claude first
+ * unless they chose OpenAI); a working key behind it is the backup that
+ * takes over when the first is rejected or runs out of credit.
  */
 export function summarizeProviderKeys<Key extends ListedKey>(
   keys: Key[] | undefined,
+  primaryProvider: KeyProvider,
 ): {
   keyChecksUnavailable: boolean;
   activeKey: Key | undefined;
@@ -24,15 +27,11 @@ export function summarizeProviderKeys<Key extends ListedKey>(
   const working = keyChecksUnavailable
     ? []
     : (keys ?? []).filter((key) => key.readable && key.status === "active");
-  const activeKey =
-    working.find((key) => key.provider === "anthropic") ??
-    working.find((key) => key.provider === "openai");
+  const first = working.find((key) => key.provider === primaryProvider);
+  const second = working.find((key) => key.provider !== primaryProvider);
   return {
     keyChecksUnavailable,
-    activeKey,
-    backupKey:
-      activeKey?.provider === "anthropic"
-        ? working.find((key) => key.provider === "openai")
-        : undefined,
+    activeKey: first ?? second,
+    backupKey: first ? second : undefined,
   };
 }

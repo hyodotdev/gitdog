@@ -1,6 +1,7 @@
 import { getAuthUserId } from "../_utils/auth";
 import { query } from "../_generated/server";
 import { readEncryptionState } from "./encryptionState";
+import { readPrimaryProvider } from "./priority";
 import { USER_KEY_MODELS, userKeyModel } from "../_ai/config";
 
 export const list = query({
@@ -33,6 +34,19 @@ export const list = query({
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     }));
+  },
+});
+
+/**
+ * Which saved key reviews try first when the owner has both a Claude and an
+ * OpenAI key. With one key, that key is the only one used.
+ */
+export const priority = query({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return null;
+    return { primaryProvider: await readPrimaryProvider(ctx, userId) };
   },
 });
 
