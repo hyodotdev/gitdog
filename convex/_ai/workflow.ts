@@ -1,5 +1,6 @@
 import type { AiProvider, ChatMessage } from "./model";
 import { ChatBillingError } from "./chatBilling";
+import { isJsonResponseCutOff, readJsonObject } from "./utils";
 
 // Workflow types
 export type WorkflowStep<TInput, TOutput> = (
@@ -92,50 +93,6 @@ export class Workflow<TInput, TOutput> {
   }
 }
 
-// Extract JSON from content (handles markdown code blocks)
-function extractJson(content: string): string {
-  let trimmed = content.trim();
-
-  // Handle markdown code blocks: ```json ... ``` or ``` ... ```
-  const codeBlockMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (codeBlockMatch) {
-    trimmed = codeBlockMatch[1].trim();
-  }
-
-  // Find the JSON object boundaries
-  const start = trimmed.indexOf("{");
-  const end = trimmed.lastIndexOf("}");
-  if (start !== -1 && end !== -1 && end > start) {
-    return trimmed.substring(start, end + 1);
-  }
-
-  return trimmed;
-}
-
-// Check if JSON response appears complete
-function isJsonComplete(content: string): boolean {
-  const json = extractJson(content);
-
-  // Check if it starts with { and ends with }
-  if (!json.startsWith("{")) return false;
-  if (!json.endsWith("}")) return false;
-
-  // Check balanced braces
-  let depth = 0;
-  let inString = false;
-  for (let i = 0; i < json.length; i++) {
-    const char = json[i];
-    if (char === '"' && (i === 0 || json[i - 1] !== "\\")) {
-      inString = !inString;
-    }
-    if (!inString) {
-      if (char === "{") depth++;
-      if (char === "}") depth--;
-    }
-  }
-  return depth === 0;
-}
-
 // Helper function to create AI chat step with retry logic
 export function createChatStep(
   systemPrompt: string,
@@ -203,7 +160,10 @@ export function createChatStep(
       }
 
       // Check if JSON is complete even if finishReason is "stop"
-      if (!isJsonComplete(result.content)) {
+      if (
+        readJsonObject(result.content) === undefined &&
+        isJsonResponseCutOff(result.content)
+      ) {
         lastError = new Error("AI response JSON appears incomplete");
         console.warn(
           `[createChatStep] Attempt ${attempt + 1} JSON incomplete despite finishReason=${result.finishReason}, retrying...`,
