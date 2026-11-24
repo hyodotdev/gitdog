@@ -3,6 +3,7 @@
  */
 
 import type { AiProvider } from "../model";
+import { readJsonObject } from "../utils";
 import { LEARNING_EXTRACTION_PROMPT, LINK_SUMMARY_PROMPT } from "./prompts";
 import {
   extractUrls,
@@ -56,15 +57,6 @@ async function summarizeLinkContent(
         }
       : undefined,
   };
-}
-
-/**
- * Extract JSON from AI response, handling markdown code blocks
- */
-function extractJsonFromResponse(content: string): string {
-  // Use regex to find JSON block regardless of position in response
-  const jsonMatch = content.match(/```(?:json)?\s*([\s\S]+?)\s*```/);
-  return (jsonMatch ? jsonMatch[1] : content).trim();
 }
 
 /**
@@ -131,8 +123,9 @@ export async function extractLearning(
 
   // Parse the JSON response
   try {
-    const jsonStr = extractJsonFromResponse(result.content);
-    const parsed = JSON.parse(jsonStr) as LearningExtractionResult;
+    const parsed = readJsonObject(result.content) as
+      LearningExtractionResult | undefined;
+    if (!parsed) throw new Error("No JSON object in the response");
 
     return {
       result: {
