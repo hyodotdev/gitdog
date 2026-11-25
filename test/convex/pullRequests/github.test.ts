@@ -298,10 +298,126 @@ describe("authoritative PR snapshots", () => {
         expect(await changedSince(access, since, pr)).toBeNull();
       }
     });
-    it("reviews the whole PR after a force push or a long comparison", async () => {
-      const get = vi.spyOn(helpers, "fetchGitHubAppJsonWithRetry");
-      get.mockResolvedValueOnce({ status: "diverged", files: [] });
+    it("compares file contents after a force push or rebase", async () => {
+      const blob = (filename: string, sha: string, status = "modified") => ({
+        filename,
+        status,
+        sha: sha.repeat(40),
+      });
+      vi.spyOn(helpers, "fetchGitHubAppJsonWithRetry")
+        .mockResolvedValueOnce({ status: "diverged", files: [] })
+        .mockResolvedValueOnce({
+          ...mergeBase(since.mergeBaseSha),
+          files: [blob("src/same.ts", "1"), blob("src/new.ts", "2", "added")],
+        })
+        .mockResolvedValueOnce({
+          status: "ahead",
+          files: [blob("src/same.ts", "1"), blob("src/dropped.ts", "3")],
+        });
+      expect(await changedSince(access, since, pr)).toEqual({
+        // Unchanged content is not reviewed again; new and dropped files are.
+        paths: new Set(["src/new.ts", "src/dropped.ts"]),
+        mergeBaseSha: since.mergeBaseSha,
+        previous: new Set(["src/same.ts", "src/dropped.ts"]),
+      });
+    });
+    it("reviews rebased files whose content, status or old name changed", async () => {
+      const row = (
+        filename: string,
+        sha: string,
+        status = "modified",
+        previous_filename?: string,
+      ) => ({
+        filename,
+        status,
+        sha: sha.repeat(40),
+        ...(previous_filename ? { previous_filename } : {}),
+      });
+      const moved = "e".repeat(40);
+      const get = vi
+        .spyOn(helpers, "fetchGitHubAppJsonWithRetry")
+        .mockResolvedValueOnce({ status: "diverged", files: [] })
+        .mockResolvedValueOnce({
+          ...mergeBase(moved),
+          files: [
+            row("src/edited.ts", "2"),
+            row("src/status.ts", "3", "added"),
+            row("src/b.ts", "4", "renamed", "src/c.ts"),
+            row("src/same.ts", "5"),
+          ],
+        })
+        .mockResolvedValueOnce({
+          status: "ahead",
+          files: [{ filename: "src/on-main.ts" }],
+        })
+        .mockResolvedValueOnce({
+          status: "ahead",
+          files: [
+            row("src/edited.ts", "1"),
+            row("src/status.ts", "3"),
+            row("src/b.ts", "4", "renamed", "src/a.ts"),
+            row("src/same.ts", "5"),
+          ],
+        });
+      expect(await changedSince(access, since, pr)).toEqual({
+        paths: new Set([
+          "src/edited.ts",
+          "src/status.ts",
+          "src/b.ts",
+          "src/c.ts",
+          "src/a.ts",
+          "src/on-main.ts",
+        ]),
+        mergeBaseSha: moved,
+        previous: new Set([
+          "src/edited.ts",
+          "src/status.ts",
+          "src/b.ts",
+          "src/a.ts",
+          "src/same.ts",
+        ]),
+      });
+      expect(get.mock.calls.map(([path]) => path)).toEqual([
+        expect.stringContaining(`/compare/${since.headSha}...${pr.head.sha}`),
+        expect.stringContaining(`/compare/${pr.base.sha}...${pr.head.sha}`),
+        expect.stringContaining(`/compare/${since.mergeBaseSha}...${moved}`),
+        expect.stringContaining(
+          `/compare/${since.mergeBaseSha}...${since.headSha}`,
+        ),
+      ]);
+    });
+    it("reviews the whole PR after a rebase it cannot compare", async () => {
+      vi.spyOn(helpers, "fetchGitHubAppJsonWithRetry")
+        .mockResolvedValueOnce({ status: "diverged", files: [] })
+        .mockResolvedValueOnce({
+          ...mergeBase(since.mergeBaseSha),
+          files: [{ filename: "src/a.ts" }],
+        })
+        .mockResolvedValueOnce({ status: "ahead", files: [] });
       expect(await changedSince(access, since, pr)).toBeNull();
+      // Nor when the earlier diff cannot be read or was truncated.
+      for (const earlier of [
+        Promise.reject(new Error("compare unavailable")),
+        Promise.resolve({
+          status: "ahead",
+          files: Array.from({ length: 300 }, (_, i) => ({
+            filename: `f${i}`,
+            sha: "1".repeat(40),
+          })),
+        }),
+      ]) {
+        vi.spyOn(helpers, "fetchGitHubAppJsonWithRetry")
+          .mockResolvedValueOnce({ status: "diverged", files: [] })
+          .mockResolvedValueOnce({
+            ...mergeBase(since.mergeBaseSha),
+            files: [],
+          })
+          .mockReturnValueOnce(earlier);
+        expect(await changedSince(access, since, pr)).toBeNull();
+      }
+    });
+    it("reviews the whole PR after a long comparison", async () => {
+      const get = vi.spyOn(helpers, "fetchGitHubAppJsonWithRetry");
       get.mockResolvedValueOnce({
         status: "ahead",
         files: Array.from({ length: 300 }, (_, i) => ({ filename: `f${i}` })),
@@ -402,6 +518,23 @@ describe("authoritative PR snapshots", () => {
       (await snapshot(access, pr, false, { findingPaths: new Set(["a.ts"]) }))
         .files,
     ).toEqual([file]);
+  });
+  it("keeps a renamed file whose old name is in scope", async () => {
+    const renamed = {
+      filename: "b.ts",
+      previous_filename: "a.ts",
+      status: "renamed",
+      additions: 0,
+      deletions: 0,
+    };
+    const other = { ...renamed, filename: "c.ts", previous_filename: "d.ts" };
+    vi.spyOn(helpers, "fetchGitHubAppJsonWithRetry").mockResolvedValueOnce(
+      diff([renamed, other]),
+    );
+    expect(
+      (await snapshot(access, pr, false, { findingPaths: new Set(["a.ts"]) }))
+        .files,
+    ).toEqual([renamed]);
   });
   it("rejects an empty or missing diff", async () => {
     const get = vi
