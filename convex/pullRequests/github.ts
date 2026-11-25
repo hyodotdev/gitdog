@@ -197,7 +197,13 @@ export async function snapshot(
       batchPage * REVIEW_BATCH_FILES,
     );
   } else if (findingPaths)
-    files = all.filter((file) => findingPaths.has(file.filename));
+    // A renamed file is in scope when either of its names is.
+    files = all.filter(
+      (file) =>
+        findingPaths.has(file.filename) ||
+        (file.previous_filename !== undefined &&
+          findingPaths.has(file.previous_filename)),
+    );
   else if (
     all.length > BATCH_REVIEW_THRESHOLD ||
     // Measured as GitHub returned it, before transport metadata is dropped.
@@ -215,9 +221,11 @@ export async function snapshot(
 /**
  * Paths whose PR diff may differ from an earlier review: files changed on the
  * head since then, plus files the base changed when a merge of the base branch
- * moved the merge base forward. Returns null when the whole PR must be
- * reviewed again: after a force push, a retargeted or rewound base, a
- * truncated comparison, or any failure to compare.
+ * moved the merge base forward. After a force push or rebase the reviewed
+ * head is no longer an ancestor, so the two PR diffs are compared file by
+ * file instead. Returns null when the whole PR must be reviewed again: a
+ * retargeted or rewound base, a truncated comparison, or any failure to
+ * compare.
  */
 export async function changedSince(
   access: VerifiedRepositoryAccess,
@@ -230,50 +238,93 @@ export async function changedSince(
   previous: Set<string> | null;
 } | null> {
   if (!sha(since.headSha) || !sha(since.mergeBaseSha)) return null;
+  type Comparison = {
+    status: string;
+    merge_base_commit?: { sha: string };
+    files?: Array<{
+      filename: string;
+      previous_filename?: string;
+      status?: string;
+      sha?: string;
+    }>;
+  };
   const compare = (from: string, to: string) =>
-    readReviewJson<{
-      status: string;
-      merge_base_commit?: { sha: string };
-      files?: Array<{ filename: string; previous_filename?: string }>;
-    }>(
+    readReviewJson<Comparison>(
       access,
       `/compare/${from}...${to}?per_page=1`,
       "Read changes since the last review",
     );
-  const changedFiles = (comparison: Awaited<ReturnType<typeof compare>>) => {
+  const listed = (comparison: Comparison | null) =>
+    comparison &&
+    Array.isArray(comparison.files) &&
+    comparison.files.length < MAX_REVIEW_FILES &&
+    comparison.files.every((file) => typeof file?.filename === "string")
+      ? comparison.files
+      : null;
+  const changedFiles = (comparison: Comparison | null) => {
+    const files = listed(comparison);
     if (
-      (comparison.status !== "ahead" && comparison.status !== "identical") ||
-      !Array.isArray(comparison.files) ||
-      comparison.files.length >= MAX_REVIEW_FILES
+      !files ||
+      (comparison!.status !== "ahead" && comparison!.status !== "identical")
     )
       return null;
-    const paths: string[] = [];
-    for (const file of comparison.files) {
-      if (typeof file?.filename !== "string") return null;
-      paths.push(file.filename);
-      if (typeof file.previous_filename === "string")
-        paths.push(file.previous_filename);
-    }
-    return paths;
+    return files.flatMap((file) =>
+      typeof file.previous_filename === "string"
+        ? [file.filename, file.previous_filename]
+        : [file.filename],
+    );
+  };
+  // Each PR diff file by its status, blob and earlier name, so a rewritten
+  // head with the same content is not reviewed again.
+  const contents = (comparison: Comparison | null) => {
+    const files = listed(comparison);
+    if (!files?.every((file) => typeof file.sha === "string")) return null;
+    return new Map(
+      files.map((f) => [
+        f.filename,
+        { key: `${f.status}:${f.sha}:${f.previous_filename ?? ""}`, file: f },
+      ]),
+    );
+  };
+  const rewritten = (earlier: Comparison | null, current: Comparison) => {
+    const before = contents(earlier);
+    const after = contents(current);
+    if (!before || !after) return null;
+    const differs = (
+      side: NonNullable<typeof before>,
+      other: NonNullable<typeof before>,
+    ) =>
+      [...side.values()].filter(
+        ({ key, file }) => other.get(file.filename)?.key !== key,
+      );
+    return [...differs(after, before), ...differs(before, after)].flatMap(
+      ({ file }) =>
+        file.previous_filename === undefined
+          ? [file.filename]
+          : [file.filename, file.previous_filename],
+    );
   };
   try {
-    const head = changedFiles(await compare(since.headSha, pr.head.sha));
-    if (!head) return null;
-    const mergeBase = (await compare(pr.base.sha, pr.head.sha))
-      .merge_base_commit?.sha;
+    const direct = await compare(since.headSha, pr.head.sha);
+    if (direct.status !== "diverged" && !changedFiles(direct)) return null;
+    const current = await compare(pr.base.sha, pr.head.sha);
+    const mergeBase = current.merge_base_commit?.sha;
     if (!sha(mergeBase)) return null;
     const base =
       mergeBase === since.mergeBaseSha
         ? []
         : changedFiles(await compare(since.mergeBaseSha, mergeBase));
     if (!base) return null;
-    const earlier = await compare(since.mergeBaseSha, since.headSha)
-      .then(changedFiles)
-      .catch(() => null);
+    const earlier = await compare(since.mergeBaseSha, since.headSha).catch(
+      () => null,
+    );
+    const head = changedFiles(direct) ?? rewritten(earlier, current);
+    if (!head) return null;
+    const previous = changedFiles(earlier);
     return {
       paths: new Set([...head, ...base]),
       mergeBaseSha: mergeBase,
-      previous: earlier ? new Set(earlier) : null,
+      previous: previous ? new Set(previous) : null,
     };
   } catch {
     return null;
