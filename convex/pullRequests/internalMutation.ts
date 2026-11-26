@@ -21,6 +21,7 @@ import {
   findingBody,
   findingValidator,
   openRequestNotes,
+  refusalNotes,
   reviewBatchProgressValidator,
   reviewSummary,
 } from "./review";
@@ -863,6 +864,7 @@ export const propose = internalMutation({
     ),
     excludedPaths: v.array(v.string()),
     refusedPaths: v.optional(v.array(v.string())),
+    refusalCategories: v.optional(v.array(v.string())),
     filesRead: v.array(v.string()),
     page: v.optional(v.number()),
     group: v.optional(v.number()),
@@ -1037,6 +1039,9 @@ export const propose = internalMutation({
         ...(args.refusedPaths?.length
           ? { refusedPaths: args.refusedPaths }
           : {}),
+        ...(args.refusalCategories?.length
+          ? { refusalCategories: args.refusalCategories }
+          : {}),
         filesRead: args.filesRead,
         ...(args.mergeBaseSha ? { mergeBaseSha: args.mergeBaseSha } : {}),
         coverageComplete,
@@ -1054,6 +1059,7 @@ export const propose = internalMutation({
                     `Showing the ${args.findings.length} highest-priority findings out of ${batch?.findingCount ?? args.findingCount}.`,
                   ]
                 : []),
+              ...refusalNotes(args.refusedPaths, args.refusalCategories),
               ...openRequestNotes(openRequests),
             ],
           ),
@@ -1502,6 +1508,7 @@ export const recordReview = internalMutation({
     ),
     // The fixed name of the review stage a failed run stopped in.
     failedStage: v.optional(v.string()),
+    refusalCategory: v.optional(v.string()),
     providerId: v.string(),
     modelId: v.string(),
     keySource: v.union(v.literal("gitdog"), v.literal("user")),
