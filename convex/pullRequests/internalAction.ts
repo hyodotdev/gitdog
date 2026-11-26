@@ -309,6 +309,10 @@ const MAX_REFUSED_REVIEW_GROUPS = 5;
 // action for other work to release it before failing the review.
 const REVIEW_ACTIVE_PROVIDER_WAIT_MS = 90_000;
 
+// Whether any file keeps a diff to review once oversized diffs are dropped.
+const hasReviewableDiff = (files: ChangedFile[]) =>
+  splitReviewDiff(files).flat().some(hasReviewablePatch);
+
 async function sha256Base64(text: string): Promise<string> {
   const digest = await crypto.subtle.digest(
     "SHA-256",
@@ -395,40 +399,58 @@ export const generate = internalAction({
         throw new Error("Pull request changed before review");
       const pr = pinned(live, source);
       const previous = initial.action.reviewBatch?.result;
-      // A push after a finished review covers only the files it changed, as
-      // long as they fit one review; otherwise the whole PR is reviewed.
+      // A push after a finished review covers only the files it changed: in
+      // one review when they fit, otherwise in batches of just those files.
       const since = initial.action.reviewSince;
       let scoped: Awaited<ReturnType<typeof snapshot>> | undefined;
       // Files that left the PR diff since the earlier review: a file the PR
       // added and then deleted, or one reverted to base.
       let leftDiff = 0;
+      // Later batches of a batched follow-up keep the scope the first chose.
+      let batchScope = previous?.scope;
       if (since && !batched && !verificationOnly) {
         const scope = await changedSince(access, since, pr);
-        if (scope) {
-          const candidate = await snapshot(access, pr, verificationOnly, {
+        const candidate =
+          scope &&
+          (await snapshot(access, pr, verificationOnly, {
             findingPaths: scope.paths,
-          });
+          }));
+        // The scope is only valid against the merge base it was built on.
+        if (scope && candidate && candidate.baseSha === scope.mergeBaseSha) {
+          const now = new Set(candidate.files.map((f) => f.filename));
+          leftDiff = scope.previous
+            ? [...scope.paths].filter(
+                (path) => scope.previous!.has(path) && !now.has(path),
+              ).length
+            : // Unknown earlier diff: treat it as changed.
+              1;
+          // Nothing reviewable needs no batches: it is reported at once.
           if (
-            // The scope is only valid against the merge base it was built on.
-            candidate.baseSha === scope.mergeBaseSha &&
-            candidate.files.length <= BATCH_REVIEW_THRESHOLD &&
-            JSON.stringify(candidate.files).length <= REVIEW_DIFF_BUDGET
-          ) {
+            (candidate.files.length <= BATCH_REVIEW_THRESHOLD &&
+              JSON.stringify(candidate.files).length <= REVIEW_DIFF_BUDGET) ||
+            !hasReviewableDiff(candidate.files)
+          )
             scoped = candidate;
-            const now = new Set(candidate.files.map((f) => f.filename));
-            leftDiff = scope.previous
-              ? [...scope.paths].filter(
-                  (path) => scope.previous!.has(path) && !now.has(path),
-                ).length
-              : // Unknown earlier diff: treat it as changed.
-                1;
+          else {
+            batched = true;
+            batchScope = {
+              since: since.headSha,
+              // Only the PR files in scope, so each batch rewrites a short list.
+              paths: candidate.files.map((f) => f.filename),
+              removedFiles: leftDiff,
+            };
           }
         }
       }
       const data = scoped
         ? scoped
         : batched
-          ? await snapshot(access, pr, verificationOnly, { page })
+          ? await snapshot(access, pr, verificationOnly, {
+              page,
+              ...(batchScope
+                ? { findingPaths: new Set(batchScope.paths) }
+                : {}),
+            })
           : await snapshot(access, pr, verificationOnly).catch(
               async (error) => {
                 if (!(error instanceof PullRequestDiffBudgetError)) throw error;
@@ -440,7 +462,7 @@ export const generate = internalAction({
                 // ones are dropped.
                 if (
                   paged.files.length === paged.changedFiles &&
-                  !splitReviewDiff(paged.files).flat().some(hasReviewablePatch)
+                  !hasReviewableDiff(paged.files)
                 )
                   throw error;
                 batched = true;
@@ -453,7 +475,7 @@ export const generate = internalAction({
           previous.mergeBaseSha !== data.baseSha)
       )
         throw new Error("Pull request changed while reading its diff");
-      if (scoped && !data.files.some(hasReviewablePatch)) {
+      if (scoped && !hasReviewableDiff(data.files)) {
         // Nothing reviewable changed in this PR's diff, such as a merge of the
         // base branch or a deletion, so no model call is made. A binary or
         // oversized file this push changed is reported as not reviewed.
@@ -540,7 +562,11 @@ export const generate = internalAction({
       });
       runProvider = rawAiProvider;
       run = {
-        kind: verificationOnly ? "verification" : scoped ? "scoped" : "full",
+        kind: verificationOnly
+          ? "verification"
+          : scoped || batchScope
+            ? "scoped"
+            : "full",
         keySource: usesUserKey(rawAiProvider) ? "user" : "gitdog",
         changedFiles: selected.filter((f) => f.status !== "removed").length,
         inspectedFiles: 0,
@@ -795,6 +821,7 @@ export const generate = internalAction({
                 previous?.coverageLimited === true ||
                 filesRead.size > REVIEW_COVERAGE_PREVIEW ||
                 excludedPaths.size > REVIEW_COVERAGE_PREVIEW,
+              ...(batchScope ? { scope: batchScope } : {}),
             }
           : undefined,
         coverage: batched
@@ -1291,6 +1318,7 @@ export const publish = internalAction({
                   findingCount,
                   changedFiles: proposal.changedFiles,
                   uncoveredFiles: proposal.uncoveredFiles,
+                  since: coverage?.since,
                 },
                 suggestions,
                 declined,

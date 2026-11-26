@@ -972,10 +972,20 @@ export const propose = internalMutation({
     // Reviews post at once unless the owner asked to approve them first.
     const approval = repo.settings.requireApprovalForPullRequests === true;
     const suggestions = repo.settings.pullRequestSuggestionsEnabled !== false;
-    const coverage = batch ?? args.coverage;
+    // A batched follow-up covered only the files changed since its scope.
+    const coverage = batch
+      ? {
+          changedFiles: batch.changedFiles,
+          uncoveredFiles: batch.uncoveredFiles,
+          since: batch.scope?.since,
+        }
+      : args.coverage;
+    const removedFiles = batch
+      ? batch.scope?.removedFiles
+      : args.coverage?.removedFiles;
     // Whether every file of the PR so far was reviewed: by this review, and
     // for a follow-up also by the review it built on.
-    const since = batch ? undefined : args.coverage?.since;
+    const since = coverage?.since;
     const base = since
       ? latestFinishedReview(await listTicketActions(ctx, ticket._id), since)
       : undefined;
@@ -987,7 +997,7 @@ export const propose = internalMutation({
     const coverageComplete =
       coverage !== undefined &&
       coverage.uncoveredFiles === 0 &&
-      !args.coverage?.removedFiles &&
+      !removedFiles &&
       // A review that reviewed nothing approves nothing.
       (since !== undefined || coverage.changedFiles > 0) &&
       (!since ||
@@ -1009,6 +1019,7 @@ export const propose = internalMutation({
               changedFiles: batch.changedFiles,
               uncoveredFiles: batch.uncoveredFiles,
               coverageLimited: batch.coverageLimited,
+              ...(batch.scope ? { reviewedSince: batch.scope.since } : {}),
             }
           : args.coverage
             ? {
