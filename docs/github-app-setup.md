@@ -104,7 +104,7 @@ reviews run when the author or a collaborator comments
 `@<app-slug> review` (changes since the last review) or `@<app-slug> full
 review`; `@<app-slug> resolve` resolves Gitdog's threads and `@<app-slug> help`
 lists the commands; `gitdog reviews request|resolve` runs the same from the CLI.
-A command is a comment line that starts with the mention, or follows another review bot's command on the same line; in production, `@gitdogbot` (the app's former name) and the `@gitdog` shorthand also work. The pull request
+A command is a comment line that starts with the mention, or follows another review bot's command on the same line; in production, `@gitdogbot` (the app's former name), `@gitdogdev` and the `@gitdog` shorthand also work, for commands and for issue and discussion mentions. The pull request
 author can run every command except a full review, which needs a collaborator.
 These arrive through the **Issue comments** event. A
 commenter who sends more than 10 commands an hour or 40 a day to one

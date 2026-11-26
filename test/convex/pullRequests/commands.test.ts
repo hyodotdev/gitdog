@@ -23,6 +23,8 @@ describe("pull request commands", () => {
     ["@gitdogbot", "help"],
     ["@gitdogbot summarize this", "unknown"],
     ["@gitdog review", "review"],
+    ["@gitdogdev full review", "full_review"],
+    ["@gitdogdevelop review", null],
     ["@coderabbitai review @gitdogbot review", "review"],
     ["@coderabbitai full review @gitdog full review", "full_review"],
     ["@gitdogbot review @coderabbitai review", "review"],
@@ -56,8 +58,9 @@ describe("pull request commands", () => {
     expect(parseReviewCommand(body, "gitdogbot")).toBe(expected);
   });
   it("uses the configured app slug", () => {
-    // The shorthand belongs to the production app only.
+    // The extra names belong to the production app only.
     expect(parseReviewCommand("@gitdog review", "gitdogbot-dev")).toBeNull();
+    expect(parseReviewCommand("@gitdogdev review", "gitdogbot-dev")).toBeNull();
     expect(parseReviewCommand("@gitdogai review", "gitdogbot-dev")).toBeNull();
     expect(parseReviewCommand("@gitdogbot review", "gitdogbot-dev")).toBeNull();
     expect(parseReviewCommand("@gitdogbot-dev review", "gitdogbot-dev")).toBe(
@@ -78,7 +81,9 @@ describe("pull request commands", () => {
     const help = helpText("gitdogai");
     for (const command of ["review", "full review", "resolve", "help"])
       expect(help).toContain(`\`@gitdogai ${command}\``);
-    expect(help).toContain("`@gitdogbot` and `@gitdog` work too.");
+    expect(help).toContain(
+      "`@gitdogbot`, `@gitdogdev` and `@gitdog` work too.",
+    );
     expect(helpText("gitdogbot-dev")).not.toContain("work too");
   });
 });

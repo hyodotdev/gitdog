@@ -403,8 +403,8 @@ pull requests from the last 30 days their first review. The `reviews` commands m
 `@gitdogai review` (commits since the last review), `@gitdogai full review`
 and `@gitdogai resolve` (resolves Gitdog's threads); the CLI prints the result
 instead of replying on GitHub. On GitHub, commands go in the pull request
-conversation, not in replies inside a review thread. `@gitdogbot`, the app's
-former name, and the `@gitdog` shorthand also work. `reviews request` asks
+conversation, not in replies inside a review thread. `@gitdogbot` (the app's
+former name), `@gitdogdev` and the `@gitdog` shorthand also work. `reviews request` asks
 before spending tokens (skip with `--yes`) and prints the queued review's action
 id. `reviews recheck` reruns a failed review on the latest commit without
 posting.
