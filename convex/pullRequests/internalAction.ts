@@ -43,6 +43,7 @@ import {
   isReviewGroupModelFailure,
   isLifecycleChange,
   isReviewRefusal,
+  reviewRefusalCategory,
   ReviewQuotaError,
   reviewGenerationError,
   reviewFailureCause,
@@ -55,6 +56,8 @@ import {
   hasReviewablePatch,
   MAX_REVIEW_FINDINGS,
   openRequestNotes,
+  REVIEW_COVERAGE_PREVIEW,
+  refusalNotes,
   type OpenRequest,
   reviewBody,
   reviewComments,
@@ -300,7 +303,6 @@ export const reviewOpenPullRequests = internalAction({
   },
 });
 
-const REVIEW_COVERAGE_PREVIEW = 100;
 const MAX_FAILED_REVIEW_GROUPS = 2;
 const MAX_REFUSED_REVIEW_GROUPS = 5;
 // Reviews of one account share a single provider slot. Wait this long per
@@ -338,6 +340,8 @@ export const generate = internalAction({
     // provider that answered last.
     let runProvider: AiProvider | undefined;
     let runOutcome: "proposed" | "refused" | "group_failed" = "proposed";
+    // The safety filter's category when this run was declined.
+    let runRefusal: string | undefined;
     let run:
       | {
           kind: "full" | "scoped" | "verification";
@@ -352,6 +356,10 @@ export const generate = internalAction({
       | undefined;
     const recordRun = async (error?: unknown) => {
       if (!run || !runProvider) return;
+      // A decline earlier in a run that then failed still names its category.
+      const refusalCategory =
+        (error !== undefined ? reviewRefusalCategory(error) : undefined) ??
+        runRefusal;
       await ctx
         .runMutation(internal.pullRequests.internalMutation.recordReview, {
           actionId: args.actionId,
@@ -362,6 +370,7 @@ export const generate = internalAction({
                 outcome: isLifecycleChange(error) ? "cancelled" : "failed",
                 failedStage: stage,
               }),
+          ...(refusalCategory ? { refusalCategory } : {}),
           ...run,
           providerId: runProvider.providerId,
           modelId: runProvider.modelId,
@@ -502,6 +511,7 @@ export const generate = internalAction({
       let refusedGroups = previous?.refusedGroups ?? 0;
       // A record of the files a safety filter declined.
       const refusedPaths = new Set(previous?.refusedPaths);
+      const refusalCategories = new Set(previous?.refusalCategories);
       const filesRead = new Set(previous?.filesRead);
       // Head files this group saw around their diff.
       const windowedPaths = new Set<string>();
@@ -667,6 +677,8 @@ export const generate = internalAction({
           if (refused) {
             refusedGroups++;
             for (const file of selected) refusedPaths.add(file.filename);
+            runRefusal = reviewRefusalCategory(error);
+            if (runRefusal) refusalCategories.add(runRefusal);
           } else failedGroups++;
           // Keep the batches already paid for and report this group as not
           // reviewed, as when its files cannot be read.
@@ -747,6 +759,9 @@ export const generate = internalAction({
           ? { findingCount: findings.length }
           : {}),
         refusedPaths: [...refusedPaths].slice(0, REVIEW_COVERAGE_PREVIEW),
+        ...(refusalCategories.size
+          ? { refusalCategories: [...refusalCategories] }
+          : {}),
         excludedPaths: [...excludedPaths].slice(
           0,
           batched ? REVIEW_COVERAGE_PREVIEW : undefined,
@@ -766,6 +781,9 @@ export const generate = internalAction({
               uncoveredFiles,
               failedGroups,
               refusedGroups,
+              ...(refusalCategories.size
+                ? { refusalCategories: [...refusalCategories] }
+                : {}),
               remainingBatches: next
                 ? groups.length -
                   group -
@@ -1204,6 +1222,10 @@ export const publish = internalAction({
           // A follow-up with no new PR changes posts only to approve again.
           const noChange = proposal.changedFiles === 0 && findingCount === 0;
           if (noChange && !approve) return null;
+          const declined = refusalNotes(
+            proposal.refusedPaths,
+            proposal.refusalCategories,
+          );
           const body = (approved: boolean) =>
             reviewBody(
               findingCount,
@@ -1215,6 +1237,7 @@ export const publish = internalAction({
                       `Showing the ${findings.length} highest-priority findings out of ${findingCount}.`,
                     ]
                   : []),
+                ...declined,
                 ...openRequestNotes(openRequests),
               ],
               approved,
@@ -1270,6 +1293,7 @@ export const publish = internalAction({
                   uncoveredFiles: proposal.uncoveredFiles,
                 },
                 suggestions,
+                declined,
               )}\n\n${marker}`,
             });
           }

@@ -2,6 +2,7 @@ import { reviewState } from "./contextFixture";
 import { describe, expect, it, vi } from "vitest";
 import { micromark } from "micromark";
 import {
+  refusalNotes,
   addedLines,
   combinedReviewBody,
   findingBody,
@@ -1777,4 +1778,25 @@ it("synthesizes a grounded result when the bounded exploration turns are consume
   const calls = vi.mocked(p.chat).mock.calls;
   expect(calls[8][1]?.tools).toBeUndefined();
   expect(calls[8][1]?.billingLabel).toBe("pr-review/final");
+});
+
+describe("refusalNotes", () => {
+  it("names every category for the files the safety filter declined", () => {
+    expect(refusalNotes(undefined, undefined)).toEqual([]);
+    expect(refusalNotes(["a.ts"], ["cyber"])).toEqual([
+      "The AI provider's safety filter declined to review 1 file (category: `cyber`).",
+    ]);
+    expect(refusalNotes(["a.ts", "b.ts"], ["cyber", "bio"])).toEqual([
+      "The AI provider's safety filter declined to review 2 files (categories: `cyber`, `bio`).",
+    ]);
+    // The stored list is capped, so a full list is a lower bound.
+    expect(
+      refusalNotes(
+        Array.from({ length: 100 }, (_, i) => `f${i}.ts`),
+        undefined,
+      ),
+    ).toEqual([
+      "The AI provider's safety filter declined to review at least 100 files.",
+    ]);
+  });
 });

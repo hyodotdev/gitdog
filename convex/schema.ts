@@ -1777,6 +1777,9 @@ const applicationTables = {
     ),
     // The fixed name of the review stage a failed run stopped in.
     failedStage: v.optional(v.string()),
+    // The safety filter's category when the provider declined this run, or
+    // "unknown".
+    refusalCategory: v.optional(v.string()),
     providerId: v.string(),
     modelId: v.string(),
     keySource: v.union(v.literal("gitdog"), v.literal("user")),

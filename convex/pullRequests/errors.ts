@@ -102,10 +102,13 @@ const REVIEW_GROUP_MODEL_FAILURES = new Set([
 
 /** A safety-classifier decline: specific to the content of one group. */
 export function isReviewRefusal(error: unknown): boolean {
+  return reviewRefusalCategory(error) !== undefined;
+}
+
+/** The safety filter's category for a declined review request. */
+export function reviewRefusalCategory(error: unknown): string | undefined {
   const cause = reviewFailureCause(error);
-  return (
-    cause instanceof ChatProviderRequestError && cause.refusal !== undefined
-  );
+  return cause instanceof ChatProviderRequestError ? cause.refusal : undefined;
 }
 
 /**

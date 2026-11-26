@@ -3933,8 +3933,9 @@ describe("batched PR reviews", () => {
   it("finishes a review when the safety filter declines several batches", async () => {
     const { ChatProviderRequestError } =
       await import("../../../convex/_ai/providerErrors");
+    // The last batch succeeds, so the category must carry over from earlier.
     const f = await batchFixture(
-      [3, 4, 5],
+      [3, 4],
       0,
       10_000_000,
       [],
@@ -3947,13 +3948,15 @@ describe("batched PR reviews", () => {
     for (const page of [undefined, 2, 3, 4, 5]) await f.generate(page);
     await drainScheduledFunctions(f.t);
     const action = await f.getAction();
-    // Declines are about content, so three of them do not stop the review.
+    // Declines are about content, so they do not stop the review.
     expect(action).toMatchObject({
       status: "completed",
       executionResult: { published: true },
     });
     const request = JSON.parse(f.fetch.mock.calls[0][1]!.body as string);
     expect(request.body).toContain("were not fully reviewed");
+    // The category carries across batches to the published review.
+    expect(request.body).toContain("(category: `cyber`)");
   });
   it("stops after too many batches are declined", async () => {
     const { ChatProviderRequestError } =
@@ -3976,6 +3979,45 @@ describe("batched PR reviews", () => {
     await f.generate(8);
     expect((await f.getAction())?.status).toBe("failed");
     expect(f.fetch).not.toHaveBeenCalled();
+    // The decline that failed the review still records its category.
+    const records = await f.t.run((ctx) =>
+      ctx.db
+        .query("reviewRecords")
+        .withIndex("by_action", (q) => q.eq("actionId", f.actionId))
+        .collect(),
+    );
+    expect(records.at(-1)).toMatchObject({
+      outcome: "failed",
+      refusalCategory: "general_harms",
+    });
+  });
+  it("names the category when every batch was declined and the review fails", async () => {
+    const { ChatProviderRequestError } =
+      await import("../../../convex/_ai/providerErrors");
+    const f = await batchFixture(
+      -1,
+      0,
+      10_000_000,
+      [],
+      62,
+      () =>
+        new ChatProviderRequestError("Claude declined the request", "billed", {
+          refusal: "cyber",
+        }),
+    );
+    for (const page of [undefined, 2, 3, 4]) await f.generate(page);
+    expect((await f.getAction())?.status).toBe("failed");
+    const records = await f.t.run((ctx) =>
+      ctx.db
+        .query("reviewRecords")
+        .withIndex("by_action", (q) => q.eq("actionId", f.actionId))
+        .collect(),
+    );
+    // The last batch was declined too, then nothing had been inspected.
+    expect(records.at(-1)).toMatchObject({
+      outcome: "failed",
+      refusalCategory: "cyber",
+    });
   });
   it("reports a declined single review and does not carry its files forward", async () => {
     const { ChatProviderRequestError } =
@@ -4003,10 +4045,25 @@ describe("batched PR reviews", () => {
       executionResult: { published: true },
       proposedChanges: {
         refusedPaths: ["src/file-1.ts", "src/file-2.ts", "src/file-3.ts"],
+        refusalCategories: ["cyber"],
       },
     });
     const request = JSON.parse(f.fetch.mock.calls[0][1]!.body as string);
     expect(request.body).toContain("could not review the 3 changed files");
+    // The category says which safety filter declined, for later diagnosis.
+    expect(request.body).toContain(
+      "safety filter declined to review 3 files (category: `cyber`)",
+    );
+    const [record] = await f.t.run((ctx) =>
+      ctx.db
+        .query("reviewRecords")
+        .withIndex("by_action", (q) => q.eq("actionId", f.actionId))
+        .collect(),
+    );
+    expect(record).toMatchObject({
+      outcome: "refused",
+      refusalCategory: "cyber",
+    });
     const next = { ...source, headSha: "e".repeat(40) };
     f.live.head = { sha: next.headSha };
     const nextId = (await f.request(next))!;

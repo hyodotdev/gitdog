@@ -840,6 +840,19 @@ describe("Claude safety refusals", () => {
     });
     expect((error as ChatProviderRequestError).usage).toBeUndefined();
   });
+  it("keeps only a short identifier as a decline category", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      claude({
+        content: [],
+        stop_reason: "refusal",
+        stop_details: { type: "refusal", category: "cyber\n\n@someone" },
+        usage: { input_tokens: 10, output_tokens: 0 },
+      }),
+    );
+    await expect(
+      new ClaudeProvider("fixture-key").chat(messages),
+    ).rejects.toMatchObject({ refusal: "unknown" });
+  });
   it("bills a decline in a billed category or after output", async () => {
     const fetch = vi.spyOn(globalThis, "fetch");
     for (const [category, output, outcome] of [
