@@ -339,8 +339,12 @@ export class ClaudeProvider implements AiProvider {
     try {
       if (data.stop_reason === "refusal") {
         const details = record(data.stop_details) ? data.stop_details : {};
+        // Only a short identifier is kept: it is stored and shown on PRs.
         const category =
-          typeof details.category === "string" ? details.category : "unknown";
+          typeof details.category === "string" &&
+          /^[a-z0-9_-]{1,40}$/.test(details.category)
+            ? details.category
+            : "unknown";
         // Output already produced is billed; a decline before any output is
         // billed only in some categories.
         const charged =

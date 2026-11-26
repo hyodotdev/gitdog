@@ -139,6 +139,29 @@ export function validOpenRequests(
   return result;
 }
 
+// Declined file lists keep at most this many paths, as do batched reviews'
+// lists of files read and excluded.
+export const REVIEW_COVERAGE_PREVIEW = 100;
+
+/** Why files were left unreviewed when the provider's safety filter declined. */
+export function refusalNotes(
+  refusedPaths: readonly string[] | undefined,
+  categories: readonly string[] | undefined,
+): string[] {
+  const count = refusedPaths?.length ?? 0;
+  if (count === 0) return [];
+  const files =
+    count >= REVIEW_COVERAGE_PREVIEW
+      ? `at least ${count} files`
+      : plural(count, "file");
+  const named = categories?.length
+    ? ` (${categories.length === 1 ? "category" : "categories"}: ${categories.map(codeSpan).join(", ")})`
+    : "";
+  return [
+    `The AI provider's safety filter declined to review ${files}${named}.`,
+  ];
+}
+
 /** How open requests read in a posted review. */
 export function openRequestNotes(requests: OpenRequest[]): string[] {
   return requests.length
@@ -192,8 +215,10 @@ export const reviewBatchProgressValidator = v.object({
   coverageLimited: v.boolean(),
   // Groups whose model output could not be used and were left uncovered.
   failedGroups: v.optional(v.number()),
-  // Groups a safety filter declined, also left uncovered.
+  // Groups a safety filter declined, also left uncovered, and the categories
+  // the provider gave.
   refusedGroups: v.optional(v.number()),
+  refusalCategories: v.optional(v.array(v.string())),
   // Digest of the current page's ordered group split, to detect a page that
   // splits differently between the workers that review its groups.
   pageLayout: v.optional(v.string()),
@@ -663,6 +688,7 @@ export function combinedReviewBody(
   headSha: string,
   summary: BatchReviewSummary,
   suggestions: boolean,
+  extraNotes: string[] = [],
 ): string {
   const { batchCount, findingCount, changedFiles, uncoveredFiles } = summary;
   const notes = [
@@ -671,6 +697,7 @@ export function combinedReviewBody(
         ? ` Showing the ${findings.length} highest-priority findings out of ${findingCount}.`
         : ""
     }`,
+    ...extraNotes,
   ];
   const entries = findings.map((finding) => {
     const fix = suggestions ? finding.suggestion : undefined;
