@@ -8,10 +8,11 @@ export function getConfiguredGitHubAppSlug(
   return slug && GITHUB_APP_SLUG_PATTERN.test(slug) ? slug : null;
 }
 
-// The production app was renamed from gitdogbot to gitdogai. Both names keep
-// reaching it, so existing comments, docs and habits still work. Only the
-// configured slug is trusted as Gitdog's own bot account.
-const PRODUCTION_APP_NAMES = ["gitdogai", "gitdogbot"];
+// Every name that reaches the production app, for mentions and commands:
+// its former name (it was renamed from gitdogbot to gitdogai), the gitdog.dev
+// spelling and the short "gitdog", which also notifies the GitHub user of
+// that name. Only the configured slug is trusted as Gitdog's own bot account.
+const PRODUCTION_APP_NAMES = ["gitdogai", "gitdogbot", "gitdogdev", "gitdog"];
 
 /**
  * Names a mention can use to address this deployment's app, configured slug

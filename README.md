@@ -127,9 +127,9 @@ After that, ask for more in a pull request comment or from the CLI:
   are not read.
 - **Who**: collaborators can run every command. The pull request author, who
   may work from a fork, can run all but `full review`.
-- **Other names**: `@gitdogbot`, the app's former name, still works. `@gitdog`
-  works as shorthand, but it also notifies the GitHub user of that name, so
-  `@gitdogai` is preferred.
+- **Other names**: `@gitdogbot` (the app's former name), `@gitdogdev` and
+  `@gitdog` work too, in commands and in issue or discussion mentions. `@gitdog`
+  also notifies the GitHub user of that name, so `@gitdogai` is preferred.
 - **Status**: while a review runs, one status comment on the pull request shows
   that it is reviewing or waiting for approval. Once the review is posted the
   comment is removed, so the review is the only result; if no review is posted,

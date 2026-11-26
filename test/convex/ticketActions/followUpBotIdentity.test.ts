@@ -120,11 +120,18 @@ describe("follow-up bot identity", () => {
     expect(
       normalizeGitdogMentionBody("@gitdogbot-dev: use A", "gitdogbot-dev"),
     ).toBe("use A");
-    expect(normalizeGitdogMentionBody("@gitdog use A", "gitdogbot")).toBe(
-      "@gitdog use A",
-    );
-    expect(hasGitdogMentionBody("@gitdog use A", "gitdogbot")).toBe(false);
-    // Both production names reach the app, before and after the rename.
+    // Every production name reaches the app, before and after the rename.
+    for (const name of ["gitdog", "gitdogdev"]) {
+      expect(hasGitdogMentionBody(`@${name} use A`, "gitdogai")).toBe(true);
+      expect(normalizeGitdogMentionBody(`@${name}: use A`, "gitdogai")).toBe(
+        "use A",
+      );
+      // A development app answers only to its own slug.
+      expect(hasGitdogMentionBody(`@${name} use A`, "gitdogbot-dev")).toBe(
+        false,
+      );
+    }
+    expect(hasGitdogMentionBody("@gitdogs use A", "gitdogai")).toBe(false);
     expect(hasGitdogMentionBody("@gitdogai use A", "gitdogbot")).toBe(true);
     expect(hasGitdogMentionBody("@gitdogbot use A", "gitdogai")).toBe(true);
     expect(normalizeGitdogMentionBody("@gitdogbot: use A", "gitdogai")).toBe(
