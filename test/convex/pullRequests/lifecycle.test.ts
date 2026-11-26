@@ -3841,6 +3841,94 @@ describe("batched PR reviews", () => {
     });
     return { ...f, nextId, next };
   }
+  async function largeFollowUp(changedIndexes: number[], grow: number[]) {
+    const f = await batchFixture(undefined, 0, 10_000_000, [], 61);
+    for (const page of [undefined, 2, 3, 4]) await f.generate(page);
+    await drainScheduledFunctions(f.t);
+    // The push grows files past what one review can carry.
+    for (const index of grow)
+      f.files[index].patch += `\n ${"x".repeat(60_000)}`;
+    const changed = new Set(changedIndexes.map((i) => f.files[i].filename));
+    const github = await import("../../../convex/pullRequests/github");
+    vi.spyOn(github, "changedSince").mockResolvedValue({
+      paths: new Set([...changed, "docs/only-on-main.md"]),
+      mergeBaseSha: source.baseSha,
+      previous: changed,
+    });
+    const next = { ...source, headSha: "e".repeat(40) };
+    f.live.head = { sha: next.headSha };
+    const nextId = (await f.request(next))!;
+    f.batches.length = 0;
+    f.fetch.mockResolvedValue(
+      Response.json({
+        id: 89,
+        commit_id: next.headSha,
+        body: `<!-- gitdog-pr-review:${nextId} -->`,
+      }),
+    );
+    await f.t.action(internal.pullRequests.internalAction.generate, {
+      actionId: nextId,
+    });
+    const getNext = () => f.t.run((ctx) => ctx.db.get(nextId));
+    return { ...f, next, nextId, getNext };
+  }
+  it("batches only the changed files when they do not fit one review", async () => {
+    // 20 changed files over two pages, two of them past one review's budget.
+    const indexes = [...Array.from({ length: 18 }, (_, i) => i), 40, 41];
+    const f = await largeFollowUp(indexes, [40, 41]);
+    // The first batch keeps the scope to the PR files it covers.
+    const first = await f.getNext();
+    expect(first?.reviewBatch?.result).toMatchObject({
+      changedFiles: 20,
+      scope: { since: source.headSha, removedFiles: 0 },
+    });
+    expect([...first!.reviewBatch!.result!.scope!.paths].sort()).toEqual(
+      indexes.map((i) => f.files[i].filename).sort(),
+    );
+    await drainScheduledFunctions(f.t);
+    // Batches of the 20 changed files over two pages, not 61 over four.
+    const pages = new Set(
+      f.batches.map((key) => key.split("/batch/")[1].split("/")[0]),
+    );
+    expect(pages).toEqual(new Set(["1", "2"]));
+    const action = await f.getNext();
+    expect(action).toMatchObject({
+      status: "completed",
+      executionResult: { published: true, reviewId: 89 },
+      proposedChanges: {
+        changedFiles: 20,
+        reviewedSince: source.headSha,
+      },
+    });
+    // A group of only removed files counts as a batch without a model call.
+    expect(action?.proposedChanges?.batchCount).toBeGreaterThanOrEqual(
+      f.batches.length,
+    );
+    const request = JSON.parse(f.fetch.mock.calls.at(-1)![1]!.body as string);
+    expect(request.body).toContain(`changed since ${source.headSha}`);
+    const records = await f.t.run((ctx) =>
+      ctx.db
+        .query("reviewRecords")
+        .withIndex("by_action", (q) => q.eq("actionId", f.nextId))
+        .collect(),
+    );
+    expect(records.length).toBeGreaterThan(1);
+    expect(records.every((record) => record.kind === "scoped")).toBe(true);
+  });
+  it("reports a large push with nothing reviewable without batches", async () => {
+    // Only removed files and one diff too large to review.
+    const f = await largeFollowUp(
+      [...Array.from({ length: 16 }, (_, i) => i + 16), 40],
+      [40, 40],
+    );
+    await drainScheduledFunctions(f.t);
+    expect(f.batches).toEqual([]);
+    expect((await f.getNext())?.proposedChanges).toMatchObject({
+      reviewedSince: source.headSha,
+      uncoveredFiles: 1,
+      coverageComplete: false,
+    });
+  });
   it("reviews the whole PR again after a force push", async () => {
     const f = await followUp(null);
     expect(f.batches).toEqual([`pr/${f.nextId}/${f.next.headSha}/batch/1/1`]);

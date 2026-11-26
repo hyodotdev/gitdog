@@ -197,6 +197,16 @@ export const reviewBatchProgressValidator = v.object({
   // Digest of the current page's ordered group split, to detect a page that
   // splits differently between the workers that review its groups.
   pageLayout: v.optional(v.string()),
+  // A follow-up batched over only the files changed since the earlier review
+  // at `since`, chosen by its first batch so every batch reads the same set.
+  scope: v.optional(
+    v.object({
+      since: v.string(),
+      paths: v.array(v.string()),
+      // Files that left the PR diff since then, which nothing reviews.
+      removedFiles: v.number(),
+    }),
+  ),
 });
 export const reviewBatchResultValidator = v.object({
   ...reviewBatchProgressValidator.fields,
@@ -656,6 +666,7 @@ export type BatchReviewSummary = {
   findingCount: number;
   changedFiles: number;
   uncoveredFiles: number;
+  since?: string;
 };
 
 export function combinedReviewBody(
@@ -664,7 +675,8 @@ export function combinedReviewBody(
   summary: BatchReviewSummary,
   suggestions: boolean,
 ): string {
-  const { batchCount, findingCount, changedFiles, uncoveredFiles } = summary;
+  const { batchCount, findingCount, changedFiles, uncoveredFiles, since } =
+    summary;
   const notes = [
     `Processed in ${batchCount} file ${batchCount === 1 ? "batch" : "batches"}.${
       findingCount > findings.length
@@ -684,7 +696,7 @@ export function combinedReviewBody(
     reviewSummary(
       findingCount,
       headSha,
-      { changedFiles, uncoveredFiles },
+      { changedFiles, uncoveredFiles, since },
       notes,
     ),
     ...entries,

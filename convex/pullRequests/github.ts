@@ -117,7 +117,11 @@ export async function snapshot(
   access: VerifiedRepositoryAccess,
   pr: Pick<PullRequest, "head" | "base">,
   _verificationOnly = false,
-  options?: { page: number } | { findingPaths: ReadonlySet<string> },
+  // A page of the diff (of only `findingPaths` when given, for a batched
+  // follow-up), or just the files at `findingPaths`.
+  options?:
+    | { page: number; findingPaths?: ReadonlySet<string> }
+    | { findingPaths: ReadonlySet<string> },
 ): Promise<{
   files: ChangedFile[];
   baseSha: string;
@@ -184,26 +188,28 @@ export async function snapshot(
   const batchPage = options && "page" in options ? options.page : undefined;
   const findingPaths =
     options && "findingPaths" in options ? options.findingPaths : undefined;
+  // A renamed file is in scope when either of its names is.
+  const scoped = findingPaths
+    ? all.filter(
+        (file) =>
+          findingPaths.has(file.filename) ||
+          (file.previous_filename !== undefined &&
+            findingPaths.has(file.previous_filename)),
+      )
+    : all;
   let files = all;
   if (batchPage !== undefined) {
     if (
       !Number.isSafeInteger(batchPage) ||
       batchPage < 1 ||
-      batchPage > Math.ceil(all.length / REVIEW_BATCH_FILES)
+      batchPage > Math.ceil(scoped.length / REVIEW_BATCH_FILES)
     )
       throw new Error("Pull request diff is incomplete");
-    files = all.slice(
+    files = scoped.slice(
       (batchPage - 1) * REVIEW_BATCH_FILES,
       batchPage * REVIEW_BATCH_FILES,
     );
-  } else if (findingPaths)
-    // A renamed file is in scope when either of its names is.
-    files = all.filter(
-      (file) =>
-        findingPaths.has(file.filename) ||
-        (file.previous_filename !== undefined &&
-          findingPaths.has(file.previous_filename)),
-    );
+  } else if (findingPaths) files = scoped;
   else if (
     all.length > BATCH_REVIEW_THRESHOLD ||
     // Measured as GitHub returned it, before transport metadata is dropped.
@@ -214,7 +220,8 @@ export async function snapshot(
     files,
     headSha: pr.head.sha,
     baseSha: mergeBase,
-    changedFiles: all.length,
+    // The inventory batches page through: the scoped files of a follow-up.
+    changedFiles: batchPage !== undefined ? scoped.length : all.length,
   };
 }
 
