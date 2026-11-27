@@ -16,6 +16,15 @@ and CLI never store provider keys.
 - Only confirmed credit exhaustion or a provider spending limit selects OpenAI.
   Rate limits, invalid credentials, content rejection and ambiguous network
   failures do not silently switch providers.
+- One exception: when Claude's safety filter declines a pull request review,
+  or one batch group of it, even after Anthropic's own refusal fallback, the
+  review runs once more on OpenAI while its action has time to finish. This
+  applies when OpenAI is the second route: Gitdog's keys, or an owner with
+  both keys and Anthropic first. The run has its own billing key, the review
+  says how many files OpenAI reviewed, and if the OpenAI run fails the group
+  stays reported as declined. A recovered run's `reviewRecords` row has
+  `providerId: "openai"`, `outcome: "proposed"` and the decline's
+  `refusalCategory`.
 - Each logical call holds one durable usage reservation, and a billed result
   is checkpointed so it is never charged twice across retries or a provider
   switch.

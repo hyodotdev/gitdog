@@ -147,19 +147,27 @@ export const REVIEW_COVERAGE_PREVIEW = 100;
 export function refusalNotes(
   refusedPaths: readonly string[] | undefined,
   categories: readonly string[] | undefined,
+  fallbackFiles = 0,
 ): string[] {
+  const notes: string[] = [];
+  if (fallbackFiles)
+    notes.push(
+      `${plural(fallbackFiles, "file")} declined by Claude's safety filter ${fallbackFiles === 1 ? "was" : "were"} reviewed with OpenAI's model instead.`,
+    );
   const count = refusedPaths?.length ?? 0;
-  if (count === 0) return [];
-  const files =
-    count >= REVIEW_COVERAGE_PREVIEW
-      ? `at least ${count} files`
-      : plural(count, "file");
-  const named = categories?.length
-    ? ` (${categories.length === 1 ? "category" : "categories"}: ${categories.map(codeSpan).join(", ")})`
-    : "";
-  return [
-    `The AI provider's safety filter declined to review ${files}${named}.`,
-  ];
+  if (count) {
+    const files =
+      count >= REVIEW_COVERAGE_PREVIEW
+        ? `at least ${count} files`
+        : plural(count, "file");
+    const named = categories?.length
+      ? ` (${categories.length === 1 ? "category" : "categories"}: ${categories.map(codeSpan).join(", ")})`
+      : "";
+    notes.push(
+      `The AI provider's safety filter declined to review ${files}${named}.`,
+    );
+  }
+  return notes;
 }
 
 /** How open requests read in a posted review. */
@@ -239,6 +247,8 @@ export const reviewBatchResultValidator = v.object({
   filesRead: v.array(v.string()),
   excludedPaths: v.array(v.string()),
   refusedPaths: v.optional(v.array(v.string())),
+  // Declined files the fallback model reviewed instead.
+  fallbackFiles: v.optional(v.number()),
 });
 export const MAX_REVIEW_FINDINGS = 8;
 // Below this a candidate is discarded. A higher bar made reviewers report only
