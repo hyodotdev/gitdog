@@ -8,6 +8,7 @@ import {
 import { ChatProviderRequestError } from "../../../convex/_ai/providerErrors";
 import type { ChatMessage } from "../../../convex/_ai/model";
 import { reviewContextMessage } from "../../../convex/pullRequests/context";
+import { declineFallback } from "../../../convex/_ai/providerResolution";
 
 const messages: ChatMessage[] = [
   { role: "system", content: "Be precise" },
@@ -893,5 +894,18 @@ describe("Claude safety refusals", () => {
     );
     const result = await new ClaudeProvider("fixture-key").chat(messages);
     expect(result.historyContent).toEqual([{ type: "text", text: "Served" }]);
+  });
+  it("offers OpenAI for a declined request only after Claude", () => {
+    const claudeFirst = new ClaudeProvider("fixture-key");
+    const openaiSecond = new OpenAIProvider("fixture-key");
+    expect(
+      declineFallback(new CreditFallbackProvider(claudeFirst, openaiSecond)),
+    ).toBe(openaiSecond);
+    // One key runs alone, and an OpenAI-first owner reached Claude only
+    // because their OpenAI key already failed.
+    expect(declineFallback(claudeFirst)).toBeUndefined();
+    expect(
+      declineFallback(new CreditFallbackProvider(openaiSecond, claudeFirst)),
+    ).toBeUndefined();
   });
 });

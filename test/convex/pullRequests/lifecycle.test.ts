@@ -3048,6 +3048,7 @@ describe("explicit verification of failed reviews", () => {
 });
 
 describe("batched PR reviews", () => {
+  const ASKED_AGAIN = /\/(retry|openai)$/;
   // Holds are in quota tokens, so they scale with the model weight.
   const BATCH = REVIEW_BATCH_TOKEN_ESTIMATE;
   const tokens = (n: number) => n.toLocaleString("en-US");
@@ -3058,7 +3059,8 @@ describe("batched PR reviews", () => {
     largeIndexes: number[] = [],
     fileCount = 61,
     pageFailure: () => Error = () => new Error("Fixture model failure"),
-    // Whether a retried group fails again, as a recurring failure does.
+    // Whether a group asked again, by a retry or on the fallback model,
+    // fails again, as a recurring failure does.
     retryFails = true,
   ) {
     const f = await fixture();
@@ -3147,12 +3149,17 @@ describe("batched PR reviews", () => {
       "function find(key) {\n return cache.get('constant');\n}",
     );
     const batches: string[] = [];
+    // The provider each billing key ran on.
+    const routes = new Map<string, string>();
     vi.spyOn(billing, "createMeteredProvider").mockImplementation(
       (_ctx, args) => {
         batches.push(args.generationKey);
+        routes.set(args.generationKey, args.provider.providerId ?? "");
         const batch = args.generationKey.includes("/batch/");
-        // A retried group bills under its own key ending in "/retry".
-        const parts = args.generationKey.replace(/\/retry$/, "").split("/");
+        // A group asked again bills under its own key ending in "/retry",
+        // or "/openai" on the fallback model.
+        const askedAgain = ASKED_AGAIN.test(args.generationKey);
+        const parts = args.generationKey.replace(ASKED_AGAIN, "").split("/");
         const page = batch ? Number(parts.at(-2)) : 0;
         const group = Number(parts.at(-1));
         const path = batch
@@ -3170,7 +3177,9 @@ describe("batched PR reviews", () => {
         };
         return {
           name: "fixture",
-          providerId: "openai",
+          providerId: args.generationKey.endsWith("/openai")
+            ? "openai"
+            : "anthropic",
           modelId: "fixture",
           chat: async (_messages, options) => {
             const failing =
@@ -3178,11 +3187,7 @@ describe("batched PR reviews", () => {
               failedPage === -1 ||
               (Array.isArray(failedPage) && failedPage.includes(page));
             // Unless told otherwise, a retried group fails again.
-            if (
-              failing &&
-              (retryFails || !args.generationKey.endsWith("/retry"))
-            )
-              throw pageFailure();
+            if (failing && (retryFails || !askedAgain)) throw pageFailure();
             return {
               content: JSON.stringify(
                 options?.billingLabel === "pr-review/critique"
@@ -3208,6 +3213,7 @@ describe("batched PR reviews", () => {
       actionId,
       fetch,
       batches,
+      routes,
       live,
       files,
       generate: (page?: number, group?: number) =>
@@ -3268,7 +3274,7 @@ describe("batched PR reviews", () => {
       kind: "full",
       outcome: "proposed",
       // The provider that answered, as the metered route reports it.
-      providerId: "openai",
+      providerId: "anthropic",
       modelId: "fixture",
       page: 1,
       group: 0,
@@ -4075,8 +4081,12 @@ describe("batched PR reviews", () => {
     for (const page of [undefined, 2, 3, 4, 5]) await f.generate(page);
     await drainScheduledFunctions(f.t);
     const action = await f.getAction();
-    // A decline is about content, so it is not asked again.
+    // A decline is about content, so it is not retried on Claude, only once
+    // on the fallback model, which declines too here.
     expect(f.batches.some((key) => key.endsWith("/retry"))).toBe(false);
+    expect(
+      f.batches.filter((key) => key.endsWith("/openai")).length,
+    ).toBeGreaterThan(0);
     // Declines are about content, so they do not stop the review.
     expect(action).toMatchObject({
       status: "completed",
@@ -4086,6 +4096,94 @@ describe("batched PR reviews", () => {
     expect(request.body).toContain("were not fully reviewed");
     // The category carries across batches to the published review.
     expect(request.body).toContain("(category: `cyber`)");
+    // A declined group whose fallback failed is recorded on Claude's route.
+    const records = await f.t.run((ctx) =>
+      ctx.db
+        .query("reviewRecords")
+        .withIndex("by_action", (q) => q.eq("actionId", f.actionId))
+        .collect(),
+    );
+    expect(records.find((r) => r.page === 3)).toMatchObject({
+      outcome: "refused",
+      providerId: "anthropic",
+    });
+  });
+  it("reviews declined batches on the fallback model", async () => {
+    const { ChatProviderRequestError } =
+      await import("../../../convex/_ai/providerErrors");
+    const f = await batchFixture(
+      3,
+      0,
+      10_000_000,
+      [],
+      61,
+      () =>
+        new ChatProviderRequestError("Claude declined the request", "billed", {
+          refusal: "reasoning_extraction",
+        }),
+      false,
+    );
+    for (const page of [undefined, 2, 3, 4]) await f.generate(page);
+    await drainScheduledFunctions(f.t);
+    const action = await f.getAction();
+    expect(action).toMatchObject({
+      status: "completed",
+      executionResult: { published: true },
+      proposedChanges: { fallbackFiles: 16 },
+    });
+    // Page 3's files were reviewed, so none is reported as declined.
+    expect(action?.proposedChanges?.excludedPaths).not.toContain(
+      "src/file-33.ts",
+    );
+    expect(action?.proposedChanges?.refusedPaths).toBeUndefined();
+    const fallbackKey = `pr/${f.actionId}/${source.headSha}/batch/3/1/openai`;
+    // The declined group ran again on OpenAI alone, not the Claude route.
+    expect(f.routes.get(fallbackKey)).toBe("openai");
+    const request = JSON.parse(f.fetch.mock.calls[0][1]!.body as string);
+    expect(request.body).toContain(
+      "16 files declined by Claude's safety filter were reviewed with OpenAI's model instead.",
+    );
+    expect(request.body).not.toContain("declined to review");
+    // The record keeps the category, so fallbacks can be counted.
+    const records = await f.t.run((ctx) =>
+      ctx.db
+        .query("reviewRecords")
+        .withIndex("by_action", (q) => q.eq("actionId", f.actionId))
+        .collect(),
+    );
+    expect(records.find((r) => r.page === 3)).toMatchObject({
+      outcome: "proposed",
+      providerId: "openai",
+      refusalCategory: "reasoning_extraction",
+      inspectedFiles: 16,
+    });
+  });
+  it("reviews a declined single review on the fallback model", async () => {
+    const { ChatProviderRequestError } =
+      await import("../../../convex/_ai/providerErrors");
+    const f = await batchFixture(
+      0,
+      0,
+      10_000_000,
+      [],
+      3,
+      () =>
+        new ChatProviderRequestError(
+          "Claude declined the request",
+          "not_billed",
+          { refusal: "cyber" },
+        ),
+      false,
+    );
+    await f.generate();
+    await drainScheduledFunctions(f.t);
+    expect(f.batches).toEqual([
+      `pr/${f.actionId}/${source.headSha}`,
+      `pr/${f.actionId}/${source.headSha}/openai`,
+    ]);
+    expect((await f.getAction())?.proposedChanges).toMatchObject({
+      fallbackFiles: 3,
+    });
   });
   it("stops after too many batches are declined", async () => {
     const { ChatProviderRequestError } =

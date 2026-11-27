@@ -865,6 +865,7 @@ export const propose = internalMutation({
     excludedPaths: v.array(v.string()),
     refusedPaths: v.optional(v.array(v.string())),
     refusalCategories: v.optional(v.array(v.string())),
+    fallbackFiles: v.optional(v.number()),
     filesRead: v.array(v.string()),
     page: v.optional(v.number()),
     group: v.optional(v.number()),
@@ -948,6 +949,7 @@ export const propose = internalMutation({
             filesRead: args.filesRead,
             excludedPaths: args.excludedPaths,
             refusedPaths: args.refusedPaths,
+            fallbackFiles: args.fallbackFiles,
           },
         },
       });
@@ -1042,6 +1044,7 @@ export const propose = internalMutation({
         ...(args.refusalCategories?.length
           ? { refusalCategories: args.refusalCategories }
           : {}),
+        ...(args.fallbackFiles ? { fallbackFiles: args.fallbackFiles } : {}),
         filesRead: args.filesRead,
         ...(args.mergeBaseSha ? { mergeBaseSha: args.mergeBaseSha } : {}),
         coverageComplete,
@@ -1059,7 +1062,11 @@ export const propose = internalMutation({
                     `Showing the ${args.findings.length} highest-priority findings out of ${batch?.findingCount ?? args.findingCount}.`,
                   ]
                 : []),
-              ...refusalNotes(args.refusedPaths, args.refusalCategories),
+              ...refusalNotes(
+                args.refusedPaths,
+                args.refusalCategories,
+                args.fallbackFiles,
+              ),
               ...openRequestNotes(openRequests),
             ],
           ),

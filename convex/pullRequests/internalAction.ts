@@ -10,6 +10,7 @@ import {
 import { requireCurrentAiLegalAttestation } from "../_ai/legalAttestation";
 import { createMeteredProvider, ChatBillingError } from "../_ai/chatBilling";
 import {
+  declineFallback,
   resolveGenerationProvider,
   UserApiKeyError,
   usesUserKey,
@@ -305,9 +306,9 @@ export const reviewOpenPullRequests = internalAction({
 });
 
 const MAX_FAILED_REVIEW_GROUPS = 2;
-// A batch group whose model answer could not be used is asked again once,
-// only when it failed this early in the action.
-const BATCH_RETRY_START_MS = 3 * 60_000;
+// A batch group whose model answer could not be used, or a review Claude
+// declined, runs again once, only when it failed this early in the action.
+const RETRY_START_MS = 3 * 60_000;
 const MAX_REFUSED_REVIEW_GROUPS = 5;
 // Reviews of one account share a single provider slot. Wait this long per
 // attempt for other work to release it before failing the review.
@@ -538,6 +539,8 @@ export const generate = internalAction({
       // A record of the files a safety filter declined.
       const refusedPaths = new Set(previous?.refusedPaths);
       const refusalCategories = new Set(previous?.refusalCategories);
+      // Declined files the fallback model reviewed instead.
+      let fallbackFiles = previous?.fallbackFiles ?? 0;
       const filesRead = new Set(previous?.filesRead);
       // Head files this group saw around their diff.
       const windowedPaths = new Set<string>();
@@ -644,19 +647,26 @@ export const generate = internalAction({
                   botLogin().replace(/\[bot\]$/, ""),
                 pr.comments,
               ).catch(() => undefined);
-        // A retry gets its own billing key, so it never replays the failed
-        // attempt's checkpoint, and reuses the sources already read.
+        // A retry or fallback run gets its own billing key, so it never
+        // replays the failed attempt's checkpoint, and reuses the sources
+        // already read.
         const sourceCache = new Map<string, string>();
-        const review = (retry: boolean) => {
+        const runKey = batched
+          ? `${generationKey}/batch/${page}/${group + 1}`
+          : generationKey;
+        const review = (
+          attempt?: "retry" | "openai",
+          route = rawAiProvider,
+        ) => {
+          // Each attempt records only its own trace.
+          traceEvents.length = 0;
           const provider = createMeteredProvider(ctx, {
             userId: initial.repository.userId,
             repositoryId: initial.repository._id,
             ticketActionId: args.actionId,
-            generationKey: batched
-              ? `${generationKey}/batch/${page}/${group + 1}${retry ? "/retry" : ""}`
-              : generationKey,
+            generationKey: attempt ? `${runKey}/${attempt}` : runKey,
             operation: "pull-request-review",
-            provider: rawAiProvider,
+            provider: route,
             requirePendingTicketAction: true,
             beforeProviderStart: ensureCurrent,
             activeProviderWaitMs: REVIEW_ACTIVE_PROVIDER_WAIT_MS,
@@ -694,9 +704,38 @@ export const generate = internalAction({
           });
         };
         let result: Awaited<ReturnType<typeof reviewWithContext>>;
+        let recovered = false;
         try {
           if (discussion) run.discussionEntries = discussion.length;
-          result = await review(false).catch(async (error: unknown) => {
+          result = await review().catch(async (error: unknown) => {
+            const early = Date.now() - startedAt <= RETRY_START_MS;
+            if (isReviewRefusal(error)) {
+              // Claude's safety filter also declines ordinary code, so a
+              // declined review runs once on the OpenAI model when the
+              // account has one. If that cannot finish it stays declined.
+              const fallback = declineFallback(rawAiProvider);
+              if (!fallback || !early) throw error;
+              runRefusal = reviewRefusalCategory(error);
+              // A fallback that fails is recorded as Claude's decline.
+              const declined = {
+                provider: runProvider,
+                trace: [...traceEvents],
+              };
+              const answer = await review("openai", fallback).catch(
+                (fallbackError: unknown) => {
+                  if (
+                    isLifecycleChange(fallbackError) ||
+                    isAmbiguousProviderOutcome(fallbackError)
+                  )
+                    throw fallbackError;
+                  runProvider = declined.provider;
+                  traceEvents.splice(0, traceEvents.length, ...declined.trace);
+                  throw error;
+                },
+              );
+              recovered = true;
+              return answer;
+            }
             // A batch group's unusable model answer is asked again once, while
             // there is time and no earlier group has failed, so its files are
             // not left unreviewed. A recurring failure is not retried again.
@@ -704,12 +743,10 @@ export const generate = internalAction({
               !batched ||
               failedGroups > 0 ||
               !isReviewGroupModelFailure(error) ||
-              isReviewRefusal(error) ||
-              Date.now() - startedAt > BATCH_RETRY_START_MS
+              !early
             )
               throw error;
-            traceEvents.length = 0;
-            return await review(true).catch((retryError: unknown) => {
+            return await review("retry").catch((retryError: unknown) => {
               // A retry that cannot run (limit, busy account, provider
               // outage) leaves the group failed as before; only a change to
               // the review or an unclear outcome stops it.
@@ -782,6 +819,7 @@ export const generate = internalAction({
             run.uncoveredFiles++;
           }
         }
+        if (recovered) fallbackFiles += run.inspectedFiles;
         for (const path of result.excludedPaths) excludedPaths.add(path);
         for (const read of result.reads)
           filesRead.add(`${read.ref}:${read.path}`);
@@ -824,6 +862,7 @@ export const generate = internalAction({
         ...(refusalCategories.size
           ? { refusalCategories: [...refusalCategories] }
           : {}),
+        ...(fallbackFiles ? { fallbackFiles } : {}),
         excludedPaths: [...excludedPaths].slice(
           0,
           batched ? REVIEW_COVERAGE_PREVIEW : undefined,
@@ -1288,6 +1327,7 @@ export const publish = internalAction({
           const declined = refusalNotes(
             proposal.refusedPaths,
             proposal.refusalCategories,
+            proposal.fallbackFiles,
           );
           const body = (approved: boolean) =>
             reviewBody(

@@ -281,6 +281,19 @@ export async function resolveGenerationProvider(
   throw new UserApiKeyError("invalid", rows[0].provider);
 }
 
+/**
+ * Where a review Claude's safety filter declined may run instead: Gitdog's
+ * OpenAI fallback, or the owner's OpenAI key when it is their second key.
+ * One key, or OpenAI first, has none.
+ */
+export function declineFallback(provider: AiProvider): AiProvider | undefined {
+  return provider instanceof CreditFallbackProvider &&
+    provider.primary.providerId === "anthropic" &&
+    provider.fallback.providerId === "openai"
+    ? provider.fallback
+    : undefined;
+}
+
 export function usesUserKey(provider: AiProvider): boolean {
   return provider.keySource === "user";
 }
