@@ -190,6 +190,11 @@ const PRELOAD_READS = 8;
 const COVERAGE_PASS_SOURCE = 90_000;
 const COVERAGE_PASS_REQUEST = 150_000;
 const MAX_COVERAGE_PASSES = 8;
+// A batch group covers the few files its main review did not read in at most
+// this many passes; the groups themselves cover the rest of a large change.
+// The per-batch quota hold does not count these passes: each request's own
+// reservation is what keeps spend within the account limit.
+const MAX_BATCH_COVERAGE_PASSES = 2;
 // Request timing, measured from when the action started. Convex stops an
 // action at 10 minutes, and a request cut off mid-flight leaves its usage
 // unknown, which blocks the account's AI work for 30 minutes.
@@ -320,6 +325,9 @@ export async function reviewWithContext(args: {
   discussion?: DiscussionEntry[];
   // Run SECOND_LOOKS after the main review of a single review.
   secondLooks?: boolean;
+  // Sources already read for this review, shared by a retry so it reads
+  // and checks nothing twice.
+  sourceCache?: Map<string, string>;
 }): Promise<{
   findings: Finding[];
   reads: ReadEvidence[];
@@ -369,7 +377,7 @@ export async function reviewWithContext(args: {
     return value;
   };
   const reads: ReadEvidence[] = [];
-  const sourceCache = new Map<string, string>();
+  const sourceCache = args.sourceCache ?? new Map<string, string>();
   const unavailablePaths = new Set<string>();
   // Paths whose source cannot be read at all, unlike ones the main
   // conversation had no room left to show.
@@ -1138,15 +1146,12 @@ export async function reviewWithContext(args: {
   // reviewed, and the account limit or the time budget ends the passes.
   const coverUnread = async (): Promise<Finding[]> => {
     const found: Finding[] = [];
-    // A batch group runs on a quota hold sized for one request chain; the
-    // groups themselves are how a large change gets covered.
-    if (accountLimited || args.batchGroup) return found;
+    if (accountLimited) return found;
+    const passes = args.batchGroup
+      ? MAX_BATCH_COVERAGE_PASSES
+      : MAX_COVERAGE_PASSES;
     const skipped = new Set<string>();
-    for (
-      let pass = 1;
-      pass <= MAX_COVERAGE_PASSES && beforeOptionalCutoff();
-      pass++
-    ) {
+    for (let pass = 1; pass <= passes && beforeOptionalCutoff(); pass++) {
       const pending = unread(skipped);
       if (pending.length === 0) break;
       await args.guard();
