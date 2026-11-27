@@ -1432,20 +1432,26 @@ describe("bounded review workflow", () => {
       const result = await run(p, read, options);
       expect(result.excludedPaths.length).toBeGreaterThan(0);
     });
-    it("leaves coverage to the groups of a batched review", async () => {
+    it("covers a batch group's unread files in at most two passes", async () => {
+      // More unread files than two passes can carry.
+      const many = Array.from({ length: 40 }, (_, index) => ({
+        ...file,
+        filename: `src/many-${index + 1}.ts`,
+      }));
       const p = scripted(() => stop([]));
-      await run(
+      const result = await run(
         p,
         vi.fn(async () => padded),
-        { ...options, batchGroup: true },
+        { files: many, paths: many.map((f) => f.filename), batchGroup: true },
       );
-      expect(
-        vi
-          .mocked(p.chat)
-          .mock.calls.some(([, o]) =>
-            o?.billingLabel?.startsWith("pr-review/coverage"),
-          ),
-      ).toBe(false);
+      const passes = vi
+        .mocked(p.chat)
+        .mock.calls.filter(([, o]) =>
+          o?.billingLabel?.startsWith("pr-review/coverage"),
+        ).length;
+      expect(passes).toBe(2);
+      // What the passes could not carry stays reported as not reviewed.
+      expect(result.excludedPaths).toContain("src/many-40.ts");
     });
     it("starts no coverage request late in the action", async () => {
       const p = scripted(() => stop([]));

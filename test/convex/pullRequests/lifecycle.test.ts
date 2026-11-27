@@ -3058,6 +3058,8 @@ describe("batched PR reviews", () => {
     largeIndexes: number[] = [],
     fileCount = 61,
     pageFailure: () => Error = () => new Error("Fixture model failure"),
+    // Whether a retried group fails again, as a recurring failure does.
+    retryFails = true,
   ) {
     const f = await fixture();
     await f.t.run(async (ctx) => {
@@ -3149,8 +3151,10 @@ describe("batched PR reviews", () => {
       (_ctx, args) => {
         batches.push(args.generationKey);
         const batch = args.generationKey.includes("/batch/");
-        const page = batch ? Number(args.generationKey.split("/").at(-2)) : 0;
-        const group = Number(args.generationKey.split("/").at(-1));
+        // A retried group bills under its own key ending in "/retry".
+        const parts = args.generationKey.replace(/\/retry$/, "").split("/");
+        const page = batch ? Number(parts.at(-2)) : 0;
+        const group = Number(parts.at(-1));
         const path = batch
           ? files[(page - 1) * 16 + group - 1].filename
           : "src/file-1.ts";
@@ -3169,10 +3173,14 @@ describe("batched PR reviews", () => {
           providerId: "openai",
           modelId: "fixture",
           chat: async (_messages, options) => {
-            if (
+            const failing =
               page === failedPage ||
               failedPage === -1 ||
-              (Array.isArray(failedPage) && failedPage.includes(page))
+              (Array.isArray(failedPage) && failedPage.includes(page));
+            // Unless told otherwise, a retried group fails again.
+            if (
+              failing &&
+              (retryFails || !args.generationKey.endsWith("/retry"))
             )
               throw pageFailure();
             return {
@@ -4017,6 +4025,37 @@ describe("batched PR reviews", () => {
     );
     const request = JSON.parse(f.fetch.mock.calls[0][1]!.body as string);
     expect(request.body).toContain("were not fully reviewed");
+    // The failed group was asked once more before it was given up.
+    expect(f.batches).toContain(
+      `pr/${f.actionId}/${source.headSha}/batch/3/1/retry`,
+    );
+  });
+  it("reviews a group's files after one retry of an unusable answer", async () => {
+    const { ChatProviderRequestError } =
+      await import("../../../convex/_ai/providerErrors");
+    const f = await batchFixture(
+      3,
+      0,
+      10_000_000,
+      [],
+      61,
+      () => new ChatProviderRequestError("Unreadable output", "billed"),
+      false,
+    );
+    for (const page of [undefined, 2, 3, 4]) await f.generate(page);
+    await drainScheduledFunctions(f.t);
+    const action = await f.getAction();
+    expect(action).toMatchObject({
+      status: "completed",
+      executionResult: { published: true },
+    });
+    // Page 3's files were reviewed by the retry, not left out.
+    expect(action?.proposedChanges?.excludedPaths).not.toContain(
+      "src/file-33.ts",
+    );
+    expect(f.batches).toContain(
+      `pr/${f.actionId}/${source.headSha}/batch/3/1/retry`,
+    );
   });
   it("finishes a review when the safety filter declines several batches", async () => {
     const { ChatProviderRequestError } =
@@ -4036,6 +4075,8 @@ describe("batched PR reviews", () => {
     for (const page of [undefined, 2, 3, 4, 5]) await f.generate(page);
     await drainScheduledFunctions(f.t);
     const action = await f.getAction();
+    // A decline is about content, so it is not asked again.
+    expect(f.batches.some((key) => key.endsWith("/retry"))).toBe(false);
     // Declines are about content, so they do not stop the review.
     expect(action).toMatchObject({
       status: "completed",
@@ -4180,6 +4221,40 @@ describe("batched PR reviews", () => {
     await f.generate(4);
     expect((await f.getAction())?.status).toBe("failed");
     expect(f.fetch).not.toHaveBeenCalled();
+    // Only the first failed group is asked again; a recurring failure is not.
+    expect(f.batches.filter((key) => key.endsWith("/retry"))).toHaveLength(1);
+  });
+  it("keeps a group failed when its retry cannot run", async () => {
+    const { ChatProviderRequestError } =
+      await import("../../../convex/_ai/providerErrors");
+    const { ChatBillingError } =
+      await import("../../../convex/_ai/chatBilling");
+    let calls = 0;
+    const f = await batchFixture(3, 0, 10_000_000, [], 61, () =>
+      calls++ === 0
+        ? new ChatProviderRequestError("Unreadable output", "billed")
+        : new ChatBillingError("Token limit reached", "limit_reached"),
+    );
+    for (const page of [undefined, 2, 3, 4]) await f.generate(page);
+    await drainScheduledFunctions(f.t);
+    const action = await f.getAction();
+    // The group is reported as not reviewed and the review still publishes.
+    expect(action).toMatchObject({
+      status: "completed",
+      executionResult: { published: true },
+    });
+    expect(action?.proposedChanges?.excludedPaths).toContain("src/file-33.ts");
+  });
+  it("does not retry a group that failed late in its action", async () => {
+    const { ChatProviderRequestError } =
+      await import("../../../convex/_ai/providerErrors");
+    const f = await batchFixture(3, 0, 10_000_000, [], 61, () => {
+      const late = Date.now() + 4 * 60_000;
+      vi.spyOn(Date, "now").mockReturnValue(late);
+      return new ChatProviderRequestError("Unreadable output", "billed");
+    });
+    for (const page of [undefined, 2, 3]) await f.generate(page);
+    expect(f.batches.some((key) => key.endsWith("/retry"))).toBe(false);
   });
   it("builds on a review that could not list everything it missed", async () => {
     const f = await fixture();

@@ -105,6 +105,15 @@ export function isReviewRefusal(error: unknown): boolean {
   return reviewRefusalCategory(error) !== undefined;
 }
 
+/** Whether a provider request may have been billed without a usable answer. */
+export function isAmbiguousProviderOutcome(error: unknown): boolean {
+  const cause = reviewFailureCause(error);
+  return (
+    cause instanceof ChatProviderRequestError &&
+    cause.billingOutcome === "ambiguous"
+  );
+}
+
 /** The safety filter's category for a declined review request. */
 export function reviewRefusalCategory(error: unknown): string | undefined {
   const cause = reviewFailureCause(error);

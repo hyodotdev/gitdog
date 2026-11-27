@@ -42,6 +42,7 @@ import { REVIEW_QUOTA_FAILURES } from "./internalMutation";
 import {
   isReviewGroupModelFailure,
   isLifecycleChange,
+  isAmbiguousProviderOutcome,
   isReviewRefusal,
   reviewRefusalCategory,
   ReviewQuotaError,
@@ -304,9 +305,12 @@ export const reviewOpenPullRequests = internalAction({
 });
 
 const MAX_FAILED_REVIEW_GROUPS = 2;
+// A batch group whose model answer could not be used is asked again once,
+// only when it failed this early in the action.
+const BATCH_RETRY_START_MS = 3 * 60_000;
 const MAX_REFUSED_REVIEW_GROUPS = 5;
 // Reviews of one account share a single provider slot. Wait this long per
-// action for other work to release it before failing the review.
+// attempt for other work to release it before failing the review.
 const REVIEW_ACTIVE_PROVIDER_WAIT_MS = 90_000;
 
 // Whether any file keeps a diff to review once oversized diffs are dropped.
@@ -640,25 +644,26 @@ export const generate = internalAction({
                   botLogin().replace(/\[bot\]$/, ""),
                 pr.comments,
               ).catch(() => undefined);
-        const provider = createMeteredProvider(ctx, {
-          userId: initial.repository.userId,
-          repositoryId: initial.repository._id,
-          ticketActionId: args.actionId,
-          generationKey: batched
-            ? `${generationKey}/batch/${page}/${group + 1}`
-            : generationKey,
-          operation: "pull-request-review",
-          provider: rawAiProvider,
-          requirePendingTicketAction: true,
-          beforeProviderStart: ensureCurrent,
-          activeProviderWaitMs: REVIEW_ACTIVE_PROVIDER_WAIT_MS,
-        });
-        // The metered route is the one that switches to the fallback provider.
-        runProvider = provider;
-        let result: Awaited<ReturnType<typeof reviewWithContext>>;
-        try {
-          if (discussion) run.discussionEntries = discussion.length;
-          result = await reviewWithContext({
+        // A retry gets its own billing key, so it never replays the failed
+        // attempt's checkpoint, and reuses the sources already read.
+        const sourceCache = new Map<string, string>();
+        const review = (retry: boolean) => {
+          const provider = createMeteredProvider(ctx, {
+            userId: initial.repository.userId,
+            repositoryId: initial.repository._id,
+            ticketActionId: args.actionId,
+            generationKey: batched
+              ? `${generationKey}/batch/${page}/${group + 1}${retry ? "/retry" : ""}`
+              : generationKey,
+            operation: "pull-request-review",
+            provider: rawAiProvider,
+            requirePendingTicketAction: true,
+            beforeProviderStart: ensureCurrent,
+            activeProviderWaitMs: REVIEW_ACTIVE_PROVIDER_WAIT_MS,
+          });
+          // The metered route is the one that switches to the fallback provider.
+          runProvider = provider;
+          return reviewWithContext({
             startedAt,
             discussion,
             trace: (event) => traceEvents.push(event),
@@ -675,6 +680,7 @@ export const generate = internalAction({
             paths,
             basePaths,
             guard: ensureCurrent,
+            sourceCache,
             read: (path, ref) =>
               ref === "head"
                 ? readReviewSource(
@@ -685,6 +691,36 @@ export const generate = internalAction({
                     () => windowedPaths.add(path),
                   )
                 : readReviewSource(access, path, data.baseSha),
+          });
+        };
+        let result: Awaited<ReturnType<typeof reviewWithContext>>;
+        try {
+          if (discussion) run.discussionEntries = discussion.length;
+          result = await review(false).catch(async (error: unknown) => {
+            // A batch group's unusable model answer is asked again once, while
+            // there is time and no earlier group has failed, so its files are
+            // not left unreviewed. A recurring failure is not retried again.
+            if (
+              !batched ||
+              failedGroups > 0 ||
+              !isReviewGroupModelFailure(error) ||
+              isReviewRefusal(error) ||
+              Date.now() - startedAt > BATCH_RETRY_START_MS
+            )
+              throw error;
+            traceEvents.length = 0;
+            return await review(true).catch((retryError: unknown) => {
+              // A retry that cannot run (limit, busy account, provider
+              // outage) leaves the group failed as before; only a change to
+              // the review or an unclear outcome stops it.
+              if (
+                isLifecycleChange(retryError) ||
+                isReviewGroupModelFailure(retryError) ||
+                isAmbiguousProviderOutcome(retryError)
+              )
+                throw retryError;
+              throw error;
+            });
           });
         } catch (error) {
           // A failure that keeps recurring is not one bad response; stop
